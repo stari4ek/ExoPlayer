@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 apply plugin: 'com.android.library'
-apply plugin: 'bintray-release'
+//apply plugin: 'bintray-release'
 
 android {
     compileSdkVersion 22
@@ -69,12 +69,12 @@ android.libraryVariants.all { variant ->
     }
 }
 
-publish {
-    repoName = 'exoplayer'
-    userOrg = 'google'
-    groupId = 'com.google.android.exoplayer'
-    artifactId = 'exoplayer'
-    version = 'r1.3.3'
-    description = 'The ExoPlayer library.'
-    website = 'https://github.com/google/ExoPlayer'
-}
+//publish {
+//    repoName = 'exoplayer'
+//    userOrg = 'google'
+//    groupId = 'com.google.android.exoplayer'
+//    artifactId = 'exoplayer'
+//    version = 'r1.3.3'
+//    description = 'The ExoPlayer library.'
+//    website = 'https://github.com/google/ExoPlayer'
+//}
