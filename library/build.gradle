@@ -38,13 +38,6 @@ android {
     lintOptions {
         abortOnError false
     }
-
-    sourceSets {
-        androidTest {
-            assets.srcDirs = ['src/test/assets']
-            java.srcDirs = ['src/test/java']
-        }
-    }
 }
 
 dependencies {
@@ -79,6 +72,7 @@ android.libraryVariants.all { variant ->
     }
 }
 
+<<<<<<< HEAD
 //publish {
 //    repoName = 'exoplayer'
 //    userOrg = 'google'
@@ -88,3 +82,14 @@ android.libraryVariants.all { variant ->
 //    description = 'The ExoPlayer library.'
 //    website = 'https://github.com/google/ExoPlayer'
 //}
+=======
+publish {
+    repoName = 'exoplayer'
+    userOrg = 'google'
+    groupId = 'com.google.android.exoplayer'
+    artifactId = 'exoplayer'
+    version = 'r1.4.2'
+    description = 'The ExoPlayer library.'
+    website = 'https://github.com/google/ExoPlayer'
+}
+>>>>>>> master
