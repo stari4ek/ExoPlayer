@@ -173,6 +173,7 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
 
   private Surface surface;
   private TrackRenderer videoRenderer;
+  private TrackRenderer audioRenderer;
   private CodecCounters codecCounters;
   private Format videoFormat;
   private int videoTrackToRestore;
@@ -305,6 +306,7 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
     }
     // Complete preparation.
     this.videoRenderer = renderers[TYPE_VIDEO];
+    this.audioRenderer = renderers[TYPE_AUDIO];
     this.codecCounters = videoRenderer instanceof MediaCodecTrackRenderer
         ? ((MediaCodecTrackRenderer) videoRenderer).codecCounters
         : renderers[TYPE_AUDIO] instanceof MediaCodecTrackRenderer
@@ -337,6 +339,13 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
 
   public void seekTo(long positionMs) {
     player.seekTo(positionMs);
+  }
+
+  public void setVolume(float volume) {
+    if (player != null && audioRenderer != null)
+      player.sendMessage(audioRenderer,
+                         MediaCodecAudioTrackRenderer.MSG_SET_VOLUME,
+                         volume);
   }
 
   public void release() {
