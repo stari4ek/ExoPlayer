@@ -13,22 +13,18 @@ import com.google.android.exoplayer.MediaCodecAudioTrackRenderer;
 import com.google.android.exoplayer.MediaCodecVideoTrackRenderer;
 import com.google.android.exoplayer.TrackRenderer;
 import com.google.android.exoplayer.audio.AudioCapabilities;
-import com.google.android.exoplayer.demo.player.DemoPlayer;
 import com.google.android.exoplayer.demo.player.DemoPlayer.RendererBuilder;
-import com.google.android.exoplayer.extractor.Extractor;
 import com.google.android.exoplayer.extractor.ExtractorSampleSource;
 import com.google.android.exoplayer.extractor.ts.PtsTimestampAdjuster;
 import com.google.android.exoplayer.extractor.ts.TsExtractor;
 import com.google.android.exoplayer.text.TextTrackRenderer;
 import com.google.android.exoplayer.upstream.Allocator;
+import com.google.android.exoplayer.upstream.BandwidthMeter;
 import com.google.android.exoplayer.upstream.DataSource;
 import com.google.android.exoplayer.upstream.DefaultAllocator;
 import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
-import com.google.android.exoplayer.upstream.DefaultUriDataSource;
 import com.google.android.exoplayer.upstream.UdpDataSource;
 import com.google.android.exoplayer.util.Assertions;
-
-import org.w3c.dom.Text;
 
 public class MulticastRendererBuilder implements RendererBuilder {
 
@@ -37,38 +33,32 @@ public class MulticastRendererBuilder implements RendererBuilder {
   private static final int BUFFER_SEGMENT_SIZE = 64 * 1024;
   private static final int BUFFER_SEGMENT_COUNT = 256;
 
-
   private final Context context;
-  private final String userAgent;
+  private final BandwidthMeter.EventListener mBandwidthListener;
   private final Uri uri;
 
-  public MulticastRendererBuilder(Context context, String userAgent, Uri uri) {
+  public MulticastRendererBuilder(Context context, Uri uri,
+                                  BandwidthMeter.EventListener bandwidthListener) {
     this.context = context;
-    this.userAgent = userAgent;
-
-    // we expect uri for UDP. if it has scheme - drop it, cause UdpDataSource doesn't understand it
-    String scheme = uri.getScheme();
-    Assertions.checkArgument(TextUtils.isEmpty(scheme) || scheme.equals("udp"));
-    if (!TextUtils.isEmpty(scheme)) {
-      // TODO (astar): do it nicely
-      uri = Uri.parse(uri.toString().substring("udp://@".length()));
-    }
-
     this.uri = uri;
+    this.mBandwidthListener = bandwidthListener;
   }
 
   @Override
   public void buildRenderers(DemoPlayer player) {
-    Log.d(TAG, "Constructing renderer with url: " + uri.toString());
+    Uri adoptedUri = adoptUriForDataSource(uri);
+    Log.d(TAG, "Constructing renderer with url: " + adoptedUri.toString());
 
+    // TODO: do we need new allocator each time?
     Allocator allocator = new DefaultAllocator(BUFFER_SEGMENT_SIZE);
 
+    BandwidthMeter bandwidthMeter = new DefaultBandwidthMeter(player.getMainHandler(),
+                                                              mBandwidthListener);
+
     // Build the video and audio renderers.
-    DefaultBandwidthMeter bandwidthMeter = new DefaultBandwidthMeter(player.getMainHandler(),
-        null);
-    DataSource dataSource = new UdpDataSource(null);
+    DataSource dataSource = new UdpDataSource(bandwidthMeter);
     TsExtractor tsExtractor = new TsExtractor(new PtsTimestampAdjuster(0), false);
-    ExtractorSampleSource sampleSource = new ExtractorSampleSource(uri, dataSource, allocator,
+    ExtractorSampleSource sampleSource = new ExtractorSampleSource(adoptedUri, dataSource, allocator,
         BUFFER_SEGMENT_COUNT * BUFFER_SEGMENT_SIZE, tsExtractor);
     MediaCodecVideoTrackRenderer videoRenderer = new MediaCodecVideoTrackRenderer(context,
         sampleSource, MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT, 5000, player.getMainHandler(),
@@ -91,4 +81,19 @@ public class MulticastRendererBuilder implements RendererBuilder {
     // Do nothing.
   }
 
+  /**
+   * UdpDataSource doesn't understand uri with scheme. adopt it
+   */
+  private static Uri adoptUriForDataSource(Uri uri) {
+    // we expect uri for UDP. if it has scheme - drop it, cause UdpDataSource doesn't understand it
+    String scheme = uri.getScheme();
+    Assertions.checkArgument(TextUtils.isEmpty(scheme) || scheme.equals("udp"));
+    if (!TextUtils.isEmpty(scheme)) {
+      // TODO (astar): do it nicely
+      // TODO (astar): "@" is part of auth. should we keep it?
+      return Uri.parse(uri.toString().substring("udp://@".length()));
+    }
+
+    return uri;
+  }
 }
