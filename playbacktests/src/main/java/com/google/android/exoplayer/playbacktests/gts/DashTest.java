@@ -20,6 +20,7 @@ import com.google.android.exoplayer.DefaultLoadControl;
 import com.google.android.exoplayer.ExoPlayer;
 import com.google.android.exoplayer.LoadControl;
 import com.google.android.exoplayer.MediaCodecAudioTrackRenderer;
+import com.google.android.exoplayer.MediaCodecSelector;
 import com.google.android.exoplayer.MediaCodecVideoTrackRenderer;
 import com.google.android.exoplayer.TrackRenderer;
 import com.google.android.exoplayer.chunk.ChunkSampleSource;
@@ -101,6 +102,13 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
   private static final String VORBIS_AUDIO_REPRESENTATION_ID = "2";
   private static final String VP9_180P_VIDEO_REPRESENTATION_ID = "0";
   private static final String VP9_360P_VIDEO_REPRESENTATION_ID = "1";
+  // The highest quality VP9 format mandated by the Android CDD.
+  private static final String VP9_CDD_FIXED = VP9_360P_VIDEO_REPRESENTATION_ID;
+  // Multiple VP9 formats mandated by the Android CDD.
+  private static final String[] VP9_CDD_ADAPTIVE =
+      new String[] {
+          VP9_180P_VIDEO_REPRESENTATION_ID,
+          VP9_360P_VIDEO_REPRESENTATION_ID};
 
   // Whether adaptive tests should enable video formats beyond those mandated by the Android CDD
   // if the device advertises support for them.
@@ -196,7 +204,7 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
       return;
     }
     testDashPlayback(getActivity(), VORBIS_AUDIO_FRAME_COUNT, VP9_VIDEO_FRAME_COUNT, VP9_MANIFEST,
-        VORBIS_AUDIO_REPRESENTATION_ID, false, VP9_360P_VIDEO_REPRESENTATION_ID);
+        VORBIS_AUDIO_REPRESENTATION_ID, false, VP9_CDD_FIXED);
   }
 
   public void testVp9Adaptive() throws IOException {
@@ -205,8 +213,7 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
       return;
     }
     testDashPlayback(getActivity(), VORBIS_AUDIO_FRAME_COUNT, VP9_VIDEO_FRAME_COUNT, VP9_MANIFEST,
-        VORBIS_AUDIO_REPRESENTATION_ID, ALLOW_ADDITIONAL_VIDEO_FORMATS,
-        VP9_180P_VIDEO_REPRESENTATION_ID, VP9_360P_VIDEO_REPRESENTATION_ID);
+        VORBIS_AUDIO_REPRESENTATION_ID, ALLOW_ADDITIONAL_VIDEO_FORMATS, VP9_CDD_ADAPTIVE);
   }
 
   public void testVp9AdaptiveWithSeeking() throws IOException {
@@ -216,8 +223,7 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
     }
     testDashPlayback(getActivity(), SEEKING_SCHEDULE, false, VORBIS_AUDIO_FRAME_COUNT,
         VP9_VIDEO_FRAME_COUNT, VP9_MANIFEST, VORBIS_AUDIO_REPRESENTATION_ID,
-        ALLOW_ADDITIONAL_VIDEO_FORMATS, VP9_180P_VIDEO_REPRESENTATION_ID,
-        VP9_360P_VIDEO_REPRESENTATION_ID);
+        ALLOW_ADDITIONAL_VIDEO_FORMATS, VP9_CDD_ADAPTIVE);
   }
 
   public void testVp9AdaptiveWithRendererDisabling() throws IOException {
@@ -227,8 +233,7 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
     }
     testDashPlayback(getActivity(), RENDERER_DISABLING_SCHEDULE, false, VORBIS_AUDIO_FRAME_COUNT,
         VP9_VIDEO_FRAME_COUNT, VP9_MANIFEST, VORBIS_AUDIO_REPRESENTATION_ID,
-        ALLOW_ADDITIONAL_VIDEO_FORMATS, VP9_180P_VIDEO_REPRESENTATION_ID,
-        VP9_360P_VIDEO_REPRESENTATION_ID);
+        ALLOW_ADDITIONAL_VIDEO_FORMATS, VP9_CDD_ADAPTIVE);
   }
 
   // Internal.
@@ -323,7 +328,8 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
           VIDEO_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, handler, logger, VIDEO_EVENT_ID,
           MIN_LOADABLE_RETRY_COUNT);
       MediaCodecVideoTrackRenderer videoRenderer = new MediaCodecVideoTrackRenderer(host,
-          videoSampleSource, MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT, 0, handler, logger, 50);
+          videoSampleSource, MediaCodecSelector.DEFAULT, MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT,
+          0, handler, logger, 50);
       videoCounters = videoRenderer.codecCounters;
       player.sendMessage(videoRenderer, MediaCodecVideoTrackRenderer.MSG_SET_SURFACE, surface);
 
@@ -337,7 +343,7 @@ public final class DashTest extends ActivityInstrumentationTestCase2<HostActivit
           AUDIO_BUFFER_SEGMENTS * BUFFER_SEGMENT_SIZE, handler, logger, AUDIO_EVENT_ID,
           MIN_LOADABLE_RETRY_COUNT);
       MediaCodecAudioTrackRenderer audioRenderer = new MediaCodecAudioTrackRenderer(
-          audioSampleSource, handler, logger);
+          audioSampleSource, MediaCodecSelector.DEFAULT, handler, logger);
       audioCounters = audioRenderer.codecCounters;
 
       TrackRenderer[] renderers = new TrackRenderer[RENDERER_COUNT];
