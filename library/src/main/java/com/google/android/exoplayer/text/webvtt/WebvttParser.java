@@ -15,19 +15,16 @@
  */
 package com.google.android.exoplayer.text.webvtt;
 
-import com.google.android.exoplayer.C;
+import com.google.android.exoplayer.ParserException;
 import com.google.android.exoplayer.text.Cue;
 import com.google.android.exoplayer.text.SubtitleParser;
 import com.google.android.exoplayer.util.MimeTypes;
+import com.google.android.exoplayer.util.ParsableByteArray;
 
 import android.text.Layout.Alignment;
 import android.text.TextUtils;
 import android.util.Log;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,12 +40,10 @@ public final class WebvttParser implements SubtitleParser {
 
   private static final Pattern CUE_SETTING = Pattern.compile("(\\S+?):(\\S+)");
 
-  private final WebvttCueParser cueParser;
   private final PositionHolder positionHolder;
   private final StringBuilder textBuilder;
 
   public WebvttParser() {
-    this.cueParser = new WebvttCueParser();
     positionHolder = new PositionHolder();
     textBuilder = new StringBuilder();
   }
@@ -59,8 +54,9 @@ public final class WebvttParser implements SubtitleParser {
   }
 
   @Override
-  public final WebvttSubtitle parse(InputStream inputStream) throws IOException {
-    BufferedReader webvttData = new BufferedReader(new InputStreamReader(inputStream, C.UTF8_NAME));
+  public final WebvttSubtitle parse(byte[] bytes, int offset, int length) throws ParserException {
+    ParsableByteArray webvttData = new ParsableByteArray(bytes, offset + length);
+    webvttData.setPosition(offset);
 
     // Validate the first line of the header, and skip the remainder.
     WebvttParserUtil.validateWebvttHeaderLine(webvttData);
@@ -133,7 +129,7 @@ public final class WebvttParser implements SubtitleParser {
         textBuilder.append(line.trim());
       }
 
-      CharSequence cueText = cueParser.parse(textBuilder.toString());
+      CharSequence cueText = WebvttCueParser.parse(textBuilder.toString());
 
       WebvttCue cue = new WebvttCue(cueStartTime, cueEndTime, cueText, cueTextAlignment, cueLine,
           cueLineType, cueLineAnchor, cuePosition, cuePositionAnchor, cueWidth);

@@ -17,14 +17,11 @@ package com.google.android.exoplayer.text.mp4webvtt;
 
 import com.google.android.exoplayer.ParserException;
 import com.google.android.exoplayer.text.Cue;
-import com.google.android.exoplayer.text.Subtitle;
 import com.google.android.exoplayer.text.SubtitleParser;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -39,7 +36,6 @@ public final class Mp4WebvttParser implements SubtitleParser {
   private static final int TYPE_payl = Util.getIntegerCodeForString("payl");
 
   private final ParsableByteArray sampleData;
-  private byte[] inputBytesBuffer;
 
   public Mp4WebvttParser() {
     sampleData = new ParsableByteArray();
@@ -51,15 +47,11 @@ public final class Mp4WebvttParser implements SubtitleParser {
   }
 
   @Override
-  public Subtitle parse(InputStream inputStream) throws IOException {
+  public Mp4WebvttSubtitle parse(byte[] bytes, int offset, int length) throws ParserException {
     // Webvtt in Mp4 samples have boxes inside of them, so we have to do a traditional box parsing:
     // first 4 bytes size and then 4 bytes type.
-    int inputStreamByteCount = inputStream.available();
-    if (inputBytesBuffer == null || inputBytesBuffer.length < inputStreamByteCount) {
-      inputBytesBuffer = new byte[inputStreamByteCount];
-    }
-    inputStream.read(inputBytesBuffer, 0, inputStreamByteCount);
-    sampleData.reset(inputBytesBuffer, inputStreamByteCount);
+    sampleData.reset(bytes, offset + length);
+    sampleData.setPosition(offset);
     List<Cue> resultingCueList = new ArrayList<>();
     while (sampleData.bytesLeft() > 0) {
       if (sampleData.bytesLeft() < BOX_HEADER_SIZE) {
@@ -77,7 +69,7 @@ public final class Mp4WebvttParser implements SubtitleParser {
     return new Mp4WebvttSubtitle(resultingCueList);
   }
 
-  private static Cue parseVttCueBox(ParsableByteArray sampleData) throws IOException {
+  private static Cue parseVttCueBox(ParsableByteArray sampleData) throws ParserException {
     while (sampleData.bytesLeft() > 0) {
       if (sampleData.bytesLeft() < BOX_HEADER_SIZE) {
         throw new ParserException("Incomplete vtt cue box header found.");
