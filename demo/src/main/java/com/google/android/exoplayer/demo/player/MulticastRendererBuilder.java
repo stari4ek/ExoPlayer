@@ -21,12 +21,12 @@ import com.google.android.exoplayer.extractor.ts.PtsTimestampAdjuster;
 import com.google.android.exoplayer.extractor.ts.TsExtractor;
 import com.google.android.exoplayer.text.TextTrackRenderer;
 import com.google.android.exoplayer.upstream.Allocator;
-import com.google.android.exoplayer.upstream.BandwidthMeter;
 import com.google.android.exoplayer.upstream.DataSource;
 import com.google.android.exoplayer.upstream.DefaultAllocator;
 import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer.upstream.UdpDataSource;
 import com.google.android.exoplayer.util.Assertions;
+
 
 public class MulticastRendererBuilder implements RendererBuilder {
 
@@ -36,14 +36,11 @@ public class MulticastRendererBuilder implements RendererBuilder {
   private static final int BUFFER_SEGMENT_COUNT = 256;
 
   private final Context context;
-  private final BandwidthMeter.EventListener mBandwidthListener;
   private final Uri uri;
 
-  public MulticastRendererBuilder(Context context, Uri uri,
-                                  BandwidthMeter.EventListener bandwidthListener) {
+  public MulticastRendererBuilder(Context context, Uri uri) {
     this.context = context;
     this.uri = uri;
-    this.mBandwidthListener = bandwidthListener;
   }
 
   @Override
@@ -54,10 +51,10 @@ public class MulticastRendererBuilder implements RendererBuilder {
     // TODO: do we need new allocator each time?
     Allocator allocator = new DefaultAllocator(BUFFER_SEGMENT_SIZE);
 
-    BandwidthMeter bandwidthMeter = new DefaultBandwidthMeter(player.getMainHandler(),
-                                                              mBandwidthListener);
-
+    // TODO: this bandwidth meter is useless cause we don't provide any listeners
     // Build the video and audio renderers.
+    DefaultBandwidthMeter bandwidthMeter = new DefaultBandwidthMeter(player.getMainHandler(),
+                                                                     null);
     DataSource dataSource = new UdpDataSource(bandwidthMeter);
     TsExtractor tsExtractor = new TsExtractor(new PtsTimestampAdjuster(0), false);
     ExtractorSampleSource sampleSource = new ExtractorSampleSource(adoptedUri, dataSource, allocator,
@@ -76,6 +73,7 @@ public class MulticastRendererBuilder implements RendererBuilder {
     renderers[DemoPlayer.TYPE_VIDEO] = videoRenderer;
     renderers[DemoPlayer.TYPE_AUDIO] = audioRenderer;
     renderers[DemoPlayer.TYPE_TEXT] = textRenderer;
+
     player.onRenderers(renderers, bandwidthMeter);
   }
 
