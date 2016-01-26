@@ -16,6 +16,7 @@
 package com.google.android.exoplayer.util;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 
 /**
  * Wraps a byte array, providing a set of methods for parsing data from it. Numerical values are
@@ -307,6 +308,29 @@ public final class ParsableByteArray {
   }
 
   /**
+   * Reads the next {@code length} bytes as UTF-8 characters.
+   *
+   * @param length The number of bytes to read.
+   * @return The string encoded by the bytes.
+   */
+  public String readString(int length) {
+    return readString(length, Charset.defaultCharset());
+  }
+
+  /**
+   * Reads the next {@code length} bytes as characters in the specified {@link Charset}.
+   *
+   * @param length The number of bytes to read.
+   * @param charset The character set of the encoded characters.
+   * @return The string encoded by the bytes in the specified character set.
+   */
+  public String readString(int length, Charset charset) {
+    String result = new String(data, position, length, charset);
+    position += length;
+    return result;
+  }
+
+  /**
    * Reads a line of text.
    * <p>
    * A line is considered to be terminated by any one of a carriage return ('\r'), a line feed
@@ -345,6 +369,5 @@ public final class ParsableByteArray {
     }
     return line;
   }
-
 
 }

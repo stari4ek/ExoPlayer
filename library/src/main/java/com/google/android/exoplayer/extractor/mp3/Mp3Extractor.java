@@ -36,14 +36,19 @@ import java.io.IOException;
  */
 public final class Mp3Extractor implements Extractor {
 
-  /** The maximum number of bytes to search when synchronizing, before giving up. */
+  /**
+   * The maximum number of bytes to search when synchronizing, before giving up.
+   */
   private static final int MAX_SYNC_BYTES = 128 * 1024;
-  /** The maximum number of bytes to read when sniffing, excluding the header, before giving up. */
-  private static final int MAX_SNIFF_BYTES = 4 * 1024;
+  /**
+   * The maximum number of bytes to peek when sniffing, excluding the ID3 header, before giving up.
+   */
+  private static final int MAX_SNIFF_BYTES = MpegAudioHeader.MAX_FRAME_SIZE_BYTES;
 
-  /** Mask that includes the audio header values that must match between frames. */
+  /**
+   * Mask that includes the audio header values that must match between frames.
+   */
   private static final int HEADER_MASK = 0xFFFE0C00;
-  private static final int ID3_TAG = Util.getIntegerCodeForString("ID3");
   private static final int XING_HEADER = Util.getIntegerCodeForString("Xing");
   private static final int INFO_HEADER = Util.getIntegerCodeForString("Info");
   private static final int VBRI_HEADER = Util.getIntegerCodeForString("VBRI");
@@ -51,6 +56,7 @@ public final class Mp3Extractor implements Extractor {
   private final long forcedFirstSampleTimestampUs;
   private final ParsableByteArray scratch;
   private final MpegAudioHeader synchronizedHeader;
+  private final Metadata metadata;
 
   // Extractor outputs.
   private ExtractorOutput extractorOutput;
@@ -80,66 +86,13 @@ public final class Mp3Extractor implements Extractor {
     this.forcedFirstSampleTimestampUs = forcedFirstSampleTimestampUs;
     scratch = new ParsableByteArray(4);
     synchronizedHeader = new MpegAudioHeader();
+    metadata = new Metadata();
     basisTimeUs = -1;
   }
 
   @Override
   public boolean sniff(ExtractorInput input) throws IOException, InterruptedException {
-    ParsableByteArray scratch = new ParsableByteArray(4);
-    int startPosition = 0;
-    while (true) {
-      input.peekFully(scratch.data, 0, 3);
-      scratch.setPosition(0);
-      if (scratch.readUnsignedInt24() != ID3_TAG) {
-        break;
-      }
-      input.advancePeekPosition(3);
-      input.peekFully(scratch.data, 0, 4);
-      int headerLength = ((scratch.data[0] & 0x7F) << 21) | ((scratch.data[1] & 0x7F) << 14)
-          | ((scratch.data[2] & 0x7F) << 7) | (scratch.data[3] & 0x7F);
-      input.advancePeekPosition(headerLength);
-      startPosition += 3 + 3 + 4 + headerLength;
-    }
-    input.resetPeekPosition();
-    input.advancePeekPosition(startPosition);
-
-    // Try to find four consecutive valid MPEG audio frames.
-    int headerPosition = startPosition;
-    int validFrameCount = 0;
-    int candidateSynchronizedHeaderData = 0;
-    while (true) {
-      if (headerPosition - startPosition >= MAX_SNIFF_BYTES) {
-        return false;
-      }
-
-      input.peekFully(scratch.data, 0, 4);
-      scratch.setPosition(0);
-      int headerData = scratch.readInt();
-      int frameSize;
-      if ((candidateSynchronizedHeaderData != 0
-          && (headerData & HEADER_MASK) != (candidateSynchronizedHeaderData & HEADER_MASK))
-          || (frameSize = MpegAudioHeader.getFrameSize(headerData)) == -1) {
-        validFrameCount = 0;
-        candidateSynchronizedHeaderData = 0;
-
-        // Try reading a header starting at the next byte.
-        input.resetPeekPosition();
-        input.advancePeekPosition(++headerPosition);
-        continue;
-      }
-
-      if (validFrameCount == 0) {
-        candidateSynchronizedHeaderData = headerData;
-      }
-
-      // The header was valid and matching (if appropriate). Check another or end synchronization.
-      if (++validFrameCount == 4) {
-        return true;
-      }
-
-      // Look for more headers.
-      input.advancePeekPosition(frameSize - 4);
-    }
+    return synchronize(input, true);
   }
 
   @Override
@@ -158,20 +111,24 @@ public final class Mp3Extractor implements Extractor {
   }
 
   @Override
-  public int read(ExtractorInput extractorInput, PositionHolder seekPosition)
+  public int read(ExtractorInput input, PositionHolder seekPosition)
       throws IOException, InterruptedException {
-    if (synchronizedHeaderData == 0
-        && synchronizeCatchingEndOfInput(extractorInput) == RESULT_END_OF_INPUT) {
+    if (synchronizedHeaderData == 0 && !synchronizeCatchingEndOfInput(input)) {
       return RESULT_END_OF_INPUT;
     }
-
-    return readSample(extractorInput);
+    if (seeker == null) {
+      setupSeeker(input);
+      extractorOutput.seekMap(seeker);
+      trackOutput.format(MediaFormat.createAudioFormat(null, synchronizedHeader.mimeType,
+          MediaFormat.NO_VALUE, MpegAudioHeader.MAX_FRAME_SIZE_BYTES, seeker.getDurationUs(),
+          synchronizedHeader.channels, synchronizedHeader.sampleRate, null, null));
+    }
+    return readSample(input);
   }
 
   private int readSample(ExtractorInput extractorInput) throws IOException, InterruptedException {
     if (sampleBytesRemaining == 0) {
-      long headerPosition = maybeResynchronize(extractorInput);
-      if (headerPosition == RESULT_END_OF_INPUT) {
+      if (!maybeResynchronize(extractorInput)) {
         return RESULT_END_OF_INPUT;
       }
       if (basisTimeUs == -1) {
@@ -201,11 +158,11 @@ public final class Mp3Extractor implements Extractor {
   /**
    * Attempts to read an MPEG audio header at the current offset, resynchronizing if necessary.
    */
-  private long maybeResynchronize(ExtractorInput extractorInput)
+  private boolean maybeResynchronize(ExtractorInput extractorInput)
       throws IOException, InterruptedException {
     extractorInput.resetPeekPosition();
     if (!extractorInput.peekFully(scratch.data, 0, 4, true)) {
-      return RESULT_END_OF_INPUT;
+      return false;
     }
 
     scratch.setPosition(0);
@@ -214,7 +171,7 @@ public final class Mp3Extractor implements Extractor {
       int frameSize = MpegAudioHeader.getFrameSize(sampleHeaderData);
       if (frameSize != -1) {
         MpegAudioHeader.populateHeader(sampleHeaderData, synchronizedHeader);
-        return RESULT_CONTINUE;
+        return true;
       }
     }
 
@@ -223,175 +180,130 @@ public final class Mp3Extractor implements Extractor {
     return synchronizeCatchingEndOfInput(extractorInput);
   }
 
-  private long synchronizeCatchingEndOfInput(ExtractorInput extractorInput)
+  private boolean synchronizeCatchingEndOfInput(ExtractorInput input)
       throws IOException, InterruptedException {
     // An EOFException will be raised if any peek operation was partially satisfied. If a seek
     // operation resulted in reading from within the last frame, we may try to peek past the end of
     // the file in a partially-satisfied read operation, so we need to catch the exception.
     try {
-      return synchronize(extractorInput);
+      return synchronize(input, false);
     } catch (EOFException e) {
-      return RESULT_END_OF_INPUT;
+      return false;
     }
   }
 
-  private long synchronize(ExtractorInput extractorInput) throws IOException, InterruptedException {
-    // TODO: Deduplicate with sniff().
-    extractorInput.resetPeekPosition();
-    long startPosition = extractorInput.getPosition();
-    if (startPosition == 0) {
-      // Skip any ID3 headers at the start of the file.
-      while (true) {
-        extractorInput.peekFully(scratch.data, 0, 3);
-        scratch.setPosition(0);
-        if (scratch.readUnsignedInt24() != ID3_TAG) {
-          break;
-        }
-        extractorInput.skipFully(3 + 2 + 1); // "ID3", version, flags
-        extractorInput.readFully(scratch.data, 0, 4);
-        int headerLength = ((scratch.data[0] & 0x7F) << 21) | ((scratch.data[1] & 0x7F) << 14)
-            | ((scratch.data[2] & 0x7F) << 7) | (scratch.data[3] & 0x7F);
-        extractorInput.skipFully(headerLength);
-        startPosition = extractorInput.getPosition();
-      }
-      extractorInput.resetPeekPosition();
-    }
-
-    // Try to find four consecutive valid MPEG audio frames.
-    long headerPosition = startPosition;
+  private boolean synchronize(ExtractorInput input, boolean sniffing)
+      throws IOException, InterruptedException {
+    input.resetPeekPosition();
+    int searched = 0;
     int validFrameCount = 0;
     int candidateSynchronizedHeaderData = 0;
+    int peekedId3Bytes = input.getPosition() == 0 ? Id3Util.parseId3(input, metadata) : 0;
     while (true) {
-      if (headerPosition - startPosition >= MAX_SYNC_BYTES) {
-        throw new ParserException("Searched too many bytes while resynchronizing.");
+      if (sniffing && searched == MAX_SNIFF_BYTES) {
+        return false;
       }
-
-      if (!extractorInput.peekFully(scratch.data, 0, 4, true)) {
-        return RESULT_END_OF_INPUT;
+      if (!sniffing && searched == MAX_SYNC_BYTES) {
+        throw new ParserException("Searched too many bytes.");
       }
-
+      if (!input.peekFully(scratch.data, 0, 4, true)) {
+        return false;
+      }
       scratch.setPosition(0);
       int headerData = scratch.readInt();
       int frameSize;
       if ((candidateSynchronizedHeaderData != 0
           && (headerData & HEADER_MASK) != (candidateSynchronizedHeaderData & HEADER_MASK))
           || (frameSize = MpegAudioHeader.getFrameSize(headerData)) == -1) {
+        // The header is invalid or doesn't match the candidate header. Try the next byte offset.
         validFrameCount = 0;
         candidateSynchronizedHeaderData = 0;
-
-        // Try reading a header starting at the next byte.
-        extractorInput.skipFully(1);
-        headerPosition++;
-        continue;
+        searched++;
+        if (sniffing) {
+          input.resetPeekPosition();
+          input.advancePeekPosition(peekedId3Bytes + searched);
+        } else {
+          input.skipFully(1);
+        }
+      } else {
+        // The header is valid and matches the candidate header.
+        validFrameCount++;
+        if (validFrameCount == 1) {
+          MpegAudioHeader.populateHeader(headerData, synchronizedHeader);
+          candidateSynchronizedHeaderData = headerData;
+        } else if (validFrameCount == 4) {
+          break;
+        }
+        input.advancePeekPosition(frameSize - 4);
       }
-
-      if (validFrameCount == 0) {
-        MpegAudioHeader.populateHeader(headerData, synchronizedHeader);
-        candidateSynchronizedHeaderData = headerData;
-      }
-
-      // The header was valid and matching (if appropriate). Check another or end synchronization.
-      validFrameCount++;
-      if (validFrameCount == 4) {
-        break;
-      }
-
-      // Look for more headers.
-      extractorInput.advancePeekPosition(frameSize - 4);
     }
-
-    // The read position is now synchronized.
-    extractorInput.resetPeekPosition();
+    // Prepare to read the synchronized frame.
+    if (sniffing) {
+      input.skipFully(peekedId3Bytes + searched);
+    } else {
+      input.resetPeekPosition();
+    }
     synchronizedHeaderData = candidateSynchronizedHeaderData;
-    if (seeker == null) {
-      setupSeeker(extractorInput, headerPosition);
-      extractorOutput.seekMap(seeker);
-      trackOutput.format(MediaFormat.createAudioFormat(null, synchronizedHeader.mimeType,
-          MediaFormat.NO_VALUE, MpegAudioHeader.MAX_FRAME_SIZE_BYTES, seeker.getDurationUs(),
-          synchronizedHeader.channels, synchronizedHeader.sampleRate, null, null));
-    }
-
-    return headerPosition;
+    return true;
   }
 
   /**
-   * Sets {@link #seeker} to seek using metadata read from {@code extractorInput}, which should
-   * provide data from the start of the first frame in the stream. On returning, the input's
-   * position will be set to the start of the first frame of audio.
+   * Sets {@link #seeker} to seek using metadata read from {@code input}, which should provide data
+   * from the start of the first frame in the stream. On returning, the input's position will be set
+   * to the start of the first frame of audio.
    *
-   * @param extractorInput The {@link ExtractorInput} from which to read.
-   * @param headerPosition The position (byte offset) of the synchronized header in the stream.
+   * @param input The {@link ExtractorInput} from which to read.
    * @throws IOException Thrown if there was an error reading from the stream. Not expected if the
    *     next two frames were already peeked during synchronization.
    * @throws InterruptedException Thrown if reading from the stream was interrupted. Not expected if
    *     the next two frames were already peeked during synchronization.
    */
-  private void setupSeeker(ExtractorInput extractorInput, long headerPosition)
-      throws IOException, InterruptedException {
-    // Try to set up seeking based on a XING or VBRI header.
+  private void setupSeeker(ExtractorInput input) throws IOException, InterruptedException {
+    // Read the first frame which may contain a Xing or VBRI header with seeking metadata.
     ParsableByteArray frame = new ParsableByteArray(synchronizedHeader.frameSize);
-    extractorInput.peekFully(frame.data, 0, synchronizedHeader.frameSize);
-    if (parseSeekerFrame(frame, headerPosition, extractorInput.getLength())) {
-      extractorInput.skipFully(synchronizedHeader.frameSize);
-      if (seeker != null) {
-        return;
-      }
+    input.peekFully(frame.data, 0, synchronizedHeader.frameSize);
 
-      // If there was a header but it was not usable, synchronize to the next frame so we don't use
-      // an invalid bitrate for CBR seeking. Peeking is guaranteed to succeed if the frame was
-      // already read during synchronization.
-      headerPosition += synchronizedHeader.frameSize;
-      extractorInput.peekFully(scratch.data, 0, 4);
-      scratch.setPosition(0);
-      MpegAudioHeader.populateHeader(scratch.readInt(), synchronizedHeader);
-    }
-    seeker = new ConstantBitrateSeeker(headerPosition, synchronizedHeader.bitrate * 1000,
-        extractorInput.getLength());
-  }
+    long position = input.getPosition();
+    long length = input.getLength();
 
-  /**
-   * Tries to read seeking metadata from the given {@code frame}. If there is no seeking metadata,
-   * returns {@code false} and sets {@link #seeker} to null. If seeking metadata is present and
-   * unusable, returns {@code true} and sets {@link #seeker} to null. Otherwise, returns
-   * {@code true} and assigns {@link #seeker}.
-   */
-  private boolean parseSeekerFrame(ParsableByteArray frame, long headerPosition, long inputLength) {
-    seeker = null;
-
-    // Check if there is a XING header.
-    int xingBase;
-    if ((synchronizedHeader.version & 1) == 1) {
-      // MPEG 1.
-      if (synchronizedHeader.channels != 1) {
-        xingBase = 32;
-      } else {
-        xingBase = 17;
-      }
-    } else {
-      // MPEG 2 or 2.5.
-      if (synchronizedHeader.channels != 1) {
-        xingBase = 17;
-      } else {
-        xingBase = 9;
-      }
-    }
-    frame.setPosition(4 + xingBase);
+    // Check if there is a Xing header.
+    int xingBase = (synchronizedHeader.version & 1) != 0
+        ? (synchronizedHeader.channels != 1 ? 36 : 21) // MPEG 1
+        : (synchronizedHeader.channels != 1 ? 21 : 13); // MPEG 2 or 2.5
+    frame.setPosition(xingBase);
     int headerData = frame.readInt();
     if (headerData == XING_HEADER || headerData == INFO_HEADER) {
-      seeker = XingSeeker.create(synchronizedHeader, frame, headerPosition, inputLength);
-      return true;
+      seeker = XingSeeker.create(synchronizedHeader, frame, position, length);
+      if (seeker != null && metadata.encoderDelay == 0 && metadata.encoderPadding == 0) {
+        // If there is a Xing header, read gapless playback metadata at a fixed offset.
+        input.resetPeekPosition();
+        input.advancePeekPosition(xingBase + 141);
+        input.peekFully(scratch.data, 0, 3);
+        scratch.setPosition(0);
+        int gaplessMetadata = scratch.readUnsignedInt24();
+        metadata.encoderDelay = gaplessMetadata >> 12;
+        metadata.encoderPadding = gaplessMetadata & 0x0FFF;
+      }
+      input.skipFully(synchronizedHeader.frameSize);
+    } else {
+      // Check if there is a VBRI header.
+      frame.setPosition(36); // MPEG audio header (4 bytes) + 32 bytes.
+      headerData = frame.readInt();
+      if (headerData == VBRI_HEADER) {
+        seeker = VbriSeeker.create(synchronizedHeader, frame, position);
+        input.skipFully(synchronizedHeader.frameSize);
+      }
     }
 
-    // Check if there is a VBRI header.
-    frame.setPosition(36); // MPEG audio header (4 bytes) + 32 bytes.
-    headerData = frame.readInt();
-    if (headerData == VBRI_HEADER) {
-      seeker = VbriSeeker.create(synchronizedHeader, frame, headerPosition);
-      return true;
+    if (seeker == null) {
+      // Repopulate the synchronized header in case we had to skip an invalid seeking header, which
+      // would give an invalid CBR bitrate.
+      input.resetPeekPosition();
+      input.peekFully(scratch.data, 0, 4);
+      scratch.setPosition(0);
+      MpegAudioHeader.populateHeader(scratch.readInt(), synchronizedHeader);
+      seeker = new ConstantBitrateSeeker(input.getPosition(), synchronizedHeader.bitrate, length);
     }
-
-    // Neither header is present.
-    return false;
   }
 
   /**
@@ -410,6 +322,13 @@ public final class Mp3Extractor implements Extractor {
 
     /** Returns the duration of the source, in microseconds. */
     long getDurationUs();
+
+  }
+
+  /* package */ static final class Metadata {
+
+    public int encoderDelay;
+    public int encoderPadding;
 
   }
 
