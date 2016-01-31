@@ -49,8 +49,14 @@ public final class UdpDataSource implements UriDataSource {
    */
   public static final int DEFAULT_MAX_PACKET_SIZE = 2000;
 
+  /**
+   * Default read timeout - infinite
+   */
+  public static final int DEFAULT_READ_TIMEOUT = 0;
+
   private final TransferListener listener;
   private final DatagramPacket packet;
+  private final int readTimeoutMs;
 
   private DataSpec dataSpec;
   private DatagramSocket socket;
@@ -66,15 +72,16 @@ public final class UdpDataSource implements UriDataSource {
    * @param listener An optional listener.
    */
   public UdpDataSource(TransferListener listener) {
-    this(listener, DEFAULT_MAX_PACKET_SIZE);
+    this(listener, DEFAULT_MAX_PACKET_SIZE, DEFAULT_READ_TIMEOUT);
   }
 
   /**
    * @param listener An optional listener.
    * @param maxPacketSize The maximum datagram packet size, in bytes.
    */
-  public UdpDataSource(TransferListener listener, int maxPacketSize) {
+  public UdpDataSource(TransferListener listener, int maxPacketSize, int readTimeoutMs) {
     this.listener = listener;
+    this.readTimeoutMs = readTimeoutMs;
     packetBuffer = new byte[maxPacketSize];
     packet = new DatagramPacket(packetBuffer, 0, maxPacketSize);
   }
@@ -96,6 +103,7 @@ public final class UdpDataSource implements UriDataSource {
       } else {
         socket = new DatagramSocket(socketAddress);
       }
+      socket.setSoTimeout(readTimeoutMs);
     } catch (IOException e) {
       throw new UdpDataSourceException(e);
     }

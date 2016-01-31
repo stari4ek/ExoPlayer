@@ -35,6 +35,10 @@ public class MulticastRendererBuilder implements RendererBuilder {
   private static final int BUFFER_SEGMENT_SIZE = 64 * 1024;
   private static final int BUFFER_SEGMENT_COUNT = 256;
 
+  // TODO: take it to app's logic
+  private static final int RETRY_ATTEMPTS = 1;
+  private static final int READ_TIMEOUT_MS = 10 * 1000;
+
   private final Context context;
   private final Uri uri;
 
@@ -55,10 +59,12 @@ public class MulticastRendererBuilder implements RendererBuilder {
     // Build the video and audio renderers.
     DefaultBandwidthMeter bandwidthMeter = new DefaultBandwidthMeter(player.getMainHandler(),
                                                                      null);
-    DataSource dataSource = new UdpDataSource(bandwidthMeter);
+    DataSource dataSource = new UdpDataSource(bandwidthMeter,
+                                              UdpDataSource.DEFAULT_MAX_PACKET_SIZE,
+                                              READ_TIMEOUT_MS);
     TsExtractor tsExtractor = new TsExtractor(new PtsTimestampAdjuster(0), false);
     ExtractorSampleSource sampleSource = new ExtractorSampleSource(adoptedUri, dataSource, allocator,
-        BUFFER_SEGMENT_COUNT * BUFFER_SEGMENT_SIZE, tsExtractor);
+        BUFFER_SEGMENT_COUNT * BUFFER_SEGMENT_SIZE, RETRY_ATTEMPTS, tsExtractor);
     MediaCodecVideoTrackRenderer videoRenderer = new MediaCodecVideoTrackRenderer(context,
         sampleSource, MediaCodecSelector.DEFAULT, MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT, 5000,
         player.getMainHandler(), player, 50);
