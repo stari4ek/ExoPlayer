@@ -36,6 +36,7 @@ public class MulticastRendererBuilder implements RendererBuilder {
   private static final int BUFFER_SEGMENT_COUNT = 256;
 
   // TODO: take it to app's logic
+  // ExoPlayer has DEFAULT_MIN_LOADABLE_RETRY_COUNT_LIVE = 6
   private static final int RETRY_ATTEMPTS = 2;
   private static final int READ_TIMEOUT_MS = 10 * 1000;
 
