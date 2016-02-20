@@ -62,7 +62,8 @@ public class MulticastRendererBuilder implements RendererBuilder {
     DataSource dataSource = new UdpDataSource(bandwidthMeter,
                                               UdpDataSource.DEFAULT_MAX_PACKET_SIZE,
                                               READ_TIMEOUT_MS);
-    TsExtractor tsExtractor = new TsExtractor(new PtsTimestampAdjuster(0), false);
+    int workaroundFlags = TsExtractor.WORKAROUND_ALLOW_NON_IDR_KEYFRAMES;
+    TsExtractor tsExtractor = new TsExtractor(new PtsTimestampAdjuster(0), workaroundFlags);
     ExtractorSampleSource sampleSource = new ExtractorSampleSource(adoptedUri, dataSource, allocator,
         BUFFER_SEGMENT_COUNT * BUFFER_SEGMENT_SIZE, RETRY_ATTEMPTS, tsExtractor);
     MediaCodecVideoTrackRenderer videoRenderer = new MediaCodecVideoTrackRenderer(context,
