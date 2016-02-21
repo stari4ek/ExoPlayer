@@ -22,10 +22,10 @@ import com.google.android.exoplayer.audio.AudioTrack;
 import com.google.android.exoplayer.chunk.Format;
 import com.google.android.exoplayer.demo.player.DemoPlayer;
 import com.google.android.exoplayer.util.VerboseLogUtil;
+import com.google.android.exoplayer.util.Log;
 
 import android.media.MediaCodec.CryptoException;
 import android.os.SystemClock;
-import android.util.Log;
 
 import java.io.IOException;
 import java.text.NumberFormat;

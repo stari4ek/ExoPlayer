@@ -22,9 +22,9 @@ import com.google.android.exoplayer.upstream.DataSpec;
 import com.google.android.exoplayer.upstream.FileDataSource;
 import com.google.android.exoplayer.upstream.TeeDataSource;
 import com.google.android.exoplayer.upstream.cache.CacheDataSink.CacheDataSinkException;
+import com.google.android.exoplayer.util.Log;
 
 import android.net.Uri;
-import android.util.Log;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;

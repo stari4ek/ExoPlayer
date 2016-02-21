@@ -41,6 +41,7 @@ import com.google.android.exoplayer.util.DebugTextViewHelper;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.Util;
 import com.google.android.exoplayer.util.VerboseLogUtil;
+import com.google.android.exoplayer.util.Log;
 
 import android.Manifest.permission;
 import android.annotation.TargetApi;
@@ -51,7 +52,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;

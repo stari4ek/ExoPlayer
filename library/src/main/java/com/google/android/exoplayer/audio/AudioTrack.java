@@ -21,6 +21,7 @@ import com.google.android.exoplayer.util.Assertions;
 import com.google.android.exoplayer.util.DtsUtil;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.Log;
 
 import android.annotation.TargetApi;
 import android.media.AudioFormat;
@@ -30,7 +31,6 @@ import android.media.MediaFormat;
 import android.media.PlaybackParams;
 import android.os.ConditionVariable;
 import android.os.SystemClock;
-import android.util.Log;
 
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;

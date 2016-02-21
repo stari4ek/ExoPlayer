@@ -15,11 +15,12 @@
  */
 package com.google.android.exoplayer.util;
 
-import android.util.Log;
 import android.util.Pair;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import com.google.android.exoplayer.util.Log;
 
 /**
  * Provides static utility methods for manipulating various types of codec specific data.

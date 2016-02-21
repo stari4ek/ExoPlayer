@@ -16,6 +16,7 @@
 package com.google.android.exoplayer.text;
 
 import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.Log;
 
 import android.content.Context;
 import android.content.res.Resources;
@@ -31,7 +32,6 @@ import android.text.StaticLayout;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
-import android.util.Log;
 
 /**
  * Draws {@link Cue}s.

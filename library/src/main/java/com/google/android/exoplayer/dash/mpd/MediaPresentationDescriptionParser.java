@@ -29,10 +29,10 @@ import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParserUtil;
 import com.google.android.exoplayer.util.UriUtil;
 import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.Log;
 
 import android.text.TextUtils;
 import android.util.Base64;
-import android.util.Log;
 import android.util.Pair;
 
 import org.xml.sax.helpers.DefaultHandler;

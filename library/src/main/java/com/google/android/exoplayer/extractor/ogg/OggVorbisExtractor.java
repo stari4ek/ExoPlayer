@@ -27,8 +27,7 @@ import com.google.android.exoplayer.extractor.TrackOutput;
 import com.google.android.exoplayer.extractor.ogg.VorbisUtil.Mode;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParsableByteArray;
-
-import android.util.Log;
+import com.google.android.exoplayer.util.Log;
 
 import java.io.IOException;
 import java.util.ArrayList;

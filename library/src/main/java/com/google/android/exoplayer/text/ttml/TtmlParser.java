@@ -21,9 +21,9 @@ import com.google.android.exoplayer.text.SubtitleParser;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParserUtil;
 import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.Log;
 
 import android.text.Layout;
-import android.util.Log;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;

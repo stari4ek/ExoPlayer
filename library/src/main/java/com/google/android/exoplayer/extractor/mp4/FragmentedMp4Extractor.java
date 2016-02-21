@@ -32,8 +32,7 @@ import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.NalUnitUtil;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
-
-import android.util.Log;
+import com.google.android.exoplayer.util.Log;
 
 import java.io.IOException;
 import java.util.Arrays;

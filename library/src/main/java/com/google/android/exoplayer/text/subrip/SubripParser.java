@@ -20,11 +20,11 @@ import com.google.android.exoplayer.text.SubtitleParser;
 import com.google.android.exoplayer.util.LongArray;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParsableByteArray;
+import com.google.android.exoplayer.util.Log;
 
 import android.text.Html;
 import android.text.Spanned;
 import android.text.TextUtils;
-import android.util.Log;
 
 import java.util.ArrayList;
 import java.util.regex.Matcher;

@@ -8,7 +8,6 @@ import android.media.AudioManager;
 import android.media.MediaCodec;
 import android.net.Uri;
 import android.text.TextUtils;
-import android.util.Log;
 
 import com.google.android.exoplayer.MediaCodecAudioTrackRenderer;
 import com.google.android.exoplayer.MediaCodecSelector;
@@ -26,6 +25,7 @@ import com.google.android.exoplayer.upstream.DefaultAllocator;
 import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer.upstream.UdpDataSource;
 import com.google.android.exoplayer.util.Assertions;
+import com.google.android.exoplayer.util.Log;
 
 
 public class MulticastRendererBuilder implements RendererBuilder {

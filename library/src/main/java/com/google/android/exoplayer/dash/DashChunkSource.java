@@ -50,9 +50,9 @@ import com.google.android.exoplayer.util.Clock;
 import com.google.android.exoplayer.util.ManifestFetcher;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.SystemClock;
+import com.google.android.exoplayer.util.Log;
 
 import android.os.Handler;
-import android.util.Log;
 import android.util.SparseArray;
 
 import java.io.IOException;

@@ -18,6 +18,7 @@ package com.google.android.exoplayer;
 import com.google.android.exoplayer.util.Assertions;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.Log;
 
 import android.annotation.TargetApi;
 import android.media.MediaCodecInfo;
@@ -25,7 +26,6 @@ import android.media.MediaCodecInfo.CodecCapabilities;
 import android.media.MediaCodecInfo.CodecProfileLevel;
 import android.media.MediaCodecList;
 import android.text.TextUtils;
-import android.util.Log;
 import android.util.Pair;
 
 import java.io.IOException;

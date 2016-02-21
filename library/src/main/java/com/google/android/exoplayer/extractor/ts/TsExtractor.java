@@ -24,8 +24,8 @@ import com.google.android.exoplayer.extractor.SeekMap;
 import com.google.android.exoplayer.util.ParsableBitArray;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.Log;
 
-import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 
