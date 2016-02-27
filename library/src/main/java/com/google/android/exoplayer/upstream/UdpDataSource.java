@@ -52,7 +52,8 @@ public final class UdpDataSource implements UriDataSource {
   /**
    * Default read timeout - infinite
    */
-  public static final int DEFAULT_READ_TIMEOUT = 0;
+  public static final int INFINITE_READ_TIMEOUT = 0;
+  public static final int DEFAULT_READ_TIMEOUT = INFINITE_READ_TIMEOUT;
 
   private final TransferListener listener;
   private final DatagramPacket packet;
