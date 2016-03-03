@@ -15,11 +15,6 @@
  */
 package com.google.android.exoplayer;
 
-import com.google.android.exoplayer.util.Assertions;
-import com.google.android.exoplayer.util.MimeTypes;
-import com.google.android.exoplayer.util.Util;
-import com.google.android.exoplayer.util.Log;
-
 import android.annotation.TargetApi;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecInfo.CodecCapabilities;
@@ -28,7 +23,13 @@ import android.media.MediaCodecList;
 import android.text.TextUtils;
 import android.util.Pair;
 
+import com.google.android.exoplayer.util.Assertions;
+import com.google.android.exoplayer.util.Log;
+import com.google.android.exoplayer.util.MimeTypes;
+import com.google.android.exoplayer.util.Util;
+
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 
 /**
@@ -498,6 +499,20 @@ public final class MediaCodecUtil {
       return TextUtils.equals(mimeType, other.mimeType) && secure == other.secure;
     }
 
+  }
+
+
+  // Provide ability to log codecs
+  public static synchronized ArrayList<MediaCodecInfo> getAllCodecs(boolean secure) {
+    MediaCodecListCompat codecs = Util.SDK_INT >= 21
+        ? new MediaCodecListCompatV21(secure) : new MediaCodecListCompatV16();
+
+    ArrayList<MediaCodecInfo> infos = new ArrayList<>(codecs.getCodecCount());
+    for (int i = 0, N = codecs.getCodecCount(); i < N; ++i) {
+      infos.add(codecs.getCodecInfoAt(i));
+    }
+
+    return infos;
   }
 
 }
