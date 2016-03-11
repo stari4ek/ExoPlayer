@@ -188,7 +188,12 @@ public final class Mp4Extractor implements Extractor, SeekMap {
     if (shouldParseContainerAtom(atomType)) {
       long endPosition = input.getPosition() + atomSize - atomHeaderBytesRead;
       containerAtoms.add(new ContainerAtom(atomType, endPosition));
-      enterReadingAtomHeaderState();
+      if (atomSize == atomHeaderBytesRead) {
+        processAtomEnded(endPosition);
+      } else {
+        // Start reading the first child atom.
+        enterReadingAtomHeaderState();
+      }
     } else if (shouldParseLeafAtom(atomType)) {
       // We don't support parsing of leaf atoms that define extended atom sizes, or that have
       // lengths greater than Integer.MAX_VALUE.
@@ -231,7 +236,11 @@ public final class Mp4Extractor implements Extractor, SeekMap {
         seekRequired = true;
       }
     }
+    processAtomEnded(atomEndPosition);
+    return seekRequired && parserState != STATE_READING_SAMPLE;
+  }
 
+  private void processAtomEnded(long atomEndPosition) {
     while (!containerAtoms.isEmpty() && containerAtoms.peek().endPosition == atomEndPosition) {
       Atom.ContainerAtom containerAtom = containerAtoms.pop();
       if (containerAtom.type == Atom.TYPE_moov) {
@@ -239,14 +248,13 @@ public final class Mp4Extractor implements Extractor, SeekMap {
         processMoovAtom(containerAtom);
         containerAtoms.clear();
         parserState = STATE_READING_SAMPLE;
-        return false;
       } else if (!containerAtoms.isEmpty()) {
         containerAtoms.peek().add(containerAtom);
       }
     }
-
-    enterReadingAtomHeaderState();
-    return seekRequired;
+    if (parserState != STATE_READING_SAMPLE) {
+      enterReadingAtomHeaderState();
+    }
   }
 
   /**
@@ -277,9 +285,9 @@ public final class Mp4Extractor implements Extractor, SeekMap {
     List<Mp4Track> tracks = new ArrayList<>();
     long earliestSampleOffset = Long.MAX_VALUE;
     GaplessInfo gaplessInfo = null;
-    Atom.ContainerAtom udta = moov.getContainerAtomOfType(Atom.TYPE_udta);
+    Atom.LeafAtom udta = moov.getLeafAtomOfType(Atom.TYPE_udta);
     if (udta != null) {
-      gaplessInfo = AtomParsers.parseUdta(udta);
+      gaplessInfo = AtomParsers.parseUdta(udta, isQuickTime);
     }
     for (int i = 0; i < moov.containerChildren.size(); i++) {
       Atom.ContainerAtom atom = moov.containerChildren.get(i);
@@ -432,7 +440,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
         || atom == Atom.TYPE_stsd || atom == Atom.TYPE_stts || atom == Atom.TYPE_stss
         || atom == Atom.TYPE_ctts || atom == Atom.TYPE_elst || atom == Atom.TYPE_stsc
         || atom == Atom.TYPE_stsz || atom == Atom.TYPE_stco || atom == Atom.TYPE_co64
-        || atom == Atom.TYPE_tkhd || atom == Atom.TYPE_ftyp || atom == Atom.TYPE_meta;
+        || atom == Atom.TYPE_tkhd || atom == Atom.TYPE_ftyp || atom == Atom.TYPE_udta;
   }
 
   /**
@@ -440,8 +448,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
    */
   private static boolean shouldParseContainerAtom(int atom) {
     return atom == Atom.TYPE_moov || atom == Atom.TYPE_trak || atom == Atom.TYPE_mdia
-        || atom == Atom.TYPE_minf || atom == Atom.TYPE_stbl || atom == Atom.TYPE_edts
-        || atom == Atom.TYPE_udta;
+        || atom == Atom.TYPE_minf || atom == Atom.TYPE_stbl || atom == Atom.TYPE_edts;
   }
 
   private static final class Mp4Track {
