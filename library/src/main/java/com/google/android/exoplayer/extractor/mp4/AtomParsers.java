@@ -17,6 +17,7 @@ package com.google.android.exoplayer.extractor.mp4;
 
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.MediaFormat;
+import com.google.android.exoplayer.ParserException;
 import com.google.android.exoplayer.extractor.GaplessInfo;
 import com.google.android.exoplayer.util.Ac3Util;
 import com.google.android.exoplayer.util.Assertions;
@@ -82,8 +83,10 @@ import java.util.List;
    * @param track Track to which this sample table corresponds.
    * @param stblAtom stbl (sample table) atom to parse.
    * @return Sample table described by the stbl atom.
+   * @throws ParserException If the resulting sample sequence does not contain a sync sample.
    */
-  public static TrackSampleTable parseStbl(Track track, Atom.ContainerAtom stblAtom) {
+  public static TrackSampleTable parseStbl(Track track, Atom.ContainerAtom stblAtom)
+      throws ParserException {
     // Array of sample sizes.
     ParsableByteArray stsz = stblAtom.getLeafAtomOfType(Atom.TYPE_stsz).data;
 
@@ -149,14 +152,7 @@ import java.util.List;
     int timestampOffset = 0;
     if (ctts != null) {
       ctts.setPosition(Atom.FULL_HEADER_SIZE);
-      remainingTimestampOffsetChanges = ctts.readUnsignedIntToInt() - 1;
-      remainingSamplesAtTimestampOffset = ctts.readUnsignedIntToInt();
-      // The BMFF spec (ISO 14496-12) states that sample offsets should be unsigned integers in
-      // version 0 ctts boxes, however some streams violate the spec and use signed integers
-      // instead. It's safe to always parse sample offsets as signed integers here, because
-      // unsigned integers will still be parsed correctly (unless their top bit is set, which
-      // is never true in practice because sample offsets are always small).
-      timestampOffset = ctts.readInt();
+      remainingTimestampOffsetChanges = ctts.readUnsignedIntToInt();
     }
 
     int nextSynchronizationSampleIndex = -1;
@@ -177,6 +173,21 @@ import java.util.List;
 
     long timestampTimeUnits = 0;
     for (int i = 0; i < sampleCount; i++) {
+      // Add on the timestamp offset if ctts is present.
+      if (ctts != null) {
+        while (remainingSamplesAtTimestampOffset == 0 && remainingTimestampOffsetChanges > 0) {
+          remainingSamplesAtTimestampOffset = ctts.readUnsignedIntToInt();
+          // The BMFF spec (ISO 14496-12) states that sample offsets should be unsigned integers in
+          // version 0 ctts boxes, however some streams violate the spec and use signed integers
+          // instead. It's safe to always parse sample offsets as signed integers here, because
+          // unsigned integers will still be parsed correctly (unless their top bit is set, which is
+          // never true in practice because sample offsets are always small).
+          timestampOffset = ctts.readInt();
+          remainingTimestampOffsetChanges--;
+        }
+        remainingSamplesAtTimestampOffset--;
+      }
+
       offsets[i] = offsetBytes;
       sizes[i] = fixedSampleSize == 0 ? stsz.readUnsignedIntToInt() : fixedSampleSize;
       if (sizes[i] > maximumSize) {
@@ -201,17 +212,6 @@ import java.util.List;
         remainingSamplesAtTimestampDelta = stts.readUnsignedIntToInt();
         timestampDeltaInTimeUnits = stts.readUnsignedIntToInt();
         remainingTimestampDeltaChanges--;
-      }
-
-      // Add on the timestamp offset if ctts is present.
-      if (ctts != null) {
-        remainingSamplesAtTimestampOffset--;
-        if (remainingSamplesAtTimestampOffset == 0 && remainingTimestampOffsetChanges > 0) {
-          remainingSamplesAtTimestampOffset = ctts.readUnsignedIntToInt();
-          // Read a signed offset even for version 0 ctts boxes (see comment above).
-          timestampOffset = ctts.readInt();
-          remainingTimestampOffsetChanges--;
-        }
       }
 
       // If we're at the last sample in this chunk, move to the next chunk.
@@ -327,6 +327,15 @@ import java.util.List;
       }
       pts += duration;
     }
+
+    boolean hasSyncSample = false;
+    for (int i = 0; i < editedFlags.length && !hasSyncSample; i++) {
+      hasSyncSample |= (editedFlags[i] & C.SAMPLE_FLAG_SYNC) != 0;
+    }
+    if (!hasSyncSample) {
+      throw new ParserException("The edited sample sequence does not contain a sync sample.");
+    }
+
     return new TrackSampleTable(editedOffsets, editedSizes, editedMaximumSize, editedTimestamps,
         editedFlags);
   }
@@ -925,10 +934,7 @@ import java.util.List;
     parent.setPosition(position + Atom.HEADER_SIZE + 4);
     // Start of the ES_Descriptor (defined in 14496-1)
     parent.skipBytes(1); // ES_Descriptor tag
-    int varIntByte = parent.readUnsignedByte();
-    while (varIntByte > 127) {
-      varIntByte = parent.readUnsignedByte();
-    }
+    parseExpandableClassSize(parent);
     parent.skipBytes(2); // ES_ID
 
     int flags = parent.readUnsignedByte();
@@ -944,10 +950,7 @@ import java.util.List;
 
     // Start of the DecoderConfigDescriptor (defined in 14496-1)
     parent.skipBytes(1); // DecoderConfigDescriptor tag
-    varIntByte = parent.readUnsignedByte();
-    while (varIntByte > 127) {
-      varIntByte = parent.readUnsignedByte();
-    }
+    parseExpandableClassSize(parent);
 
     // Set the MIME type based on the object type indication (14496-1 table 5).
     int objectTypeIndication = parent.readUnsignedByte();
@@ -994,16 +997,21 @@ import java.util.List;
 
     // Start of the AudioSpecificConfig.
     parent.skipBytes(1); // AudioSpecificConfig tag
-    varIntByte = parent.readUnsignedByte();
-    int varInt = varIntByte & 0x7F;
-    while (varIntByte > 127) {
-      varIntByte = parent.readUnsignedByte();
-      varInt = varInt << 8;
-      varInt |= varIntByte & 0x7F;
-    }
-    byte[] initializationData = new byte[varInt];
-    parent.readBytes(initializationData, 0, varInt);
+    int initializationDataSize = parseExpandableClassSize(parent);
+    byte[] initializationData = new byte[initializationDataSize];
+    parent.readBytes(initializationData, 0, initializationDataSize);
     return Pair.create(mimeType, initializationData);
+  }
+
+  /** Parses the size of an expandable class, as specified by ISO 14496-1 subsection 8.3.3. */
+  private static int parseExpandableClassSize(ParsableByteArray data) {
+    int currentByte = data.readUnsignedByte();
+    int size = currentByte & 0x7F;
+    while ((currentByte & 0x80) == 0x80) {
+      currentByte = data.readUnsignedByte();
+      size = (size << 7) | (currentByte & 0x7F);
+    }
+    return size;
   }
 
   private AtomParsers() {

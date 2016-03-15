@@ -26,6 +26,10 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
         }
+        debug {
+            jniDebuggable = true
+            debuggable = true
+        }
     }
 
     lintOptions {
@@ -37,4 +41,5 @@ dependencies {
     compile project(':library')
     compile project(':extension-opus')
     compile project(':extension-vp9')
+    compile project(':extension-flac')
 }
