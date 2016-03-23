@@ -15,8 +15,6 @@
  */
 package com.google.android.exoplayer.util;
 
-import android.util.Log;
-
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 

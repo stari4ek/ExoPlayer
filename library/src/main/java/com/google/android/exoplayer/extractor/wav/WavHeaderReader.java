@@ -18,10 +18,9 @@ package com.google.android.exoplayer.extractor.wav;
 import com.google.android.exoplayer.ParserException;
 import com.google.android.exoplayer.extractor.ExtractorInput;
 import com.google.android.exoplayer.util.Assertions;
+import com.google.android.exoplayer.util.Log;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
-
-import android.util.Log;
 
 import java.io.IOException;
 
