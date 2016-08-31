@@ -19,7 +19,6 @@ import android.media.MediaCodec.CryptoException;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Surface;
-
 import com.google.android.exoplayer.CodecCounters;
 import com.google.android.exoplayer.DummyTrackRenderer;
 import com.google.android.exoplayer.ExoPlaybackException;
@@ -47,7 +46,6 @@ import com.google.android.exoplayer.upstream.BandwidthMeter;
 import com.google.android.exoplayer.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer.util.DebugTextViewHelper;
 import com.google.android.exoplayer.util.PlayerControl;
-
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
@@ -197,7 +195,7 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
 
   public DemoPlayer(RendererBuilder rendererBuilder, int minBufferMs, int minRebufferMs) {
     this.rendererBuilder = rendererBuilder;
-    player = ExoPlayer.Factory.newInstance(RENDERER_COUNT, minBufferMs, minRebufferMs);
+    player = ExoPlayer.Factory.newInstance(RENDERER_COUNT, 1000, 5000);
     player.addListener(this);
     playerControl = new PlayerControl(player);
     mainHandler = new Handler();

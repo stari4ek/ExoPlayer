@@ -30,6 +30,9 @@ import com.google.android.exoplayer.C;
   private final int blockAlignment;
   /** Bits per sample for the audio data. */
   private final int bitsPerSample;
+  /** The PCM encoding */
+  private final int encoding;
+
   /** Offset to the start of sample data. */
   private long dataStartPosition;
   /** Total size in bytes of the sample data. */
@@ -40,32 +43,25 @@ import com.google.android.exoplayer.C;
       int sampleRateHz,
       int averageBytesPerSecond,
       int blockAlignment,
-      int bitsPerSample) {
+      int bitsPerSample,
+      int encoding) {
     this.numChannels = numChannels;
     this.sampleRateHz = sampleRateHz;
     this.averageBytesPerSecond = averageBytesPerSecond;
     this.blockAlignment = blockAlignment;
     this.bitsPerSample = bitsPerSample;
+    this.encoding = encoding;
   }
 
   /** Returns the duration in microseconds of this WAV. */
   public long getDurationUs() {
-    return (getNumFrames() * C.MICROS_PER_SECOND) / sampleRateHz;
+    long numFrames = dataSize / blockAlignment;
+    return (numFrames * C.MICROS_PER_SECOND) / sampleRateHz;
   }
 
-  /** Returns the number of samples in this WAV. */
-  public long getNumSamples() {
-    return dataSize / getBytesPerSample();
-  }
-
-  /** Returns the number of frames in this WAV. */
-  public long getNumFrames() {
-    return getNumSamples() / getNumChannels();
-  }
-
-  /** Returns the bytes per sample of this WAV. */
-  public int getBytesPerSample() {
-    return blockAlignment / numChannels;
+  /** Returns the bytes per frame of this WAV. */
+  public int getBytesPerFrame() {
+    return blockAlignment;
   }
 
   /** Returns the bitrate of this WAV. */
@@ -87,7 +83,7 @@ import com.google.android.exoplayer.C;
   public long getPosition(long timeUs) {
     long unroundedPosition = (timeUs * averageBytesPerSecond) / C.MICROS_PER_SECOND;
     // Round down to nearest frame.
-    return (unroundedPosition / numChannels) * numChannels + dataStartPosition;
+    return (unroundedPosition / blockAlignment) * blockAlignment + dataStartPosition;
   }
 
   /** Returns the time in microseconds for the given position in bytes in this WAV. */
@@ -105,4 +101,10 @@ import com.google.android.exoplayer.C;
     this.dataStartPosition = dataStartPosition;
     this.dataSize = dataSize;
   }
+
+  /** Returns the PCM encoding. **/
+  public int getEncoding() {
+    return encoding;
+  }
+
 }

@@ -15,14 +15,16 @@
  */
 package com.google.android.exoplayer.playbacktests.util;
 
-import com.google.android.exoplayer.MediaCodecSelector;
-import com.google.android.exoplayer.MediaCodecVideoTrackRenderer;
-import com.google.android.exoplayer.SampleSource;
-import com.google.android.exoplayer.util.Assertions;
-
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.os.Handler;
+import com.google.android.exoplayer.ExoPlaybackException;
+import com.google.android.exoplayer.MediaCodecSelector;
+import com.google.android.exoplayer.MediaCodecVideoTrackRenderer;
+import com.google.android.exoplayer.SampleSource;
+import com.google.android.exoplayer.drm.DrmSessionManager;
+import com.google.android.exoplayer.drm.FrameworkMediaCrypto;
+import java.nio.ByteBuffer;
 
 /**
  * Decodes and renders video using {@link MediaCodecVideoTrackRenderer}. Provides buffer timestamp
@@ -33,36 +35,58 @@ public class DebugMediaCodecVideoTrackRenderer extends MediaCodecVideoTrackRende
 
   private static final int ARRAY_SIZE = 1000;
 
-  public final long[] timestampsList = new long[ARRAY_SIZE];
+  private final long[] timestampsList = new long[ARRAY_SIZE];
 
   private int startIndex;
   private int queueSize;
-  private boolean enableBufferTimestampAssertions;
+  private int bufferCount;
 
   public DebugMediaCodecVideoTrackRenderer(Context context, SampleSource source,
       MediaCodecSelector mediaCodecSelector, int videoScalingMode, long allowedJoiningTimeMs,
-      Handler eventHandler, EventListener eventListener, int maxDroppedFrameCountToNotify,
-      boolean enableBufferTimestampAssertions) {
-    super(context, source, mediaCodecSelector, videoScalingMode, allowedJoiningTimeMs, null, false,
-        eventHandler, eventListener, maxDroppedFrameCountToNotify);
-    this.enableBufferTimestampAssertions = enableBufferTimestampAssertions;
+      DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
+      boolean playClearSamplesWithoutKeys, Handler eventHandler, EventListener eventListener,
+      int maxDroppedFrameCountToNotify) {
+    super(context, source, mediaCodecSelector, videoScalingMode, allowedJoiningTimeMs,
+        drmSessionManager, playClearSamplesWithoutKeys, eventHandler, eventListener,
+        maxDroppedFrameCountToNotify);
     startIndex = 0;
     queueSize = 0;
   }
 
   @Override
-  protected void onQueuedInputBuffer(long presentationTimeUs) {
-    if (enableBufferTimestampAssertions) {
-      insertTimestamp(presentationTimeUs);
-      maybeShiftTimestampsList();
-    }
+  protected void releaseCodec() {
+    super.releaseCodec();
+    clearTimestamps();
+  }
+
+  @Override
+  protected void flushCodec() throws ExoPlaybackException {
+    super.flushCodec();
+    clearTimestamps();
+  }
+
+  @Override
+  protected void onQueuedInputBuffer(
+      long presentationTimeUs, ByteBuffer buffer, int bufferSize, boolean sampleEncrypted) {
+    insertTimestamp(presentationTimeUs);
+    maybeShiftTimestampsList();
   }
 
   @Override
   protected void onProcessedOutputBuffer(long presentationTimeUs) {
-    if (enableBufferTimestampAssertions) {
-      Assertions.checkArgument(dequeueTimestamp() == presentationTimeUs);
+    bufferCount++;
+    long expectedTimestampUs = dequeueTimestamp();
+    if (expectedTimestampUs != presentationTimeUs) {
+      throw new IllegalStateException("Expected to dequeue video buffer with presentation "
+          + "timestamp: " + expectedTimestampUs + ". Instead got: " + presentationTimeUs
+          + " (Processed buffers since last flush: " + bufferCount + ").");
     }
+  }
+
+  private void clearTimestamps() {
+    startIndex = 0;
+    queueSize = 0;
+    bufferCount = 0;
   }
 
   private void insertTimestamp(long presentationTimeUs) {

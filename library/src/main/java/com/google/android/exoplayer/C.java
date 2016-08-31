@@ -15,11 +15,10 @@
  */
 package com.google.android.exoplayer;
 
-import com.google.android.exoplayer.util.Util;
-
 import android.media.AudioFormat;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
+import com.google.android.exoplayer.util.Util;
 
 /**
  * Defines constants that are generally useful throughout the library.
@@ -57,6 +56,31 @@ public final class C {
    */
   @SuppressWarnings("InlinedApi")
   public static final int CRYPTO_MODE_AES_CTR = MediaCodec.CRYPTO_MODE_AES_CTR;
+
+  /**
+   * @see AudioFormat#ENCODING_INVALID
+   */
+  public static final int ENCODING_INVALID = AudioFormat.ENCODING_INVALID;
+
+  /**
+   * @see AudioFormat#ENCODING_PCM_8BIT
+   */
+  public static final int ENCODING_PCM_8BIT = AudioFormat.ENCODING_PCM_8BIT;
+
+  /**
+   * @see AudioFormat#ENCODING_PCM_16BIT
+   */
+  public static final int ENCODING_PCM_16BIT = AudioFormat.ENCODING_PCM_16BIT;
+
+  /**
+   * PCM encoding with 24 bits per sample.
+   */
+  public static final int ENCODING_PCM_24BIT = 0x80000000;
+
+  /**
+   * PCM encoding with 32 bits per sample.
+   */
+  public static final int ENCODING_PCM_32BIT = 0x40000000;
 
   /**
    * @see AudioFormat#ENCODING_AC3
@@ -115,6 +139,21 @@ public final class C {
    * A return value for methods where the length of parsed data exceeds the maximum length allowed.
    */
   public static final int RESULT_MAX_LENGTH_EXCEEDED = -2;
+
+  /**
+   * Indicates Monoscopic stereo layout, used with 360/3D/VR videos.
+   */
+  public static final int STEREO_MODE_MONO = 0;
+
+  /**
+   * Indicates Top-Bottom stereo layout, used with 360/3D/VR videos.
+   */
+  public static final int STEREO_MODE_TOP_BOTTOM = 1;
+
+  /**
+   * Indicates Left-Right stereo layout, used with 360/3D/VR videos.
+   */
+  public static final int STEREO_MODE_LEFT_RIGHT = 2;
 
   private C() {}
 

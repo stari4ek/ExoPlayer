@@ -19,7 +19,6 @@ import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.extractor.ExtractorInput;
 import com.google.android.exoplayer.util.Assertions;
 import com.google.android.exoplayer.util.ParsableByteArray;
-
 import java.io.IOException;
 
 /**
@@ -44,14 +43,6 @@ import java.io.IOException;
     Assertions.checkArgument(audioDataLength > 0 && totalSamples > 0);
     this.audioDataLength = audioDataLength;
     this.totalSamples = totalSamples;
-  }
-
-  /**
-   * Resets this {@code OggSeeker}.
-   */
-  public void reset() {
-    pageHeader.reset();
-    headerArray.reset();
   }
 
   /**

@@ -15,6 +15,11 @@
  */
 package com.google.android.exoplayer.dash.mpd;
 
+import android.text.TextUtils;
+import android.util.Base64;
+//import android.util.Log;
+import com.google.android.exoplayer.util.Log;
+import android.util.Pair;
 import com.google.android.exoplayer.ParserException;
 import com.google.android.exoplayer.chunk.Format;
 import com.google.android.exoplayer.dash.mpd.SegmentBase.SegmentList;
@@ -29,17 +34,6 @@ import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParserUtil;
 import com.google.android.exoplayer.util.UriUtil;
 import com.google.android.exoplayer.util.Util;
-import com.google.android.exoplayer.util.Log;
-
-import android.text.TextUtils;
-import android.util.Base64;
-import android.util.Pair;
-
-import org.xml.sax.helpers.DefaultHandler;
-import org.xmlpull.v1.XmlPullParser;
-import org.xmlpull.v1.XmlPullParserException;
-import org.xmlpull.v1.XmlPullParserFactory;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.ParseException;
@@ -50,6 +44,10 @@ import java.util.List;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.xml.sax.helpers.DefaultHandler;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlPullParserFactory;
 
 /**
  * A parser of media presentation description files.

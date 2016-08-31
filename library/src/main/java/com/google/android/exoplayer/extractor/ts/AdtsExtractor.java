@@ -23,7 +23,6 @@ import com.google.android.exoplayer.extractor.SeekMap;
 import com.google.android.exoplayer.util.ParsableBitArray;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
-
 import java.io.IOException;
 
 /**
@@ -101,6 +100,10 @@ public final class AdtsExtractor implements Extractor {
         input.peekFully(scratch.data, 0, 4);
         scratchBits.setPosition(14);
         int frameSize = scratchBits.readBits(13);
+        // Either the stream is malformed OR we're not parsing an ADTS stream.
+        if (frameSize <= 6) {
+          return false;
+        }
         input.advancePeekPosition(frameSize - 6);
         validFramesSize += frameSize;
       }
@@ -118,6 +121,11 @@ public final class AdtsExtractor implements Extractor {
   public void seek() {
     startedPacket = false;
     adtsReader.seek();
+  }
+
+  @Override
+  public void release() {
+    // Do nothing
   }
 
   @Override

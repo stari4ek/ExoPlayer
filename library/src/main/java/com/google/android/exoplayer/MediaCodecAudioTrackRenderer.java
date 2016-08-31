@@ -15,12 +15,6 @@
  */
 package com.google.android.exoplayer;
 
-import com.google.android.exoplayer.MediaCodecUtil.DecoderQueryException;
-import com.google.android.exoplayer.audio.AudioCapabilities;
-import com.google.android.exoplayer.audio.AudioTrack;
-import com.google.android.exoplayer.drm.DrmSessionManager;
-import com.google.android.exoplayer.util.MimeTypes;
-
 import android.annotation.TargetApi;
 import android.media.AudioManager;
 import android.media.MediaCodec;
@@ -28,7 +22,11 @@ import android.media.PlaybackParams;
 import android.media.audiofx.Virtualizer;
 import android.os.Handler;
 import android.os.SystemClock;
-
+import com.google.android.exoplayer.MediaCodecUtil.DecoderQueryException;
+import com.google.android.exoplayer.audio.AudioCapabilities;
+import com.google.android.exoplayer.audio.AudioTrack;
+import com.google.android.exoplayer.drm.DrmSessionManager;
+import com.google.android.exoplayer.util.MimeTypes;
 import java.nio.ByteBuffer;
 
 /**
@@ -91,6 +89,7 @@ public class MediaCodecAudioTrackRenderer extends MediaCodecTrackRenderer implem
 
   private boolean passthroughEnabled;
   private android.media.MediaFormat passthroughMediaFormat;
+  private int pcmEncoding;
   private int audioSessionId;
   private long currentPositionUs;
   private boolean allowPositionDiscontinuity;
@@ -213,7 +212,7 @@ public class MediaCodecAudioTrackRenderer extends MediaCodecTrackRenderer implem
       throws DecoderQueryException {
     String mimeType = mediaFormat.mimeType;
     return MimeTypes.isAudio(mimeType) && (MimeTypes.AUDIO_UNKNOWN.equals(mimeType)
-        || (allowPassthrough(mimeType) && mediaCodecSelector.getPassthroughDecoderName() != null)
+        || (allowPassthrough(mimeType) && mediaCodecSelector.getPassthroughDecoderInfo() != null)
         || mediaCodecSelector.getDecoderInfo(mimeType, false) != null);
   }
 
@@ -221,10 +220,10 @@ public class MediaCodecAudioTrackRenderer extends MediaCodecTrackRenderer implem
   protected DecoderInfo getDecoderInfo(MediaCodecSelector mediaCodecSelector, String mimeType,
       boolean requiresSecureDecoder) throws DecoderQueryException {
     if (allowPassthrough(mimeType)) {
-      String passthroughDecoderName = mediaCodecSelector.getPassthroughDecoderName();
-      if (passthroughDecoderName != null) {
+      DecoderInfo passthroughDecoderInfo = mediaCodecSelector.getPassthroughDecoderInfo();
+      if (passthroughDecoderInfo != null) {
         passthroughEnabled = true;
-        return new DecoderInfo(passthroughDecoderName, false);
+        return passthroughDecoderInfo;
       }
     }
     passthroughEnabled = false;
@@ -265,9 +264,24 @@ public class MediaCodecAudioTrackRenderer extends MediaCodecTrackRenderer implem
   }
 
   @Override
-  protected void onOutputFormatChanged(android.media.MediaFormat outputFormat) {
+  protected void onInputFormatChanged(MediaFormatHolder holder) throws ExoPlaybackException {
+    super.onInputFormatChanged(holder);
+    // If the input format is anything other than PCM then we assume that the audio decoder will
+    // output 16-bit PCM.
+    pcmEncoding = MimeTypes.AUDIO_RAW.equals(holder.format.mimeType) ? holder.format.pcmEncoding
+        : C.ENCODING_PCM_16BIT;
+  }
+
+  @Override
+  protected void onOutputFormatChanged(MediaCodec codec, android.media.MediaFormat outputFormat) {
     boolean passthrough = passthroughMediaFormat != null;
-    audioTrack.configure(passthrough ? passthroughMediaFormat : outputFormat, passthrough);
+    String mimeType = passthrough
+        ? passthroughMediaFormat.getString(android.media.MediaFormat.KEY_MIME)
+        : MimeTypes.AUDIO_RAW;
+    android.media.MediaFormat format = passthrough ? passthroughMediaFormat : outputFormat;
+    int channelCount = format.getInteger(android.media.MediaFormat.KEY_CHANNEL_COUNT);
+    int sampleRate = format.getInteger(android.media.MediaFormat.KEY_SAMPLE_RATE);
+    audioTrack.configure(mimeType, channelCount, sampleRate, pcmEncoding);
   }
 
   /**

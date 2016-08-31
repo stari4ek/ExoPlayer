@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer.hls;
 
+import android.text.TextUtils;
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.MediaFormat;
 import com.google.android.exoplayer.ParserException;
@@ -29,9 +30,6 @@ import com.google.android.exoplayer.text.webvtt.WebvttCueParser;
 import com.google.android.exoplayer.text.webvtt.WebvttParserUtil;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.ParsableByteArray;
-
-import android.text.TextUtils;
-
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.regex.Matcher;
@@ -82,6 +80,11 @@ import java.util.regex.Pattern;
   public void seek() {
     // This extractor is only used for the HLS use case, which should not call this method.
     throw new IllegalStateException();
+  }
+
+  @Override
+  public void release() {
+    // Do nothing
   }
 
   @Override

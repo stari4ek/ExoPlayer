@@ -16,13 +16,13 @@
 package com.google.android.exoplayer.upstream;
 
 import com.google.android.exoplayer.C;
-
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
+import java.net.SocketException;
 
 /**
  * A UDP {@link DataSource}.
@@ -50,14 +50,13 @@ public final class UdpDataSource implements UriDataSource {
   public static final int DEFAULT_MAX_PACKET_SIZE = 2000;
 
   /**
-   * Default read timeout - infinite
+   * The default socket timeout, in milliseconds.
    */
-  public static final int INFINITE_READ_TIMEOUT = 0;
-  public static final int DEFAULT_READ_TIMEOUT = INFINITE_READ_TIMEOUT;
+  public static final int DEAFULT_SOCKET_TIMEOUT_MILLIS = 8 * 1000;
 
   private final TransferListener listener;
   private final DatagramPacket packet;
-  private final int readTimeoutMs;
+  private final int socketTimeoutMillis;
 
   private DataSpec dataSpec;
   private DatagramSocket socket;
@@ -73,16 +72,26 @@ public final class UdpDataSource implements UriDataSource {
    * @param listener An optional listener.
    */
   public UdpDataSource(TransferListener listener) {
-    this(listener, DEFAULT_MAX_PACKET_SIZE, DEFAULT_READ_TIMEOUT);
+    this(listener, DEFAULT_MAX_PACKET_SIZE);
   }
 
   /**
    * @param listener An optional listener.
    * @param maxPacketSize The maximum datagram packet size, in bytes.
    */
-  public UdpDataSource(TransferListener listener, int maxPacketSize, int readTimeoutMs) {
+  public UdpDataSource(TransferListener listener, int maxPacketSize) {
+    this(listener, maxPacketSize, DEAFULT_SOCKET_TIMEOUT_MILLIS);
+  }
+
+  /**
+   * @param listener An optional listener.
+   * @param maxPacketSize The maximum datagram packet size, in bytes.
+   * @param socketTimeoutMillis The socket timeout in milliseconds. A timeout of zero is interpreted
+   *     as an infinite timeout.
+   */
+  public UdpDataSource(TransferListener listener, int maxPacketSize, int socketTimeoutMillis) {
     this.listener = listener;
-    this.readTimeoutMs = readTimeoutMs;
+    this.socketTimeoutMillis = socketTimeoutMillis;
     packetBuffer = new byte[maxPacketSize];
     packet = new DatagramPacket(packetBuffer, 0, maxPacketSize);
   }
@@ -103,8 +112,13 @@ public final class UdpDataSource implements UriDataSource {
       } else {
         socket = new DatagramSocket(socketAddress);
       }
-      socket.setSoTimeout(readTimeoutMs);
     } catch (IOException e) {
+      throw new UdpDataSourceException(e);
+    }
+
+    try {
+      socket.setSoTimeout(socketTimeoutMillis);
+    } catch (SocketException e) {
       throw new UdpDataSourceException(e);
     }
 

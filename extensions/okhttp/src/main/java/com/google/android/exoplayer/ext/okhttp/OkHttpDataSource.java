@@ -21,15 +21,6 @@ import com.google.android.exoplayer.upstream.HttpDataSource;
 import com.google.android.exoplayer.upstream.TransferListener;
 import com.google.android.exoplayer.util.Assertions;
 import com.google.android.exoplayer.util.Predicate;
-
-import okhttp3.CacheControl;
-import okhttp3.HttpUrl;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
-
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,6 +29,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import okhttp3.CacheControl;
+import okhttp3.HttpUrl;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 /**
  * An {@link HttpDataSource} that delegates to Square's {@link OkHttpClient}.
@@ -159,7 +157,7 @@ public class OkHttpDataSource implements HttpDataSource {
       responseByteStream = response.body().byteStream();
     } catch (IOException e) {
       throw new HttpDataSourceException("Unable to connect to " + dataSpec.uri.toString(), e,
-          dataSpec);
+          dataSpec, HttpDataSourceException.TYPE_OPEN);
     }
 
     int responseCode = response.code();
@@ -204,7 +202,7 @@ public class OkHttpDataSource implements HttpDataSource {
       skipInternal();
       return readInternal(buffer, offset, readLength);
     } catch (IOException e) {
-      throw new HttpDataSourceException(e, dataSpec);
+      throw new HttpDataSourceException(e, dataSpec, HttpDataSourceException.TYPE_READ);
     }
   }
 

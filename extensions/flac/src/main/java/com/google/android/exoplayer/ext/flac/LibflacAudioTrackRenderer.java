@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer.ext.flac;
 
+import android.os.Handler;
+import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.CodecCounters;
 import com.google.android.exoplayer.ExoPlaybackException;
 import com.google.android.exoplayer.ExoPlayer;
@@ -28,9 +30,6 @@ import com.google.android.exoplayer.audio.AudioTrack;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.extensions.Buffer;
 import com.google.android.exoplayer.util.extensions.InputBuffer;
-
-import android.os.Handler;
-
 import java.util.List;
 
 /**
@@ -123,7 +122,7 @@ public final class LibflacAudioTrackRenderer extends SampleSourceTrackRenderer
    * Returns whether the underlying libflac library is available.
    */
   public static boolean isLibflacAvailable() {
-    return FlacDecoder.IS_AVAILABLE;
+    return FlacJni.IS_AVAILABLE;
   }
 
   @Override
@@ -262,6 +261,9 @@ public final class LibflacAudioTrackRenderer extends SampleSourceTrackRenderer
       return false;
     }
 
+    if (inputBuffer.sampleHolder.isDecodeOnly()) {
+      inputBuffer.setFlag(Buffer.FLAG_DECODE_ONLY);
+    }
     decoder.queueInputBuffer(inputBuffer);
     inputBuffer = null;
     return true;
@@ -343,7 +345,8 @@ public final class LibflacAudioTrackRenderer extends SampleSourceTrackRenderer
     int result = readSource(positionUs, formatHolder, null);
     if (result == SampleSource.FORMAT_READ) {
       format = formatHolder.format;
-      audioTrack.configure(format.getFrameworkMediaFormatV16(), false);
+      audioTrack.configure(MimeTypes.AUDIO_RAW, format.channelCount, format.sampleRate,
+          C.ENCODING_PCM_16BIT);
       return true;
     }
     return false;

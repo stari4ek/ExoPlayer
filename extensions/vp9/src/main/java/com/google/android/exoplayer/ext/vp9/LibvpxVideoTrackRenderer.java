@@ -15,6 +15,11 @@
  */
 package com.google.android.exoplayer.ext.vp9;
 
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.os.Handler;
+import android.os.SystemClock;
+import android.view.Surface;
 import com.google.android.exoplayer.CodecCounters;
 import com.google.android.exoplayer.ExoPlaybackException;
 import com.google.android.exoplayer.ExoPlayer;
@@ -25,12 +30,6 @@ import com.google.android.exoplayer.SampleSourceTrackRenderer;
 import com.google.android.exoplayer.TrackRenderer;
 import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.extensions.Buffer;
-
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.os.Handler;
-import android.os.SystemClock;
-import android.view.Surface;
 
 /**
  * Decodes and renders video using the native VP9 decoder.
@@ -189,6 +188,13 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
     return isLibvpxAvailable() ? VpxDecoder.getLibvpxVersion() : null;
   }
 
+  /**
+   * Returns the configuration string with which the underlying libvpx library was built.
+   */
+  public static String getLibvpxConfig() {
+    return isLibvpxAvailable() ? VpxDecoder.getLibvpxConfig() : null;
+  }
+
   @Override
   protected boolean handlesTrack(MediaFormat mediaFormat) {
     return MimeTypes.VIDEO_VP9.equalsIgnoreCase(mediaFormat.mimeType);
@@ -288,7 +294,7 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
 
   private void renderBuffer() {
     codecCounters.renderedOutputBufferCount++;
-    notifyIfVideoSizeChanged(outputBuffer);
+    notifyIfVideoSizeChanged(outputBuffer.width, outputBuffer.height);
     if (outputBuffer.mode == VpxDecoder.OUTPUT_MODE_RGB && surface != null) {
       renderRgbFrame(outputBuffer, scaleToFit);
       if (!drawnToSurface) {
@@ -350,6 +356,9 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
 
     inputBuffer.width = format.width;
     inputBuffer.height = format.height;
+    if (inputBuffer.sampleHolder.isDecodeOnly()) {
+      inputBuffer.setFlag(Buffer.FLAG_DECODE_ONLY);
+    }
     decoder.queueInputBuffer(inputBuffer);
     inputBuffer = null;
     return true;
@@ -462,16 +471,16 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
     }
   }
 
-  private void notifyIfVideoSizeChanged(final VpxOutputBuffer outputBuffer) {
-    if (previousWidth == -1 || previousHeight == -1
-        || previousWidth != outputBuffer.width || previousHeight != outputBuffer.height) {
-      previousWidth = outputBuffer.width;
-      previousHeight = outputBuffer.height;
+  private void notifyIfVideoSizeChanged(final int width, final int height) {
+    if (previousWidth == -1 || previousHeight == -1 || previousWidth != width
+        || previousHeight != height) {
+      previousWidth = width;
+      previousHeight = height;
       if (eventHandler != null && eventListener != null) {
         eventHandler.post(new Runnable()  {
           @Override
           public void run() {
-            eventListener.onVideoSizeChanged(outputBuffer.width, outputBuffer.height);
+            eventListener.onVideoSizeChanged(width, height);
           }
         });
       }

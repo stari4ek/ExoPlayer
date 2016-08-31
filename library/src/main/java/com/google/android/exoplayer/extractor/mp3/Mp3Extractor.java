@@ -28,7 +28,6 @@ import com.google.android.exoplayer.extractor.TrackOutput;
 import com.google.android.exoplayer.util.MpegAudioHeader;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
-
 import java.io.EOFException;
 import java.io.IOException;
 
@@ -67,7 +66,7 @@ public final class Mp3Extractor implements Extractor {
   private GaplessInfo gaplessInfo;
   private Seeker seeker;
   private long basisTimeUs;
-  private int samplesRead;
+  private long samplesRead;
   private int sampleBytesRemaining;
 
   /**
@@ -108,6 +107,11 @@ public final class Mp3Extractor implements Extractor {
     samplesRead = 0;
     basisTimeUs = -1;
     sampleBytesRemaining = 0;
+  }
+
+  @Override
+  public void release() {
+    // Do nothing
   }
 
   @Override

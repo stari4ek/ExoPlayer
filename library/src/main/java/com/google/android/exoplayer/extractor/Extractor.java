@@ -16,7 +16,6 @@
 package com.google.android.exoplayer.extractor;
 
 import com.google.android.exoplayer.C;
-
 import java.io.IOException;
 
 /**
@@ -96,5 +95,10 @@ public interface Extractor {
    * {@link ExtractorOutput}.
    */
   void seek();
+
+  /**
+   * Releases all kept resources.
+   */
+  void release();
 
 }

@@ -19,7 +19,6 @@ import com.google.android.exoplayer.SampleHolder;
 import com.google.android.exoplayer.util.extensions.Buffer;
 import com.google.android.exoplayer.util.extensions.InputBuffer;
 import com.google.android.exoplayer.util.extensions.SimpleDecoder;
-
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.List;
@@ -117,9 +116,9 @@ import java.util.List;
         throw new OpusDecoderException("Invalid Codec Delay or Seek Preroll");
       }
       long codecDelayNs =
-          ByteBuffer.wrap(initializationData.get(1)).order(ByteOrder.LITTLE_ENDIAN).getLong();
+          ByteBuffer.wrap(initializationData.get(1)).order(ByteOrder.nativeOrder()).getLong();
       long seekPreRollNs =
-          ByteBuffer.wrap(initializationData.get(2)).order(ByteOrder.LITTLE_ENDIAN).getLong();
+          ByteBuffer.wrap(initializationData.get(2)).order(ByteOrder.nativeOrder()).getLong();
       headerSkipSamples = nsToSamples(codecDelayNs);
       headerSeekPreRollSamples = nsToSamples(seekPreRollNs);
     } else {
@@ -150,8 +149,9 @@ import java.util.List;
   }
 
   @Override
-  public OpusDecoderException decode(InputBuffer inputBuffer, OpusOutputBuffer outputBuffer) {
-    if (inputBuffer.getFlag(Buffer.FLAG_RESET)) {
+  public OpusDecoderException decode(InputBuffer inputBuffer, OpusOutputBuffer outputBuffer,
+      boolean reset) {
+    if (reset) {
       opusReset(nativeDecoderContext);
       // When seeking to 0, skip number of samples as specified in opus header. When seeking to
       // any other time, skip number of samples as specified by seek preroll.
@@ -161,14 +161,8 @@ import java.util.List;
     SampleHolder sampleHolder = inputBuffer.sampleHolder;
     outputBuffer.timestampUs = sampleHolder.timeUs;
     sampleHolder.data.position(sampleHolder.data.position() - sampleHolder.size);
-    int requiredOutputBufferSize =
-        opusGetRequiredOutputBufferSize(sampleHolder.data, sampleHolder.size, SAMPLE_RATE);
-    if (requiredOutputBufferSize < 0) {
-      return new OpusDecoderException("Error when computing required output buffer size.");
-    }
-    outputBuffer.init(requiredOutputBufferSize);
     int result = opusDecode(nativeDecoderContext, sampleHolder.data, sampleHolder.size,
-        outputBuffer.data, outputBuffer.data.capacity());
+        outputBuffer, SAMPLE_RATE);
     if (result < 0) {
       return new OpusDecoderException("Decode error: " + opusGetErrorMessage(result));
     }
@@ -198,9 +192,7 @@ import java.util.List;
   private native long opusInit(int sampleRate, int channelCount, int numStreams, int numCoupled,
       int gain, byte[] streamMap);
   private native int opusDecode(long decoder, ByteBuffer inputBuffer, int inputSize,
-      ByteBuffer outputBuffer, int outputSize);
-  private native int opusGetRequiredOutputBufferSize(
-      ByteBuffer inputBuffer, int inputSize, int sampleRate);
+      OpusOutputBuffer outputBuffer, int sampleRate);
   private native void opusClose(long decoder);
   private native void opusReset(long decoder);
   private native String opusGetErrorMessage(int errorCode);

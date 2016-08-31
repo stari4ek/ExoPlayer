@@ -15,34 +15,6 @@
  */
 package com.google.android.exoplayer.demo;
 
-import com.google.android.exoplayer.AspectRatioFrameLayout;
-import com.google.android.exoplayer.ExoPlaybackException;
-import com.google.android.exoplayer.ExoPlayer;
-import com.google.android.exoplayer.MediaCodecTrackRenderer.DecoderInitializationException;
-import com.google.android.exoplayer.MediaCodecUtil.DecoderQueryException;
-import com.google.android.exoplayer.MediaFormat;
-import com.google.android.exoplayer.audio.AudioCapabilities;
-import com.google.android.exoplayer.audio.AudioCapabilitiesReceiver;
-import com.google.android.exoplayer.demo.player.DashRendererBuilder;
-import com.google.android.exoplayer.demo.player.DemoPlayer;
-import com.google.android.exoplayer.demo.player.DemoPlayer.RendererBuilder;
-import com.google.android.exoplayer.demo.player.ExtractorRendererBuilder;
-import com.google.android.exoplayer.demo.player.HlsRendererBuilder;
-import com.google.android.exoplayer.demo.player.SmoothStreamingRendererBuilder;
-import com.google.android.exoplayer.drm.UnsupportedDrmException;
-import com.google.android.exoplayer.metadata.id3.GeobFrame;
-import com.google.android.exoplayer.metadata.id3.Id3Frame;
-import com.google.android.exoplayer.metadata.id3.PrivFrame;
-import com.google.android.exoplayer.metadata.id3.TxxxFrame;
-import com.google.android.exoplayer.text.CaptionStyleCompat;
-import com.google.android.exoplayer.text.Cue;
-import com.google.android.exoplayer.text.SubtitleLayout;
-import com.google.android.exoplayer.util.DebugTextViewHelper;
-import com.google.android.exoplayer.util.MimeTypes;
-import com.google.android.exoplayer.util.Util;
-import com.google.android.exoplayer.util.VerboseLogUtil;
-import com.google.android.exoplayer.util.Log;
-
 import android.Manifest.permission;
 import android.annotation.TargetApi;
 import android.app.Activity;
@@ -52,6 +24,8 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
+//import android.util.Log;
+import com.google.android.exoplayer.util.Log;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -69,7 +43,34 @@ import android.widget.PopupMenu;
 import android.widget.PopupMenu.OnMenuItemClickListener;
 import android.widget.TextView;
 import android.widget.Toast;
-
+import com.google.android.exoplayer.AspectRatioFrameLayout;
+import com.google.android.exoplayer.ExoPlaybackException;
+import com.google.android.exoplayer.ExoPlayer;
+import com.google.android.exoplayer.MediaCodecTrackRenderer.DecoderInitializationException;
+import com.google.android.exoplayer.MediaCodecUtil.DecoderQueryException;
+import com.google.android.exoplayer.MediaFormat;
+import com.google.android.exoplayer.audio.AudioCapabilities;
+import com.google.android.exoplayer.audio.AudioCapabilitiesReceiver;
+import com.google.android.exoplayer.demo.player.DashRendererBuilder;
+import com.google.android.exoplayer.demo.player.DemoPlayer;
+import com.google.android.exoplayer.demo.player.DemoPlayer.RendererBuilder;
+import com.google.android.exoplayer.demo.player.ExtractorRendererBuilder;
+import com.google.android.exoplayer.demo.player.HlsRendererBuilder;
+import com.google.android.exoplayer.demo.player.SmoothStreamingRendererBuilder;
+import com.google.android.exoplayer.drm.UnsupportedDrmException;
+import com.google.android.exoplayer.metadata.id3.ApicFrame;
+import com.google.android.exoplayer.metadata.id3.GeobFrame;
+import com.google.android.exoplayer.metadata.id3.Id3Frame;
+import com.google.android.exoplayer.metadata.id3.PrivFrame;
+import com.google.android.exoplayer.metadata.id3.TextInformationFrame;
+import com.google.android.exoplayer.metadata.id3.TxxxFrame;
+import com.google.android.exoplayer.text.CaptionStyleCompat;
+import com.google.android.exoplayer.text.Cue;
+import com.google.android.exoplayer.text.SubtitleLayout;
+import com.google.android.exoplayer.util.DebugTextViewHelper;
+import com.google.android.exoplayer.util.MimeTypes;
+import com.google.android.exoplayer.util.Util;
+import com.google.android.exoplayer.util.VerboseLogUtil;
 import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -195,8 +196,22 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback, 
   }
 
   @Override
+  public void onStart() {
+    super.onStart();
+    if (Util.SDK_INT > 23) {
+      onShown();
+    }
+  }
+
+  @Override
   public void onResume() {
     super.onResume();
+    if (Util.SDK_INT <= 23 || player == null) {
+      onShown();
+    }
+  }
+
+  private void onShown() {
     Intent intent = getIntent();
     contentUri = intent.getData();
     contentType = intent.getIntExtra(CONTENT_TYPE_EXTRA,
@@ -216,6 +231,20 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback, 
   @Override
   public void onPause() {
     super.onPause();
+    if (Util.SDK_INT <= 23) {
+      onHidden();
+    }
+  }
+
+  @Override
+  public void onStop() {
+    super.onStop();
+    if (Util.SDK_INT > 23) {
+      onHidden();
+    }
+  }
+
+  private void onHidden() {
     if (!enableBackgroundAudio) {
       releasePlayer();
     } else {
@@ -618,6 +647,14 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback, 
         GeobFrame geobFrame = (GeobFrame) id3Frame;
         Log.i(TAG, String.format("ID3 TimedMetadata %s: mimeType=%s, filename=%s, description=%s",
             geobFrame.id, geobFrame.mimeType, geobFrame.filename, geobFrame.description));
+      } else if (id3Frame instanceof ApicFrame) {
+        ApicFrame apicFrame = (ApicFrame) id3Frame;
+        Log.i(TAG, String.format("ID3 TimedMetadata %s: mimeType=%s, description=%s",
+                apicFrame.id, apicFrame.mimeType, apicFrame.description));
+      } else if (id3Frame instanceof TextInformationFrame) {
+        TextInformationFrame textInformationFrame = (TextInformationFrame) id3Frame;
+        Log.i(TAG, String.format("ID3 TimedMetadata %s: description=%s", textInformationFrame.id,
+            textInformationFrame.description));
       } else {
         Log.i(TAG, String.format("ID3 TimedMetadata %s", id3Frame.id));
       }
@@ -704,13 +741,15 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback, 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
       int keyCode = event.getKeyCode();
-      if (playerControl.canSeekForward() && keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+      if (playerControl.canSeekForward() && (keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+          || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT)) {
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
           playerControl.seekTo(playerControl.getCurrentPosition() + 15000); // milliseconds
           show();
         }
         return true;
-      } else if (playerControl.canSeekBackward() && keyCode == KeyEvent.KEYCODE_MEDIA_REWIND) {
+      } else if (playerControl.canSeekBackward() && (keyCode == KeyEvent.KEYCODE_MEDIA_REWIND
+          || keyCode == KeyEvent.KEYCODE_DPAD_LEFT)) {
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
           playerControl.seekTo(playerControl.getCurrentPosition() - 5000); // milliseconds
           show();

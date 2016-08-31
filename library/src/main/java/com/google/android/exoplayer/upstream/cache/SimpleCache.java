@@ -15,10 +15,8 @@
  */
 package com.google.android.exoplayer.upstream.cache;
 
-import com.google.android.exoplayer.util.Assertions;
-
 import android.os.ConditionVariable;
-
+import com.google.android.exoplayer.util.Assertions;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,7 +53,7 @@ public final class SimpleCache implements Cache {
     this.listeners = new HashMap<>();
     // Start cache initialization.
     final ConditionVariable conditionVariable = new ConditionVariable();
-    new Thread() {
+    new Thread("SimpleCache.initialize()") {
       @Override
       public void run() {
         synchronized (SimpleCache.this) {
@@ -254,6 +252,7 @@ public final class SimpleCache implements Cache {
         }
       }
     }
+    evictor.onCacheInitialized();
   }
 
   /**

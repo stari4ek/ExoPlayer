@@ -23,7 +23,6 @@ import com.google.android.exoplayer.extractor.PositionHolder;
 import com.google.android.exoplayer.extractor.SeekMap;
 import com.google.android.exoplayer.util.ParsableByteArray;
 import com.google.android.exoplayer.util.Util;
-
 import java.io.IOException;
 
 /**
@@ -118,6 +117,11 @@ public final class FlvExtractor implements Extractor, SeekMap {
   public void seek() {
     parserState = STATE_READING_FLV_HEADER;
     bytesToNextTagHeader = 0;
+  }
+
+  @Override
+  public void release() {
+    // Do nothing
   }
 
   @Override

@@ -15,6 +15,10 @@
  */
 package com.google.android.exoplayer.extractor;
 
+import android.net.Uri;
+import android.os.Handler;
+import android.os.SystemClock;
+import android.util.SparseArray;
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.MediaFormat;
 import com.google.android.exoplayer.MediaFormatHolder;
@@ -31,12 +35,6 @@ import com.google.android.exoplayer.upstream.Loader;
 import com.google.android.exoplayer.upstream.Loader.Loadable;
 import com.google.android.exoplayer.util.Assertions;
 import com.google.android.exoplayer.util.Util;
-
-import android.net.Uri;
-import android.os.Handler;
-import android.os.SystemClock;
-import android.util.SparseArray;
-
 import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -52,13 +50,14 @@ import java.util.List;
  * <li>MP4, including M4A ({@link com.google.android.exoplayer.extractor.mp4.Mp4Extractor})</li>
  * <li>fMP4 ({@link com.google.android.exoplayer.extractor.mp4.FragmentedMp4Extractor})</li>
  * <li>Matroska and WebM ({@link com.google.android.exoplayer.extractor.webm.WebmExtractor})</li>
- * <li>Ogg Vorbis ({@link com.google.android.exoplayer.extractor.ogg.OggVorbisExtractor}</li>
+ * <li>Ogg Vorbis/FLAC ({@link com.google.android.exoplayer.extractor.ogg.OggExtractor}</li>
  * <li>MP3 ({@link com.google.android.exoplayer.extractor.mp3.Mp3Extractor})</li>
  * <li>AAC ({@link com.google.android.exoplayer.extractor.ts.AdtsExtractor})</li>
  * <li>MPEG TS ({@link com.google.android.exoplayer.extractor.ts.TsExtractor})</li>
  * <li>MPEG PS ({@link com.google.android.exoplayer.extractor.ts.PsExtractor})</li>
  * <li>FLV ({@link com.google.android.exoplayer.extractor.flv.FlvExtractor})</li>
  * <li>WAV ({@link com.google.android.exoplayer.extractor.wav.WavExtractor})</li>
+ * <li>FLAC (only available if the FLAC extension is built and included)</li>
  * </ul>
  *
  * <p>Seeking in AAC, MPEG TS and FLV streams is not supported.
@@ -171,7 +170,7 @@ public final class ExtractorSampleSource implements SampleSource, SampleSourceRe
     }
     try {
       DEFAULT_EXTRACTOR_CLASSES.add(
-          Class.forName("com.google.android.exoplayer.extractor.ogg.OggVorbisExtractor")
+          Class.forName("com.google.android.exoplayer.extractor.ogg.OggExtractor")
               .asSubclass(Extractor.class));
     } catch (ClassNotFoundException e) {
       // Extractor not found.
@@ -186,6 +185,13 @@ public final class ExtractorSampleSource implements SampleSource, SampleSourceRe
     try {
       DEFAULT_EXTRACTOR_CLASSES.add(
           Class.forName("com.google.android.exoplayer.extractor.wav.WavExtractor")
+              .asSubclass(Extractor.class));
+    } catch (ClassNotFoundException e) {
+      // Extractor not found.
+    }
+    try {
+      DEFAULT_EXTRACTOR_CLASSES.add(
+          Class.forName("com.google.android.exoplayer.ext.flac.FlacExtractor")
               .asSubclass(Extractor.class));
     } catch (ClassNotFoundException e) {
       // Extractor not found.
@@ -546,9 +552,16 @@ public final class ExtractorSampleSource implements SampleSource, SampleSourceRe
   @Override
   public void release() {
     Assertions.checkState(remainingReleaseCount > 0);
-    if (--remainingReleaseCount == 0 && loader != null) {
-      loader.release();
-      loader = null;
+    if (--remainingReleaseCount == 0) {
+      if (loader != null) {
+        loader.release(new Runnable() {
+          @Override
+          public void run() {
+            extractorHolder.release();
+          }
+        });
+        loader = null;
+      }
     }
   }
 
@@ -877,14 +890,22 @@ public final class ExtractorSampleSource implements SampleSource, SampleSourceRe
           }
         } catch (EOFException e) {
           // Do nothing.
+        } finally {
+          input.resetPeekPosition();
         }
-        input.resetPeekPosition();
       }
       if (extractor == null) {
         throw new UnrecognizedInputFormatException(extractors);
       }
       extractor.init(extractorOutput);
       return extractor;
+    }
+
+    public void release() {
+      if (extractor != null) {
+        extractor.release();
+        extractor = null;
+      }
     }
 
   }

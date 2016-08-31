@@ -165,11 +165,8 @@ void FLACParser::metadataCallback(const FLAC__StreamMetadata *metadata) {
         ALOGE("FLACParser::metadataCallback unexpected STREAMINFO");
       }
       break;
-    case FLAC__METADATA_TYPE_VORBIS_COMMENT:
-      // do nothing
-      break;
-    case FLAC__METADATA_TYPE_PICTURE:
-      // do nothing
+    case FLAC__METADATA_TYPE_SEEKTABLE:
+      mSeekTable = &metadata->data.seek_table;
       break;
     default:
       ALOGE("FLACParser::metadataCallback unexpected type %u", metadata->type);
@@ -266,10 +263,12 @@ static void copyTrespass(int16_t * /* dst */, const int *const * /* src */,
 
 // FLACParser
 
-FLACParser::FLACParser()
-    : mDataSource(new DataSource),
+FLACParser::FLACParser(DataSource *source)
+    : mDataSource(source),
       mCopy(copyTrespass),
       mDecoder(NULL),
+      mSeekTable(NULL),
+      firstFrameOffset(0LL),
       mCurrentPos(0LL),
       mEOF(false),
       mStreamInfoValid(false),
@@ -288,12 +287,9 @@ FLACParser::~FLACParser() {
     FLAC__stream_decoder_delete(mDecoder);
     mDecoder = NULL;
   }
-  delete mDataSource;
 }
 
-bool FLACParser::init(const void *buffer, size_t size) {
-  mDataSource->setBuffer(buffer, size);
-
+bool FLACParser::init() {
   // setup libFLAC parser
   mDecoder = FLAC__stream_decoder_new();
   if (mDecoder == NULL) {
@@ -308,9 +304,7 @@ bool FLACParser::init(const void *buffer, size_t size) {
   FLAC__stream_decoder_set_metadata_respond(mDecoder,
                                             FLAC__METADATA_TYPE_STREAMINFO);
   FLAC__stream_decoder_set_metadata_respond(mDecoder,
-                                            FLAC__METADATA_TYPE_PICTURE);
-  FLAC__stream_decoder_set_metadata_respond(mDecoder,
-                                            FLAC__METADATA_TYPE_VORBIS_COMMENT);
+                                            FLAC__METADATA_TYPE_SEEKTABLE);
   FLAC__StreamDecoderInitStatus initStatus;
   initStatus = FLAC__stream_decoder_init_stream(
       mDecoder, read_callback, seek_callback, tell_callback, length_callback,
@@ -327,6 +321,9 @@ bool FLACParser::init(const void *buffer, size_t size) {
     ALOGE("end_of_metadata failed");
     return false;
   }
+  // store first frame offset
+  FLAC__stream_decoder_get_decode_position(mDecoder, &firstFrameOffset);
+
   if (mStreamInfoValid) {
     // check channel count
     if (getChannels() == 0 || getChannels() > 8) {
@@ -386,18 +383,21 @@ bool FLACParser::init(const void *buffer, size_t size) {
   return true;
 }
 
-size_t FLACParser::readBuffer(const void *buffer, size_t size, int16_t *output,
-                              size_t output_size) {
+size_t FLACParser::readBuffer(void *output, size_t output_size) {
   mWriteRequested = true;
   mWriteCompleted = false;
-  mDataSource->setBuffer(buffer, size);
 
   if (!FLAC__stream_decoder_process_single(mDecoder)) {
-    ALOGE("FLACParser::readBuffer process_single failed");
+    ALOGE("FLACParser::readBuffer process_single failed. Status: %s",
+            FLAC__stream_decoder_get_resolved_state_string(mDecoder));
     return -1;
   }
   if (!mWriteCompleted) {
-    ALOGE("FLACParser::readBuffer write did not complete");
+    if (FLAC__stream_decoder_get_state(mDecoder) !=
+        FLAC__STREAM_DECODER_END_OF_STREAM) {
+      ALOGE("FLACParser::readBuffer write did not complete. Status: %s",
+            FLAC__stream_decoder_get_resolved_state_string(mDecoder));
+    }
     return -1;
   }
 
@@ -429,10 +429,30 @@ size_t FLACParser::readBuffer(const void *buffer, size_t size, int16_t *output,
   }
 
   // copy PCM from FLAC write buffer to our media buffer, with interleaving.
-  (*mCopy)(output, mWriteBuffer, blocksize, getChannels());
+  (*mCopy)(reinterpret_cast<int16_t *>(output), mWriteBuffer, blocksize,
+           getChannels());
 
   // fill in buffer metadata
   CHECK(mWriteHeader.number_type == FLAC__FRAME_NUMBER_TYPE_SAMPLE_NUMBER);
 
   return bufferSize;
+}
+
+int64_t FLACParser::getSeekPosition(int64_t timeUs) {
+  if (!mSeekTable) {
+    return -1;
+  }
+
+  int64_t sample = (timeUs * getSampleRate()) / 1000000LL;
+  if (sample >= getTotalSamples()) {
+      sample = getTotalSamples();
+  }
+
+  FLAC__StreamMetadata_SeekPoint* points = mSeekTable->points;
+  for (unsigned i = mSeekTable->num_points - 1; i >= 0; i--) {
+    if (points[i].sample_number <= sample) {
+      return firstFrameOffset + points[i].stream_offset;
+    }
+  }
+  return firstFrameOffset;
 }

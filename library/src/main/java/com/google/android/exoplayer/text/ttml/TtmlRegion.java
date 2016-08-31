@@ -13,26 +13,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package com.google.android.exoplayer.text.ttml;
 
-#include "include/data_source.h"
-#include <android/log.h>
-#include <string.h>
+import com.google.android.exoplayer.text.Cue;
 
-#define LOG_TAG "DataSource"
-#define ALOGE(...) \
-  ((void)__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__))
+/**
+ * Represents a TTML Region.
+ */
+/* package */ final class TtmlRegion {
 
-void DataSource::setBuffer(const void *data, const size_t size) {
-  this->data = data;
-  this->size = size;
-}
+  public final float position;
+  public final float line;
+  public final int lineType;
+  public final float width;
 
-ssize_t DataSource::readAt(off64_t /*offset*/, void *const data, size_t size) {
-  if (size > this->size) {
-    size = this->size;
+  public TtmlRegion() {
+    this(Cue.DIMEN_UNSET, Cue.DIMEN_UNSET, Cue.TYPE_UNSET, Cue.DIMEN_UNSET);
   }
-  memcpy(data, this->data, size);
-  this->data = reinterpret_cast<const char *>(this->data) + size;
-  this->size -= size;
-  return size;
+
+  public TtmlRegion(float position, float line, int lineType, float width) {
+    this.position = position;
+    this.line = line;
+    this.lineType = lineType;
+    this.width = width;
+  }
+
 }
