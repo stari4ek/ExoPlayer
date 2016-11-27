@@ -34,6 +34,7 @@ import com.google.android.exoplayer.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer.upstream.DataSource;
 import com.google.android.exoplayer.upstream.DataSpec;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -229,20 +230,25 @@ public final class Util {
    */
   public static void closeQuietly(DataSource dataSource) {
     try {
-      dataSource.close();
+      if (dataSource != null) {
+        dataSource.close();
+      }
     } catch (IOException e) {
       // Ignore.
     }
   }
 
   /**
-   * Closes an {@link OutputStream}, suppressing any {@link IOException} that may occur.
+   * Closes a {@link Closeable}, suppressing any {@link IOException} that may occur. Both {@link
+   * java.io.OutputStream} and {@link InputStream} are {@code Closeable}.
    *
-   * @param outputStream The {@link OutputStream} to close.
+   * @param closeable The {@link Closeable} to close.
    */
-  public static void closeQuietly(OutputStream outputStream) {
+  public static void closeQuietly(Closeable closeable) {
     try {
-      outputStream.close();
+      if (closeable != null) {
+        closeable.close();
+      }
     } catch (IOException e) {
       // Ignore.
     }
@@ -912,6 +918,19 @@ public final class Util {
       return null;
     }
     return builder.toString();
+  }
+
+  /**
+   * A hacky method that always throws {@code t} even if {@code t} is a checked exception,
+   * and is not declared to be thrown.
+   */
+  public static void sneakyThrow(Throwable t) {
+    Util.<RuntimeException>sneakyThrowInternal(t);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T extends Throwable> void sneakyThrowInternal(Throwable t) throws T {
+    throw (T) t;
   }
 
   /**
