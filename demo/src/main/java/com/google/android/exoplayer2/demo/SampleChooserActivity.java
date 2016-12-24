@@ -85,11 +85,13 @@ public class SampleChooserActivity extends Activity {
     loaderTask.execute(uris);
   }
 
-  private void onSampleGroups(final List<SampleGroup> groups, boolean sawError) {
+  // TVirl: make it package
+  /* private */ void onSampleGroups(final List<SampleGroup> groups, boolean sawError) {
     if (sawError) {
       Toast.makeText(getApplicationContext(), R.string.sample_list_load_error, Toast.LENGTH_LONG)
           .show();
     }
+
     ExpandableListView sampleList = (ExpandableListView) findViewById(R.id.sample_list);
     sampleList.setAdapter(new SampleAdapter(this, groups));
     sampleList.setOnChildClickListener(new OnChildClickListener() {
@@ -102,7 +104,8 @@ public class SampleChooserActivity extends Activity {
     });
   }
 
-  private void onSampleSelected(Sample sample) {
+  // TVirl: make it package
+  /* private */ void onSampleSelected(Sample sample) {
     startActivity(sample.buildIntent(this));
   }
 
@@ -354,7 +357,8 @@ public class SampleChooserActivity extends Activity {
 
   }
 
-  private static final class SampleGroup {
+  // TVirl: make it package
+  /* private */ static final class SampleGroup {
 
     public final String title;
     public final List<Sample> samples;
@@ -366,7 +370,8 @@ public class SampleChooserActivity extends Activity {
 
   }
 
-  private abstract static class Sample {
+  // TVirl: make it package
+  /* private */ abstract static class Sample {
 
     public final String name;
     public final boolean preferExtensionDecoders;

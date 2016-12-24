@@ -25,6 +25,11 @@
   <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
   <uses-sdk android:minSdkVersion="16" android:targetSdkVersion="24"/>
 
+  <!-- TVirl: ability to save log -->
+  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+  <!-- !TVirl -->
+
+
   <application
       android:label="@string/application_name"
       android:icon="@mipmap/ic_launcher"
@@ -33,7 +38,7 @@
       android:allowBackup="false"
       android:name="com.google.android.exoplayer2.demo.DemoApplication">
 
-    <activity android:name="com.google.android.exoplayer2.demo.SampleChooserActivity"
+    <activity android:name="com.google.android.exoplayer2.demo.SampleChooserActivityExt"
         android:configChanges="keyboardHidden"
         android:label="@string/application_name">
       <intent-filter>
