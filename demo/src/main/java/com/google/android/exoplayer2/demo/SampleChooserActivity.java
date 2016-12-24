@@ -391,7 +391,10 @@ public class SampleChooserActivity extends Activity {
     }
 
     public Intent buildIntent(Context context) {
-      Intent intent = new Intent(context, PlayerActivity.class);
+      // TVirl: we need own player activity
+      // Intent intent = new Intent(context, PlayerActivity.class);
+      Intent intent = new Intent(context, PlayerActivityExt.class);
+      // !TVirl
       intent.putExtra(PlayerActivity.PREFER_EXTENSION_DECODERS, preferExtensionDecoders);
       if (drmSchemeUuid != null) {
         intent.putExtra(PlayerActivity.DRM_SCHEME_UUID_EXTRA, drmSchemeUuid.toString());

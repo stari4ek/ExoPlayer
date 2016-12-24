@@ -100,14 +100,16 @@ public class PlayerActivity extends Activity implements OnClickListener, ExoPlay
     DEFAULT_COOKIE_MANAGER.setCookiePolicy(CookiePolicy.ACCEPT_ORIGINAL_SERVER);
   }
 
-  private Handler mainHandler;
-  private EventLogger eventLogger;
+  // TVirl: make it package
+  /* private */ Handler mainHandler;
+  /* private */ EventLogger eventLogger;
   private SimpleExoPlayerView simpleExoPlayerView;
   private LinearLayout debugRootView;
   private TextView debugTextView;
   private Button retryButton;
 
-  private DataSource.Factory mediaDataSourceFactory;
+  // TVirl: make it package
+  /* private */ DataSource.Factory mediaDataSourceFactory;
   private SimpleExoPlayer player;
   private DefaultTrackSelector trackSelector;
   private TrackSelectionHelper trackSelectionHelper;
@@ -321,7 +323,8 @@ public class PlayerActivity extends Activity implements OnClickListener, ExoPlay
     }
   }
 
-  private MediaSource buildMediaSource(Uri uri, String overrideExtension) {
+  // TVirl: make it package
+  /* private */  MediaSource buildMediaSource(Uri uri, String overrideExtension) {
     int type = TextUtils.isEmpty(overrideExtension) ? Util.inferContentType(uri)
         : Util.inferContentType("." + overrideExtension);
     switch (type) {
