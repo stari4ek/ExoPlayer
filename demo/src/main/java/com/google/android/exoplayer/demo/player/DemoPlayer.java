@@ -195,7 +195,7 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
 
   public DemoPlayer(RendererBuilder rendererBuilder, int minBufferMs, int minRebufferMs) {
     this.rendererBuilder = rendererBuilder;
-    player = ExoPlayer.Factory.newInstance(RENDERER_COUNT, 1000, 5000);
+    player = ExoPlayer.Factory.newInstance(RENDERER_COUNT, minBufferMs, minRebufferMs);
     player.addListener(this);
     playerControl = new PlayerControl(player);
     mainHandler = new Handler();
