@@ -428,7 +428,9 @@ public class DefaultHttpDataSource implements HttpDataSource {
    * @return The next URL.
    * @throws IOException If redirection isn't possible.
    */
-  private static URL handleRedirect(URL originalUrl, String location) throws IOException {
+  // TVirl: private static -> protected so we can extend it to control redirects
+  //private static URL handleRedirect(URL originalUrl, String location) throws IOException {
+  protected URL handleRedirect(URL originalUrl, String location) throws IOException {
     if (location == null) {
       throw new ProtocolException("Null location redirect");
     }

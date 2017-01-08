@@ -334,7 +334,10 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
       internalErrorListener.onRendererInitializationError(e);
     }
     for (Listener listener : listeners) {
-      listener.onError(e);
+      // TVirl: be ready for modifications within callback
+      if (listeners.contains(listener)) {
+        listener.onError(e);
+      }
     }
     rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
     maybeReportPlayerState();
@@ -424,7 +427,10 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
   public void onPlayerError(ExoPlaybackException exception) {
     rendererBuildingState = RENDERER_BUILDING_STATE_IDLE;
     for (Listener listener : listeners) {
-      listener.onError(exception);
+      // TVirl: be ready for modifications within callback
+      if (listeners.contains(listener)) {
+        listener.onError(exception);
+      }
     }
   }
 
@@ -432,7 +438,10 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
   public void onVideoSizeChanged(int width, int height, int unappliedRotationDegrees,
       float pixelWidthHeightRatio) {
     for (Listener listener : listeners) {
-      listener.onVideoSizeChanged(width, height, unappliedRotationDegrees, pixelWidthHeightRatio);
+      // TVirl: be ready for modifications within callback
+      if (listeners.contains(listener)) {
+        listener.onVideoSizeChanged(width, height, unappliedRotationDegrees, pixelWidthHeightRatio);
+      }
     }
   }
 
@@ -590,7 +599,10 @@ public class DemoPlayer implements ExoPlayer.Listener, ChunkSampleSource.EventLi
     int playbackState = getPlaybackState();
     if (lastReportedPlayWhenReady != playWhenReady || lastReportedPlaybackState != playbackState) {
       for (Listener listener : listeners) {
-        listener.onStateChanged(playWhenReady, playbackState);
+        // TVirl: be ready for modifications within callback
+        if (listeners.contains(listener)) {
+          listener.onStateChanged(playWhenReady, playbackState);
+        }
       }
       lastReportedPlayWhenReady = playWhenReady;
       lastReportedPlaybackState = playbackState;
