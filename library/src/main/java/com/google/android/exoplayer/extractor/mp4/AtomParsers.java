@@ -15,7 +15,8 @@
  */
 package com.google.android.exoplayer.extractor.mp4;
 
-import android.util.Log;
+//import android.util.Log;
+import com.google.android.exoplayer.util.Log;
 import android.util.Pair;
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.MediaFormat;

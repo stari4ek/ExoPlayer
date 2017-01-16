@@ -15,7 +15,8 @@
  */
 package com.google.android.exoplayer.upstream.cache;
 
-import android.util.Log;
+//import android.util.Log;
+import com.google.android.exoplayer.util.Log;
 import android.util.SparseArray;
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.upstream.cache.Cache.CacheException;

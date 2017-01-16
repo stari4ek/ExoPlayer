@@ -15,7 +15,8 @@
  */
 package com.google.android.exoplayer.extractor.ts;
 
-import android.util.Log;
+//import android.util.Log;
+import com.google.android.exoplayer.util.Log;
 import com.google.android.exoplayer.C;
 import com.google.android.exoplayer.MediaFormat;
 import com.google.android.exoplayer.extractor.TrackOutput;
