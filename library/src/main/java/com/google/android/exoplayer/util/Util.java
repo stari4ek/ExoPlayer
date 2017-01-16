@@ -68,7 +68,7 @@ public final class Util {
    * overridden for local testing.
    */
   public static final int SDK_INT =
-      (Build.VERSION.SDK_INT == 23 && Build.VERSION.CODENAME.charAt(0) == 'N') ? 24
+      (Build.VERSION.SDK_INT == 25 && Build.VERSION.CODENAME.charAt(0) == 'O') ? 26
       : Build.VERSION.SDK_INT;
 
   /**
@@ -114,7 +114,7 @@ public final class Util {
   private static final Pattern XS_DATE_TIME_PATTERN = Pattern.compile(
       "(\\d\\d\\d\\d)\\-(\\d\\d)\\-(\\d\\d)[Tt]"
       + "(\\d\\d):(\\d\\d):(\\d\\d)(\\.(\\d+))?"
-      + "([Zz]|((\\+|\\-)(\\d\\d):(\\d\\d)))?");
+      + "([Zz]|((\\+|\\-)(\\d\\d):?(\\d\\d)))?");
   private static final Pattern XS_DURATION_PATTERN =
       Pattern.compile("^(-)?P(([0-9]*)Y)?(([0-9]*)M)?(([0-9]*)D)?"
           + "(T(([0-9]*)H)?(([0-9]*)M)?(([0-9.]*)S)?)?$");
