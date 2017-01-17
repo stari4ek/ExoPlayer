@@ -37,7 +37,8 @@ public final class Loader {
    */
   public static final class UnexpectedLoaderException extends IOException {
 
-    public UnexpectedLoaderException(Exception cause) {
+    // TVirl: Exception -> Throwable
+    public UnexpectedLoaderException(Throwable cause) {
       super("Unexpected " + cause.getClass().getSimpleName() + ": " + cause.getMessage(), cause);
     }
 
@@ -233,6 +234,10 @@ public final class Loader {
       } catch (Exception e) {
         // This should never happen, but handle it anyway.
         Log.e(TAG, "Unexpected exception loading stream", e);
+        obtainMessage(MSG_IO_EXCEPTION, new UnexpectedLoaderException(e)).sendToTarget();
+      } catch (OutOfMemoryError e) {
+        // TVirl: be nice with out of memory. If player leaks we can recover releasing it
+        Log.e(TAG, "Out-of-memory exception while loading stream", e);
         obtainMessage(MSG_IO_EXCEPTION, new UnexpectedLoaderException(e)).sendToTarget();
       } catch (Error e) {
         // We'd hope that the platform would kill the process if an Error is thrown here, but the
