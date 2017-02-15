@@ -1,5 +1,16 @@
 [
   {
+    "name": "TVirl",
+    "samples": [
+      {
+        "name": "OOM on stream",
+        "uri": "http://melpnz.iptvbot.biz/iptv/6F5TDNEC38VLAN/504/index.m3u8"
+      }
+    ]
+  },
+
+
+  {
     "name": "YouTube DASH",
     "samples": [
       {
