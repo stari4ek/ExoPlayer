@@ -8,11 +8,11 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorsFactory;
-import com.google.android.exoplayer2.extractor.TimestampAdjuster;
 import com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory;
 import com.google.android.exoplayer2.extractor.ts.TsExtractor;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.util.TimestampAdjuster;
 import com.google.android.exoplayer2.util.Util;
 
 import static com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES;
@@ -24,6 +24,7 @@ import static com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderF
 public class PlayerActivityExt extends PlayerActivity {
 
 
+    @Override
     MediaSource buildMediaSource(Uri uri, String overrideExtension) {
         int type = Util
             .inferContentType(!TextUtils.isEmpty(overrideExtension) ? "." + overrideExtension
