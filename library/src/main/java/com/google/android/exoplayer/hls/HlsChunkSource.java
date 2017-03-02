@@ -480,19 +480,20 @@ public class HlsChunkSource implements HlsTrackSelector.Output {
     // Configure the extractor that will read the chunk.
     HlsExtractorWrapper extractorWrapper;
     String lastPathSegment = chunkUri.getLastPathSegment();
-    if (lastPathSegment.endsWith(AAC_FILE_EXTENSION)) {
+    // TVIRL!: we've got some NPE here. be ready
+    if (lastPathSegment != null && lastPathSegment.endsWith(AAC_FILE_EXTENSION)) {
       // TODO: Inject a timestamp adjuster and use it along with ID3 PRIV tag values with owner
       // identifier com.apple.streaming.transportStreamTimestamp. This may also apply to the MP3
       // case below.
       Extractor extractor = new AdtsExtractor(startTimeUs);
       extractorWrapper = new HlsExtractorWrapper(trigger, format, startTimeUs, extractor,
           switchingVariant, MediaFormat.NO_VALUE, MediaFormat.NO_VALUE);
-    } else if (lastPathSegment.endsWith(MP3_FILE_EXTENSION)) {
+    } else if (lastPathSegment != null && lastPathSegment.endsWith(MP3_FILE_EXTENSION)) {
       Extractor extractor = new Mp3Extractor(startTimeUs);
       extractorWrapper = new HlsExtractorWrapper(trigger, format, startTimeUs, extractor,
           switchingVariant, MediaFormat.NO_VALUE, MediaFormat.NO_VALUE);
-    } else if (lastPathSegment.endsWith(WEBVTT_FILE_EXTENSION)
-        || lastPathSegment.endsWith(VTT_FILE_EXTENSION)) {
+    } else if (lastPathSegment != null && (lastPathSegment.endsWith(WEBVTT_FILE_EXTENSION)
+        || lastPathSegment.endsWith(VTT_FILE_EXTENSION))) {
       PtsTimestampAdjuster timestampAdjuster = timestampAdjusterProvider.getAdjuster(isMaster,
           segment.discontinuitySequenceNumber, startTimeUs);
       if (timestampAdjuster == null) {
