@@ -89,6 +89,7 @@ import com.google.android.exoplayer.util.Util;
   private int textTop;
   private int textPaddingX;
 
+  @SuppressWarnings("ResourceType") // TVirl
   public CuePainter(Context context) {
     int[] viewAttr = {android.R.attr.lineSpacingExtra, android.R.attr.lineSpacingMultiplier};
     TypedArray styledAttributes = context.obtainStyledAttributes(null, viewAttr, 0, 0);
