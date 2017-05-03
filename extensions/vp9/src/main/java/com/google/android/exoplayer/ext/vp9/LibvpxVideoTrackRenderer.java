@@ -34,7 +34,7 @@ import com.google.android.exoplayer.util.extensions.Buffer;
 /**
  * Decodes and renders video using the native VP9 decoder.
  */
-public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
+public class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
 
   /**
    * Interface definition for a callback to be notified of {@link LibvpxVideoTrackRenderer} events.
@@ -195,6 +195,16 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
     return isLibvpxAvailable() ? VpxDecoder.getLibvpxConfig() : null;
   }
 
+  /**
+   * Returns true if the underlying libvpx library supports high bit depth.
+   */
+  public static boolean isHighBitDepthSupported() {
+    String config = getLibvpxConfig();
+    int indexHbd = config != null
+        ? config.indexOf("--enable-vp9-highbitdepth") : -1;
+    return indexHbd >= 0;
+  }
+
   @Override
   protected boolean handlesTrack(MediaFormat mediaFormat) {
     return MimeTypes.VIDEO_VP9.equalsIgnoreCase(mediaFormat.mimeType);
@@ -263,9 +273,9 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
       return false;
     }
 
-    // Drop frame only if we have the next frame and that's also late, otherwise render whatever we
-    // have.
-    if (nextOutputBuffer != null && nextOutputBuffer.timestampUs < positionUs) {
+    final long nextOutputBufferTimestampUs = nextOutputBuffer != null
+        ? nextOutputBuffer.timestampUs : UNKNOWN_TIME_US;
+    if (shouldDropOutputBuffer(outputBuffer.timestampUs, nextOutputBufferTimestampUs, positionUs)) {
       // Drop frame if we are too late.
       codecCounters.droppedOutputBufferCount++;
       droppedFrameCount++;
@@ -290,6 +300,22 @@ public final class LibvpxVideoTrackRenderer extends SampleSourceTrackRenderer {
       renderBuffer();
     }
     return false;
+  }
+
+  /**
+   * Returns whether the current frame should be dropped.
+   *
+   * @param outputBufferTimestampUs The timestamp of the current output buffer.
+   * @param nextOutputBufferTimestampUs The timestamp of the next output buffer or
+   *     {@link UNKNOWN_TIME_US} if the next output buffer is unavailable.
+   * @param positionUs The current playback position.
+   * @return Whether to drop the current output buffer.
+   */
+  protected boolean shouldDropOutputBuffer(
+      long outputBufferTimestampUs, long nextOutputBufferTimestampUs, long positionUs) {
+    // Drop frame only if we have the next frame and that's also late.
+    return nextOutputBufferTimestampUs != UNKNOWN_TIME_US
+        && nextOutputBufferTimestampUs < positionUs;
   }
 
   private void renderBuffer() {

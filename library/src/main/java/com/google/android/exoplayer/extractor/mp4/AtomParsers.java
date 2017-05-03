@@ -690,6 +690,9 @@ import java.util.List;
             case 2:
               stereoMode = C.STEREO_MODE_LEFT_RIGHT;
               break;
+            case 3:
+              stereoMode = C.STEREO_MODE_STEREO_MESH;
+              break;
             default:
               break;
           }
@@ -705,7 +708,7 @@ import java.util.List;
 
     out.mediaFormat = MediaFormat.createVideoFormat(Integer.toString(trackId), mimeType,
         MediaFormat.NO_VALUE, MediaFormat.NO_VALUE, durationUs, width, height, initializationData,
-        rotationDegrees, pixelWidthHeightRatio, projectionData, stereoMode);
+        rotationDegrees, pixelWidthHeightRatio, projectionData, stereoMode, null);
   }
 
   private static AvcCData parseAvcCFromParent(ParsableByteArray parent, int position) {

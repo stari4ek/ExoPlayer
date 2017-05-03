@@ -224,6 +224,7 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
   private boolean codecNeedsAdaptationWorkaround;
   private boolean codecNeedsEosPropagationWorkaround;
   private boolean codecNeedsEosFlushWorkaround;
+  private boolean codecNeedsEosOutputExceptionWorkaround;
   private boolean codecNeedsMonoChannelCountWorkaround;
   private boolean codecNeedsAdaptationWorkaroundBuffer;
   private boolean shouldSkipAdaptationWorkaroundOutputBuffer;
@@ -386,12 +387,13 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
     }
 
     String codecName = decoderInfo.name;
-    codecIsAdaptive = decoderInfo.adaptive;
+    codecIsAdaptive = decoderInfo.adaptive && !codecNeedsDisableAdaptationWorkaround(codecName);
     codecNeedsDiscardToSpsWorkaround = codecNeedsDiscardToSpsWorkaround(codecName, format);
     codecNeedsFlushWorkaround = codecNeedsFlushWorkaround(codecName);
     codecNeedsAdaptationWorkaround = codecNeedsAdaptationWorkaround(codecName);
     codecNeedsEosPropagationWorkaround = codecNeedsEosPropagationWorkaround(codecName);
     codecNeedsEosFlushWorkaround = codecNeedsEosFlushWorkaround(codecName);
+    codecNeedsEosOutputExceptionWorkaround = codecNeedsEosOutputExceptionWorkaround(codecName);
     codecNeedsMonoChannelCountWorkaround = codecNeedsMonoChannelCountWorkaround(codecName, format);
     try {
       long codecInitializingTimestamp = SystemClock.elapsedRealtime();
@@ -551,7 +553,6 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
     codecNeedsAdaptationWorkaroundBuffer = false;
     shouldSkipAdaptationWorkaroundOutputBuffer = false;
     if (codecNeedsFlushWorkaround || (codecNeedsEosFlushWorkaround && codecReceivedEos)) {
-      // Workaround framework bugs. See [Internal: b/8347958, b/8578467, b/8543366, b/23361053].
       releaseCodec();
       maybeInitCodec();
     } else if (codecReinitializationState != REINITIALIZATION_STATE_NONE) {
@@ -782,10 +783,13 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
     MediaFormat oldFormat = format;
     format = formatHolder.format;
     drmInitData = formatHolder.drmInitData;
-    if (Util.areEqual(format, oldFormat)) {
+    boolean needsDrmInit = drmInitData != null && !openedDrmSession;
+    if (Util.areEqual(format, oldFormat) && !needsDrmInit) {
       return;
     }
-    if (codec != null && canReconfigureCodec(codec, codecIsAdaptive, oldFormat, format)) {
+    if (codec != null
+        && !needsDrmInit
+        && canReconfigureCodec(codec, codecIsAdaptive, oldFormat, format)) {
       codecReconfigured = true;
       codecReconfigurationState = RECONFIGURATION_STATE_WRITE_PENDING;
       codecNeedsAdaptationWorkaroundBuffer = codecNeedsAdaptationWorkaround
@@ -919,7 +923,22 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
     }
 
     if (outputIndex < 0) {
-      outputIndex = codec.dequeueOutputBuffer(outputBufferInfo, getDequeueOutputBufferTimeoutUs());
+      if (codecNeedsEosOutputExceptionWorkaround && codecReceivedEos) {
+        try {
+          outputIndex = codec.dequeueOutputBuffer(outputBufferInfo,
+              getDequeueOutputBufferTimeoutUs());
+        } catch (IllegalStateException e) {
+          processEndOfStream();
+          if (outputStreamEnded) {
+            // Release the codec, as it's in an error state.
+            releaseCodec();
+          }
+          return false;
+        }
+      } else {
+        outputIndex = codec.dequeueOutputBuffer(outputBufferInfo,
+            getDequeueOutputBufferTimeoutUs());
+      }
     }
 
     if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -951,8 +970,25 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
     }
 
     int decodeOnlyIndex = getDecodeOnlyIndex(outputBufferInfo.presentationTimeUs);
-    if (processOutputBuffer(positionUs, elapsedRealtimeUs, codec, outputBuffers[outputIndex],
-        outputBufferInfo, outputIndex, decodeOnlyIndex != -1)) {
+    boolean processedOutputBuffer;
+    if (codecNeedsEosOutputExceptionWorkaround && codecReceivedEos) {
+      try {
+        processedOutputBuffer = processOutputBuffer(positionUs, elapsedRealtimeUs, codec,
+            outputBuffers[outputIndex], outputBufferInfo, outputIndex, decodeOnlyIndex != -1);
+      } catch (IllegalStateException e) {
+        processEndOfStream();
+        if (outputStreamEnded) {
+          // Release the codec, as it's in an error state.
+          releaseCodec();
+        }
+        return false;
+      }
+    } else {
+      processedOutputBuffer = processOutputBuffer(positionUs, elapsedRealtimeUs, codec,
+          outputBuffers[outputIndex], outputBufferInfo, outputIndex, decodeOnlyIndex != -1);
+    }
+
+    if (processedOutputBuffer) {
       onProcessedOutputBuffer(outputBufferInfo.presentationTimeUs);
       if (decodeOnlyIndex != -1) {
         decodeOnlyPresentationTimestamps.remove(decodeOnlyIndex);
@@ -1064,6 +1100,8 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
    * <p>
    * If true is returned, the renderer will work around the issue by releasing the decoder and
    * instantiating a new one rather than flushing the current instance.
+   * <p>
+   * See [Internal: b/8347958, b/8543366].
    *
    * @param name The name of the decoder.
    * @return True if the decoder is known to fail when flushed.
@@ -1133,6 +1171,8 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
    * <p>
    * If true is returned, the renderer will work around the issue by instantiating a new decoder
    * when this case occurs.
+   * <p>
+   * See [Internal: b/8578467, b/23361053].
    *
    * @param name The name of the decoder.
    * @return True if the decoder is known to behave incorrectly if flushed after receiving an input
@@ -1146,6 +1186,21 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
   }
 
   /**
+   * Returns whether the decoder may throw an {@link IllegalStateException} from
+   * {@link MediaCodec#dequeueOutputBuffer(MediaCodec.BufferInfo, long)} or
+   * {@link MediaCodec#releaseOutputBuffer(int, boolean)} after receiving an input
+   * buffer with {@link MediaCodec#BUFFER_FLAG_END_OF_STREAM} set.
+   * <p>
+   * See [Internal: b/17933838].
+   *
+   * @param name The name of the decoder.
+   * @return True if the decoder may throw an exception after receiving an end-of-stream buffer.
+   */
+  private static boolean codecNeedsEosOutputExceptionWorkaround(String name) {
+    return Util.SDK_INT == 21 && "OMX.google.aac.decoder".equals(name);
+  }
+
+  /**
    * Returns whether the decoder is known to set the number of audio channels in the output format
    * to 2 for the given input format, whilst only actually outputting a single channel.
    * <p>
@@ -1154,13 +1209,27 @@ public abstract class MediaCodecTrackRenderer extends SampleSourceTrackRenderer 
    *
    * @param name The decoder name.
    * @param format The input format.
-   * @return True if the device is known to set the number of audio channels in the output format
+   * @return True if the decoder is known to set the number of audio channels in the output format
    *     to 2 for the given input format, whilst only actually outputting a single channel. False
    *     otherwise.
    */
   private static boolean codecNeedsMonoChannelCountWorkaround(String name, MediaFormat format) {
     return Util.SDK_INT <= 18 && format.channelCount == 1
         && "OMX.MTK.AUDIO.DECODER.MP3".equals(name);
+  }
+
+  /**
+   * Returns whether the decoder is known to fail when adapting, despite advertising itself as an
+   * adaptive decoder.
+   * <p>
+   * If true is returned then we explicitly disable adaptation for the decoder.
+   *
+   * @param name The decoder name.
+   * @return True if the decoder is known to fail when adapting.
+   */
+  private static boolean codecNeedsDisableAdaptationWorkaround(String name) {
+    return Util.SDK_INT <= 19 && Util.MODEL.equals("ODROID-XU3")
+        && ("OMX.Exynos.AVC.Decoder".equals(name) || "OMX.Exynos.AVC.Decoder.secure".equals(name));
   }
 
   /**

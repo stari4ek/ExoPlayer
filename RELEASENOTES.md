@@ -1,5 +1,25 @@
 # Release notes #
 
+### r1.5.16 ###
+
+* VP9 extension: Reduced binary size.
+* FLAC extension: Enabled 64 bit targets and fixed proguard config.
+* Misc bugfixes.
+
+### r1.5.15 ###
+
+* SmoothStreaming: Fixed handling of start_time placeholder
+  ([#2447](https://github.com/google/ExoPlayer/issues/2447)).
+* Misc bugfixes.
+
+### r1.5.14 ###
+
+* Fixed cache failures when using an encrypted cache content index.
+* SmoothStreaming: Work around "Offset to sample data was negative" failures
+  ([#2292](https://github.com/google/ExoPlayer/issues/2292),
+  [#2101](https://github.com/google/ExoPlayer/issues/2101) and
+  [#1152](https://github.com/google/ExoPlayer/issues/1152)).
+
 ### r1.5.13 ###
 
 * Improvements to the upstream cache package.

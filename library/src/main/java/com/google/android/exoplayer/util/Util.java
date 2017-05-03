@@ -728,7 +728,7 @@ public final class Util {
       versionName = "?";
     }
     return applicationName + "/" + versionName + " (Linux;Android " + Build.VERSION.RELEASE
-        + ") " + "ExoPlayerLib/" + ExoPlayerLibraryInfo.VERSION;
+        + ") " + ExoPlayerLibraryInfo.VERSION_SLASHY;
   }
 
   /**
@@ -768,7 +768,7 @@ public final class Util {
       try {
         return toByteArray(inputStream);
       } finally {
-        inputStream.close();
+        Util.closeQuietly(inputStream);
       }
     } finally {
       if (urlConnection != null) {
