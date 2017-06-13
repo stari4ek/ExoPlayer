@@ -42,11 +42,11 @@ public class PlayerActivityExt extends PlayerActivity {
                             // replace TS extractor
                             if (defaultExts[i] instanceof TsExtractor) {
                                 defaultExts[i] = new TsExtractor(
+                                    TsExtractor.MODE_SINGLE_PMT,
                                     new TimestampAdjuster(0),
                                     new DefaultTsPayloadReaderFactory(
                                         FLAG_ALLOW_NON_IDR_KEYFRAMES|FLAG_DETECT_ACCESS_UNITS
-                                    ),
-                                    false
+                                    )
                                 );
                             }
                         }
