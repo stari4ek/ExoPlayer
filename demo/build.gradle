@@ -38,9 +38,14 @@ android {
         disable 'MissingTranslation'
     }
 
+//    productFlavors {
+//        noExtensions
+//        withExtensions
+//    }
     productFlavors {
-        noExtensions
-        withExtensions
+        flavorDimensions "extensions"
+        noExtensions {dimension "extensions"}
+        withExtensions {dimension "extensions"}
     }
 }
 
