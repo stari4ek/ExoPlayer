@@ -530,11 +530,6 @@ public class HlsChunkSource implements HlsTrackSelector.Output {
         }
       }
 
-      // TVIRL!
-      workaroundFlags |= (TsExtractor.WORKAROUND_ALLOW_NON_IDR_KEYFRAMES |
-                          TsExtractor.WORKAROUND_DETECT_ACCESS_UNITS);
-      // !TVIRL
-
       Extractor extractor = new TsExtractor(timestampAdjuster, workaroundFlags);
       ExposedTrack selectedTrack = tracks.get(selectedTrackIndex);
       extractorWrapper = new HlsExtractorWrapper(trigger, format, startTimeUs, extractor,

@@ -84,6 +84,13 @@ public final class TsExtractor implements Extractor {
   private int nextEmbeddedTrackId;
   /* package */ Id3Reader id3Reader;
 
+  // TVIRL!
+  // since exoplayer v1 does not use factory (HlsChunkSource creates TsExtractor directly
+  // we need to inject default workarounds)
+  public static int sDefaultWorkaroundFlags =
+      WORKAROUND_ALLOW_NON_IDR_KEYFRAMES | WORKAROUND_DETECT_ACCESS_UNITS;
+  // !TVIRL
+
   public TsExtractor() {
     this(new PtsTimestampAdjuster(0));
   }
@@ -94,7 +101,10 @@ public final class TsExtractor implements Extractor {
 
   public TsExtractor(PtsTimestampAdjuster ptsTimestampAdjuster, int workaroundFlags) {
     this.ptsTimestampAdjuster = ptsTimestampAdjuster;
-    this.workaroundFlags = workaroundFlags;
+    // TVIRL!
+    // this.workaroundFlags = workaroundFlags;
+    this.workaroundFlags = workaroundFlags | sDefaultWorkaroundFlags;
+    // !TVIRL
     tsPacketBuffer = new ParsableByteArray(BUFFER_SIZE);
     tsScratch = new ParsableBitArray(new byte[3]);
     tsPayloadReaders = new SparseArray<>();
