@@ -87,8 +87,7 @@ public final class TsExtractor implements Extractor {
   // TVIRL!
   // since exoplayer v1 does not use factory (HlsChunkSource creates TsExtractor directly
   // we need to inject default workarounds)
-  public static int sDefaultWorkaroundFlags =
-      WORKAROUND_ALLOW_NON_IDR_KEYFRAMES | WORKAROUND_DETECT_ACCESS_UNITS;
+  public static int sDefaultWorkaroundFlags = 0;
   // !TVIRL
 
   public TsExtractor() {
