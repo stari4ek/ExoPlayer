@@ -3,8 +3,8 @@
     "name": "TVirl",
     "samples": [
       {
-        "name": "OOM on stream",
-        "uri": "http://melpnz.iptvbot.biz/iptv/6F5TDNEC38VLAN/504/index.m3u8"
+        "name": "01: Amedia_Hit_HD.ts",
+        "uri": "asset:///Amedia_Hit_HD.ts"
       }
     ]
   }
