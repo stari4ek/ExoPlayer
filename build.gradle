@@ -33,7 +33,7 @@ allprojects {
         jcenter()
     }
     project.ext {
-        exoplayerPublishEnabled = true
+        // exoplayerPublishEnabled = true
     }
     if (it.hasProperty('externalBuildDir')) {
         if (!new File(externalBuildDir).isAbsolute()) {
