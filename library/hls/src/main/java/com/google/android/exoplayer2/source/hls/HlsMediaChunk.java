@@ -92,6 +92,11 @@ import java.util.concurrent.atomic.AtomicInteger;
   private final Id3Decoder id3Decoder;
   private final ParsableByteArray id3Data;
 
+  // TVirl: workaround for https://github.com/google/ExoPlayer/issues/2748
+  @DefaultTsPayloadReaderFactory.Flags
+  private final int defaultTsReaderFlags;
+  // !TVirl
+
   private Extractor extractor;
   private int initSegmentBytesLoaded;
   private int bytesLoaded;
@@ -124,7 +129,9 @@ import java.util.concurrent.atomic.AtomicInteger;
       Object trackSelectionData, long startTimeUs, long endTimeUs, int chunkIndex,
       int discontinuitySequenceNumber, boolean isMasterTimestampSource,
       TimestampAdjuster timestampAdjuster, HlsMediaChunk previousChunk, byte[] encryptionKey,
-      byte[] encryptionIv) {
+      byte[] encryptionIv,
+      // TVirl
+      @DefaultTsPayloadReaderFactory.Flags int defaultTsReaderFlags) {
     super(buildDataSource(dataSource, encryptionKey, encryptionIv), dataSpec, hlsUrl.format,
         trackSelectionReason, trackSelectionData, startTimeUs, endTimeUs, chunkIndex);
     this.discontinuitySequenceNumber = discontinuitySequenceNumber;
@@ -156,6 +163,9 @@ import java.util.concurrent.atomic.AtomicInteger;
     }
     initDataSource = dataSource;
     uid = UID_SOURCE.getAndIncrement();
+
+    // TVirl
+    this.defaultTsReaderFlags = defaultTsReaderFlags;
   }
 
   /**
@@ -357,7 +367,9 @@ import java.util.concurrent.atomic.AtomicInteger;
       // MPEG-2 TS segments, but we need a new extractor.
       // This flag ensures the change of pid between streams does not affect the sample queues.
       @DefaultTsPayloadReaderFactory.Flags
-      int esReaderFactoryFlags = DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM;
+      int esReaderFactoryFlags = DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM |
+          // TVirl
+          defaultTsReaderFlags;
       List<Format> closedCaptionFormats = muxedCaptionFormats;
       if (closedCaptionFormats != null) {
         // The playlist declares closed caption renditions, we should ignore descriptors.

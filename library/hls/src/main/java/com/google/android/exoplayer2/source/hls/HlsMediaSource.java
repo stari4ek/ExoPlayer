@@ -20,6 +20,7 @@ import android.os.Handler;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
+import com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.MediaPeriod;
@@ -53,6 +54,11 @@ public final class HlsMediaSource implements MediaSource,
   private final int minLoadableRetryCount;
   private final EventDispatcher eventDispatcher;
 
+  // TVirl: workaround for https://github.com/google/ExoPlayer/issues/2748
+  @DefaultTsPayloadReaderFactory.Flags
+  private final int defaultTsReaderFlags;
+  // !TVirl
+
   private HlsPlaylistTracker playlistTracker;
   private Listener sourceListener;
 
@@ -66,16 +72,23 @@ public final class HlsMediaSource implements MediaSource,
       int minLoadableRetryCount, Handler eventHandler,
       AdaptiveMediaSourceEventListener eventListener) {
     this(manifestUri, new DefaultHlsDataSourceFactory(dataSourceFactory), minLoadableRetryCount,
-        eventHandler, eventListener);
+        eventHandler, eventListener,
+        // TVirl
+        0);
   }
 
   public HlsMediaSource(Uri manifestUri, HlsDataSourceFactory dataSourceFactory,
       int minLoadableRetryCount, Handler eventHandler,
-      AdaptiveMediaSourceEventListener eventListener) {
+      AdaptiveMediaSourceEventListener eventListener,
+      // TVirl
+      @DefaultTsPayloadReaderFactory.Flags int defaultTsReaderFlags) {
     this.manifestUri = manifestUri;
     this.dataSourceFactory = dataSourceFactory;
     this.minLoadableRetryCount = minLoadableRetryCount;
     eventDispatcher = new EventDispatcher(eventHandler, eventListener);
+
+    // TVirl
+    this.defaultTsReaderFlags = defaultTsReaderFlags;
   }
 
   @Override
@@ -96,7 +109,9 @@ public final class HlsMediaSource implements MediaSource,
   public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator) {
     Assertions.checkArgument(id.periodIndex == 0);
     return new HlsMediaPeriod(playlistTracker, dataSourceFactory, minLoadableRetryCount,
-        eventDispatcher, allocator);
+        eventDispatcher, allocator,
+        // TVirl
+        defaultTsReaderFlags);
   }
 
   @Override

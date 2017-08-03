@@ -19,6 +19,7 @@ import android.net.Uri;
 import android.os.SystemClock;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory;
 import com.google.android.exoplayer2.source.BehindLiveWindowException;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.chunk.Chunk;
@@ -89,6 +90,11 @@ import java.util.Locale;
   private final TrackGroup trackGroup;
   private final List<Format> muxedCaptionFormats;
 
+  // TVirl: workaround for https://github.com/google/ExoPlayer/issues/2748
+  @DefaultTsPayloadReaderFactory.Flags
+  private final int defaultTsReaderFlags;
+  // !TVirl
+
   private boolean isTimestampMaster;
   private byte[] scratchSpace;
   private IOException fatalError;
@@ -117,7 +123,9 @@ import java.util.Locale;
    */
   public HlsChunkSource(HlsPlaylistTracker playlistTracker, HlsUrl[] variants,
       HlsDataSourceFactory dataSourceFactory, TimestampAdjusterProvider timestampAdjusterProvider,
-      List<Format> muxedCaptionFormats) {
+      List<Format> muxedCaptionFormats,
+      // TVirl
+      @DefaultTsPayloadReaderFactory.Flags int defaultTsReaderFlags) {
     this.playlistTracker = playlistTracker;
     this.variants = variants;
     this.timestampAdjusterProvider = timestampAdjusterProvider;
@@ -132,7 +140,11 @@ import java.util.Locale;
     encryptionDataSource = dataSourceFactory.createDataSource(C.DATA_TYPE_DRM);
     trackGroup = new TrackGroup(variantFormats);
     trackSelection = new InitializationTrackSelection(trackGroup, initialTrackSelection);
+
+    // TVirl
+    this.defaultTsReaderFlags = defaultTsReaderFlags;
   }
+
 
   /**
    * If the source is currently having difficulty providing chunks, then this method throws the
@@ -307,7 +319,9 @@ import java.util.Locale;
     out.chunk = new HlsMediaChunk(mediaDataSource, dataSpec, initDataSpec, selectedUrl,
         muxedCaptionFormats, trackSelection.getSelectionReason(), trackSelection.getSelectionData(),
         startTimeUs, startTimeUs + segment.durationUs, chunkMediaSequence, discontinuitySequence,
-        isTimestampMaster, timestampAdjuster, previous, encryptionKey, encryptionIv);
+        isTimestampMaster, timestampAdjuster, previous, encryptionKey, encryptionIv,
+        // TVirl
+        defaultTsReaderFlags);
   }
 
   /**
