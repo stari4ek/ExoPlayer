@@ -109,6 +109,13 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
   private static final Pattern REGEX_DEFAULT = compileBooleanAttrPattern("DEFAULT");
   private static final Pattern REGEX_FORCED = compileBooleanAttrPattern("FORCED");
 
+  // TVirl
+  // some crappy services can have wrong width/height in manifest and
+  // video stream will be discarded cause it has to be aligned
+  // alignment equal to 1 means no alignment
+  private final static int WORKAROUND_VIDEO_SIZE_ALIGNMENT = 2;   // require at least 2px
+
+
   @Override
   public HlsPlaylist parse(Uri uri, InputStream inputStream) throws IOException {
     BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
@@ -257,6 +264,14 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
             // Resolution string is invalid.
             width = Format.NO_VALUE;
             height = Format.NO_VALUE;
+          }
+          // TVirl: reject non-aligned dimensions
+          else if (width % WORKAROUND_VIDEO_SIZE_ALIGNMENT != 0 ||
+                   height % WORKAROUND_VIDEO_SIZE_ALIGNMENT != 0) {
+
+            width = Format.NO_VALUE;
+            height = Format.NO_VALUE;
+            // !TVirl
           }
         } else {
           width = Format.NO_VALUE;
