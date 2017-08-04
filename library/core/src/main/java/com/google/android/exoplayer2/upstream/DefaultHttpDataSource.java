@@ -439,7 +439,11 @@ public class DefaultHttpDataSource implements HttpDataSource {
    * @return The next URL.
    * @throws IOException If redirection isn't possible.
    */
+  /* TVirl: make it possible to override so we can check if redirect goes to different
+            media type (HLS -> http progressive)
   private static URL handleRedirect(URL originalUrl, String location) throws IOException {
+  */
+  protected URL handleRedirect(URL originalUrl, String location) throws IOException {
     if (location == null) {
       throw new ProtocolException("Null location redirect");
     }
