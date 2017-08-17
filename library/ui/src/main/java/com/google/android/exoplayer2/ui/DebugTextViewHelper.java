@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.ui;
 
+import android.annotation.SuppressLint;
 import android.widget.TextView;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.Format;
@@ -25,6 +26,7 @@ import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
+import java.util.Locale;
 
 /**
  * A helper class for periodically updating a {@link TextView} with debug information obtained from
@@ -125,6 +127,7 @@ public final class DebugTextViewHelper implements Runnable, Player.EventListener
 
   // Private methods.
 
+  @SuppressLint("SetTextI18n")
   private void updateAndPost() {
     textView.setText(getPlayerStateString() + getPlayerWindowIndexString() + getVideoString()
         + getAudioString());
@@ -183,15 +186,16 @@ public final class DebugTextViewHelper implements Runnable, Player.EventListener
       return "";
     }
     counters.ensureUpdated();
-    return " rb:" + counters.renderedOutputBufferCount
+    return " sib:" + counters.skippedInputBufferCount
         + " sb:" + counters.skippedOutputBufferCount
+        + " rb:" + counters.renderedOutputBufferCount
         + " db:" + counters.droppedOutputBufferCount
         + " mcdb:" + counters.maxConsecutiveDroppedOutputBufferCount;
   }
 
   private static String getPixelAspectRatioString(float pixelAspectRatio) {
     return pixelAspectRatio == Format.NO_VALUE || pixelAspectRatio == 1f ? ""
-        : (" par:" + String.format("%.02f", pixelAspectRatio));
+        : (" par:" + String.format(Locale.US, "%.02f", pixelAspectRatio));
   }
 
 }

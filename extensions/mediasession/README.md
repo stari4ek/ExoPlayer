@@ -1,11 +1,11 @@
-# ExoPlayer MediaSession Extension #
+# ExoPlayer MediaSession extension #
 
 ## Description ##
 
-The MediaSession Extension mediates between an ExoPlayer instance and a
-[MediaSession][]. It automatically retrieves and implements playback actions
-and syncs the player state with the state of the media session. The behaviour
-can be extended to support other playback and custom actions.
+The MediaSession extension mediates between a Player (or ExoPlayer) instance
+and a [MediaSession][]. It automatically retrieves and implements playback
+actions and syncs the player state with the state of the media session. The
+behaviour can be extended to support other playback and custom actions.
 
 [MediaSession]: https://developer.android.com/reference/android/support/v4/media/session/MediaSessionCompat.html
 

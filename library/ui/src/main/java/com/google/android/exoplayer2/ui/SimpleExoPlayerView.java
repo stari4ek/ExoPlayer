@@ -126,7 +126,8 @@ import java.util.List;
  *         <li>Default: {@code R.id.exo_playback_control_view}</li>
  *       </ul>
  *   <li>All attributes that can be set on a {@link PlaybackControlView} can also be set on a
- *       SimpleExoPlayerView, and will be propagated to the inflated {@link PlaybackControlView}.
+ *       SimpleExoPlayerView, and will be propagated to the inflated {@link PlaybackControlView}
+ *       unless the layout is overridden to specify a custom {@code exo_controller} (see below).
  *   </li>
  * </ul>
  *
@@ -163,9 +164,17 @@ import java.util.List;
  *       </ul>
  *   </li>
  *   <li><b>{@code exo_controller_placeholder}</b> - A placeholder that's replaced with the inflated
- *       {@link PlaybackControlView}.
+ *       {@link PlaybackControlView}. Ignored if an {@code exo_controller} view exists.
  *       <ul>
  *        <li>Type: {@link View}</li>
+ *       </ul>
+ *   </li>
+ *   <li><b>{@code exo_controller}</b> - An already inflated {@link PlaybackControlView}. Allows use
+ *       of a custom extension of {@link PlaybackControlView}. Note that attributes such as
+ *       {@code rewind_increment} will not be automatically propagated through to this instance. If
+ *       a view exists with this id, any {@code exo_controller_placeholder} view will be ignored.
+ *       <ul>
+ *        <li>Type: {@link PlaybackControlView}</li>
  *       </ul>
  *   </li>
  *   <li><b>{@code exo_overlay}</b> - A {@link FrameLayout} positioned on top of the player which
@@ -315,8 +324,11 @@ public final class SimpleExoPlayerView extends FrameLayout {
     }
 
     // Playback control view.
+    PlaybackControlView customController = (PlaybackControlView) findViewById(R.id.exo_controller);
     View controllerPlaceholder = findViewById(R.id.exo_controller_placeholder);
-    if (controllerPlaceholder != null) {
+    if (customController != null) {
+      this.controller = customController;
+    } else if (controllerPlaceholder != null) {
       // Note: rewindMs and fastForwardMs are passed via attrs, so we don't need to make explicit
       // calls to set them.
       this.controller = new PlaybackControlView(context, attrs);
@@ -367,9 +379,7 @@ public final class SimpleExoPlayerView extends FrameLayout {
   }
 
   /**
-   * Set the {@link SimpleExoPlayer} to use. The {@link SimpleExoPlayer#setTextOutput} and
-   * {@link SimpleExoPlayer#setVideoListener} method of the player will be called and previous
-   * assignments are overridden.
+   * Set the {@link SimpleExoPlayer} to use.
    * <p>
    * To transition a {@link SimpleExoPlayer} from targeting one view to another, it's recommended to
    * use {@link #switchTargetView(SimpleExoPlayer, SimpleExoPlayerView, SimpleExoPlayerView)} rather
@@ -385,8 +395,8 @@ public final class SimpleExoPlayerView extends FrameLayout {
     }
     if (this.player != null) {
       this.player.removeListener(componentListener);
-      this.player.clearTextOutput(componentListener);
-      this.player.clearVideoListener(componentListener);
+      this.player.removeTextOutput(componentListener);
+      this.player.removeVideoListener(componentListener);
       if (surfaceView instanceof TextureView) {
         this.player.clearVideoTextureView((TextureView) surfaceView);
       } else if (surfaceView instanceof SurfaceView) {
@@ -406,8 +416,8 @@ public final class SimpleExoPlayerView extends FrameLayout {
       } else if (surfaceView instanceof SurfaceView) {
         player.setVideoSurfaceView((SurfaceView) surfaceView);
       }
-      player.setVideoListener(componentListener);
-      player.setTextOutput(componentListener);
+      player.addVideoListener(componentListener);
+      player.addTextOutput(componentListener);
       player.addListener(componentListener);
       maybeShowController(false);
       updateForCurrentTrackSelections();
@@ -656,10 +666,15 @@ public final class SimpleExoPlayerView extends FrameLayout {
   }
 
   /**
-   * Gets the view onto which video is rendered. This is either a {@link SurfaceView} (default)
-   * or a {@link TextureView} if the {@code use_texture_view} view attribute has been set to true.
+   * Gets the view onto which video is rendered. This is a:
+   * <ul>
+   *   <li>{@link SurfaceView} by default, or if the {@code surface_type} attribute is set to
+   *   {@code surface_view}.</li>
+   *   <li>{@link TextureView} if {@code surface_type} is {@code texture_view}.</li>
+   *   <li>{@code null} if {@code surface_type} is {@code none}.</li>
+   * </ul>
    *
-   * @return Either a {@link SurfaceView} or a {@link TextureView}.
+   * @return The {@link SurfaceView}, {@link TextureView} or {@code null}.
    */
   public View getVideoSurfaceView() {
     return surfaceView;
