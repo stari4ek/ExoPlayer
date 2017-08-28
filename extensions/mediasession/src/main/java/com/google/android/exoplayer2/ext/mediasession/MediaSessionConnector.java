@@ -620,6 +620,13 @@ public final class MediaSessionConnector {
     }
 
     @Override
+    public void onShuffleModeEnabledChanged(boolean shuffleModeEnabled) {
+      mediaSession.setShuffleMode(shuffleModeEnabled ? PlaybackStateCompat.SHUFFLE_MODE_ALL
+          : PlaybackStateCompat.SHUFFLE_MODE_NONE);
+      updateMediaSessionPlaybackState();
+    }
+
+    @Override
     public void onPlayerError(ExoPlaybackException error) {
       playbackException = error;
       updateMediaSessionPlaybackState();
@@ -797,6 +804,14 @@ public final class MediaSessionConnector {
     public void onSetShuffleModeEnabled(boolean enabled) {
       if (canDispatchToQueueNavigator(PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE_ENABLED)) {
         queueNavigator.onSetShuffleModeEnabled(player, enabled);
+      }
+    }
+
+    @Override
+    public void onSetShuffleMode(int shuffleMode) {
+      if (canDispatchToQueueNavigator(PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE_ENABLED)) {
+        queueNavigator.onSetShuffleModeEnabled(player,
+            shuffleMode != PlaybackStateCompat.SHUFFLE_MODE_NONE);
       }
     }
 

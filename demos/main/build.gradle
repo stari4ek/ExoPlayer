@@ -39,17 +39,16 @@ android {
         disable 'MissingTranslation'
     }
 
-    // TVirl: Studio 3.0
-//    productFlavors {
-//        noExtensions
-//        withExtensions
-//    }
+    flavorDimensions "extensions"
+
     productFlavors {
-        flavorDimensions "extensions"
-        noExtensions {dimension "extensions"}
-        withExtensions {dimension "extensions"}
+        noExtensions {
+            dimension "extensions"
+        }
+        withExtensions {
+            dimension "extensions"
+        }
     }
-    // !TVirl
 }
 
 dependencies {
