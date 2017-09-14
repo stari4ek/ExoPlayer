@@ -36,7 +36,7 @@ dependencies {
     compile 'com.android.support:support-v4:' + supportLibraryVersion
     compile 'com.google.ads.interactivemedia.v3:interactivemedia:3.7.4'
     compile 'com.google.android.gms:play-services-ads:' + playServicesLibraryVersion
-    androidTestCompile project(modulePrefix + 'library')
+    androidTestCompile project(modulePrefix + 'library-core')
     androidTestCompile 'com.google.dexmaker:dexmaker:' + dexmakerVersion
     androidTestCompile 'com.google.dexmaker:dexmaker-mockito:' + dexmakerVersion
     androidTestCompile 'org.mockito:mockito-core:' + mockitoVersion
