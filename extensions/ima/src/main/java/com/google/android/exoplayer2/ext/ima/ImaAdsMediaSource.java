@@ -15,12 +15,11 @@
  */
 package com.google.android.exoplayer2.ext.ima;
 
-import android.content.Context;
-import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.support.annotation.Nullable;
+import android.util.Log;
 import android.view.ViewGroup;
-import com.google.ads.interactivemedia.v3.api.ImaSdkSettings;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
@@ -42,16 +41,46 @@ import java.util.Map;
  */
 public final class ImaAdsMediaSource implements MediaSource {
 
+  /**
+   * Listener for events relating to ad loading.
+   */
+  public interface AdsListener {
+
+    /**
+     * Called if there was an error loading ads. The media source will load the content without ads
+     * if ads can't be loaded, so listen for this event if you need to implement additional handling
+     * (for example, stopping the player).
+     *
+     * @param error The error.
+     */
+    void onAdLoadError(IOException error);
+
+    /**
+     * Called when the user clicks through an ad (for example, following a 'learn more' link).
+     */
+    void onAdClicked();
+
+    /**
+     * Called when the user taps a non-clickthrough part of an ad.
+     */
+    void onAdTapped();
+
+  }
+
+  private static final String TAG = "ImaAdsMediaSource";
+
   private final MediaSource contentMediaSource;
   private final DataSource.Factory dataSourceFactory;
-  private final Context context;
-  private final Uri adTagUri;
+  private final ImaAdsLoader imaAdsLoader;
   private final ViewGroup adUiViewGroup;
-  private final ImaSdkSettings imaSdkSettings;
   private final Handler mainHandler;
-  private final AdListener adLoaderListener;
+  private final AdsLoaderListener adsLoaderListener;
   private final Map<MediaPeriod, MediaSource> adMediaSourceByMediaPeriod;
   private final Timeline.Period period;
+  @Nullable
+  private final Handler eventHandler;
+  @Nullable
+  private final AdsListener eventListener;
 
   private Handler playerHandler;
   private ExoPlayer player;
@@ -60,17 +89,10 @@ public final class ImaAdsMediaSource implements MediaSource {
   // Accessed on the player thread.
   private Timeline contentTimeline;
   private Object contentManifest;
-  private long[] adGroupTimesUs;
-  private boolean[] hasPlayedAdGroup;
-  private int[] adCounts;
+  private AdPlaybackState adPlaybackState;
   private MediaSource[][] adGroupMediaSources;
-  private boolean[][] isAdAvailable;
   private long[][] adDurationsUs;
   private MediaSource.Listener listener;
-  private IOException adLoadError;
-
-  // Accessed on the main thread.
-  private ImaAdsLoader imaAdsLoader;
 
   /**
    * Constructs a new source that inserts ads linearly with the content specified by
@@ -78,16 +100,12 @@ public final class ImaAdsMediaSource implements MediaSource {
    *
    * @param contentMediaSource The {@link MediaSource} providing the content to play.
    * @param dataSourceFactory Factory for data sources used to load ad media.
-   * @param context The context.
-   * @param adTagUri The {@link Uri} of an ad tag compatible with the Android IMA SDK. See
-   *     https://developers.google.com/interactive-media-ads/docs/sdks/android/compatibility for
-   *     more information.
-   * @param adUiViewGroup A {@link ViewGroup} on top of the player that will show any ad user
-   *     interface.
+   * @param imaAdsLoader The loader for ads.
+   * @param adUiViewGroup A {@link ViewGroup} on top of the player that will show any ad UI.
    */
   public ImaAdsMediaSource(MediaSource contentMediaSource, DataSource.Factory dataSourceFactory,
-      Context context, Uri adTagUri, ViewGroup adUiViewGroup) {
-    this(contentMediaSource, dataSourceFactory, context, adTagUri, adUiViewGroup, null);
+      ImaAdsLoader imaAdsLoader, ViewGroup adUiViewGroup) {
+    this(contentMediaSource, dataSourceFactory, imaAdsLoader, adUiViewGroup, null, null);
   }
 
   /**
@@ -96,69 +114,86 @@ public final class ImaAdsMediaSource implements MediaSource {
    *
    * @param contentMediaSource The {@link MediaSource} providing the content to play.
    * @param dataSourceFactory Factory for data sources used to load ad media.
-   * @param context The context.
-   * @param adTagUri The {@link Uri} of an ad tag compatible with the Android IMA SDK. See
-   *     https://developers.google.com/interactive-media-ads/docs/sdks/android/compatibility for
-   *     more information.
+   * @param imaAdsLoader The loader for ads.
    * @param adUiViewGroup A {@link ViewGroup} on top of the player that will show any ad UI.
-   * @param imaSdkSettings {@link ImaSdkSettings} used to configure the IMA SDK, or {@code null} to
-   *     use the default settings. If set, the player type and version fields may be overwritten.
+   * @param eventHandler A handler for events. May be null if delivery of events is not required.
+   * @param eventListener A listener of events. May be null if delivery of events is not required.
    */
   public ImaAdsMediaSource(MediaSource contentMediaSource, DataSource.Factory dataSourceFactory,
-      Context context, Uri adTagUri, ViewGroup adUiViewGroup, ImaSdkSettings imaSdkSettings) {
+      ImaAdsLoader imaAdsLoader, ViewGroup adUiViewGroup, @Nullable Handler eventHandler,
+      @Nullable AdsListener eventListener) {
     this.contentMediaSource = contentMediaSource;
     this.dataSourceFactory = dataSourceFactory;
-    this.context = context;
-    this.adTagUri = adTagUri;
+    this.imaAdsLoader = imaAdsLoader;
     this.adUiViewGroup = adUiViewGroup;
-    this.imaSdkSettings = imaSdkSettings;
+    this.eventHandler = eventHandler;
+    this.eventListener = eventListener;
     mainHandler = new Handler(Looper.getMainLooper());
-    adLoaderListener = new AdListener();
+    adsLoaderListener = new AdsLoaderListener();
     adMediaSourceByMediaPeriod = new HashMap<>();
     period = new Timeline.Period();
     adGroupMediaSources = new MediaSource[0][];
-    isAdAvailable = new boolean[0][];
     adDurationsUs = new long[0][];
   }
 
   @Override
-  public void prepareSource(ExoPlayer player, boolean isTopLevelSource, Listener listener) {
+  public void prepareSource(final ExoPlayer player, boolean isTopLevelSource, Listener listener) {
     Assertions.checkArgument(isTopLevelSource);
     this.listener = listener;
     this.player = player;
     playerHandler = new Handler();
-    mainHandler.post(new Runnable() {
-      @Override
-      public void run() {
-        imaAdsLoader = new ImaAdsLoader(context, adTagUri, adUiViewGroup, imaSdkSettings,
-            ImaAdsMediaSource.this.player, adLoaderListener);
-      }
-    });
     contentMediaSource.prepareSource(player, false, new Listener() {
       @Override
       public void onSourceInfoRefreshed(Timeline timeline, Object manifest) {
         ImaAdsMediaSource.this.onContentSourceInfoRefreshed(timeline, manifest);
       }
     });
+    mainHandler.post(new Runnable() {
+      @Override
+      public void run() {
+        imaAdsLoader.attachPlayer(player, adsLoaderListener, adUiViewGroup);
+      }
+    });
   }
 
   @Override
   public void maybeThrowSourceInfoRefreshError() throws IOException {
-    if (adLoadError != null) {
-      throw adLoadError;
-    }
     contentMediaSource.maybeThrowSourceInfoRefreshError();
     for (MediaSource[] mediaSources : adGroupMediaSources) {
       for (MediaSource mediaSource : mediaSources) {
-        mediaSource.maybeThrowSourceInfoRefreshError();
+        if (mediaSource != null) {
+          mediaSource.maybeThrowSourceInfoRefreshError();
+        }
       }
     }
   }
 
   @Override
   public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator) {
-    if (id.isAd()) {
-      MediaSource mediaSource = adGroupMediaSources[id.adGroupIndex][id.adIndexInAdGroup];
+    if (adPlaybackState.adGroupCount > 0 && id.isAd()) {
+      final int adGroupIndex = id.adGroupIndex;
+      final int adIndexInAdGroup = id.adIndexInAdGroup;
+      if (adGroupMediaSources[adGroupIndex].length <= adIndexInAdGroup) {
+        MediaSource adMediaSource = new ExtractorMediaSource(
+            adPlaybackState.adUris[id.adGroupIndex][id.adIndexInAdGroup], dataSourceFactory,
+            new DefaultExtractorsFactory(), mainHandler, adsLoaderListener);
+        int oldAdCount = adGroupMediaSources[id.adGroupIndex].length;
+        if (adIndexInAdGroup >= oldAdCount) {
+          int adCount = adIndexInAdGroup + 1;
+          adGroupMediaSources[adGroupIndex] =
+              Arrays.copyOf(adGroupMediaSources[adGroupIndex], adCount);
+          adDurationsUs[adGroupIndex] = Arrays.copyOf(adDurationsUs[adGroupIndex], adCount);
+          Arrays.fill(adDurationsUs[adGroupIndex], oldAdCount, adCount, C.TIME_UNSET);
+        }
+        adGroupMediaSources[adGroupIndex][adIndexInAdGroup] = adMediaSource;
+        adMediaSource.prepareSource(player, false, new Listener() {
+          @Override
+          public void onSourceInfoRefreshed(Timeline timeline, Object manifest) {
+            onAdSourceInfoRefreshed(adGroupIndex, adIndexInAdGroup, timeline);
+          }
+        });
+      }
+      MediaSource mediaSource = adGroupMediaSources[adGroupIndex][adIndexInAdGroup];
       MediaPeriod mediaPeriod = mediaSource.createPeriod(new MediaPeriodId(0), allocator);
       adMediaSourceByMediaPeriod.put(mediaPeriod, mediaSource);
       return mediaPeriod;
@@ -179,41 +214,47 @@ public final class ImaAdsMediaSource implements MediaSource {
   @Override
   public void releaseSource() {
     released = true;
-    adLoadError = null;
     contentMediaSource.releaseSource();
     for (MediaSource[] mediaSources : adGroupMediaSources) {
       for (MediaSource mediaSource : mediaSources) {
-        mediaSource.releaseSource();
+        if (mediaSource != null) {
+          mediaSource.releaseSource();
+        }
       }
     }
     mainHandler.post(new Runnable() {
       @Override
       public void run() {
-        // TODO: The source will be released when the application is paused/stopped, which can occur
-        // if the user taps on the ad. In this case, we should keep the ads manager alive but pause
-        // it, instead of destroying it.
-        imaAdsLoader.release();
-        imaAdsLoader = null;
+        imaAdsLoader.detachPlayer();
       }
     });
   }
 
   // Internal methods.
 
-  private void onAdGroupTimesUsLoaded(long[] adGroupTimesUs) {
-    Assertions.checkState(this.adGroupTimesUs == null);
-    int adGroupCount = adGroupTimesUs.length;
-    this.adGroupTimesUs = adGroupTimesUs;
-    hasPlayedAdGroup = new boolean[adGroupCount];
-    adCounts = new int[adGroupCount];
-    Arrays.fill(adCounts, C.LENGTH_UNSET);
-    adGroupMediaSources = new MediaSource[adGroupCount][];
-    Arrays.fill(adGroupMediaSources, new MediaSource[0]);
-    isAdAvailable = new boolean[adGroupCount][];
-    Arrays.fill(isAdAvailable, new boolean[0]);
-    adDurationsUs = new long[adGroupCount][];
-    Arrays.fill(adDurationsUs, new long[0]);
+  private void onAdPlaybackState(AdPlaybackState adPlaybackState) {
+    if (this.adPlaybackState == null) {
+      adGroupMediaSources = new MediaSource[adPlaybackState.adGroupCount][];
+      Arrays.fill(adGroupMediaSources, new MediaSource[0]);
+      adDurationsUs = new long[adPlaybackState.adGroupCount][];
+      Arrays.fill(adDurationsUs, new long[0]);
+    }
+    this.adPlaybackState = adPlaybackState;
     maybeUpdateSourceInfo();
+  }
+
+  private void onLoadError(final IOException error) {
+    Log.w(TAG, "Ad load error", error);
+    if (eventHandler != null && eventListener != null) {
+      eventHandler.post(new Runnable() {
+        @Override
+        public void run() {
+          if (!released) {
+            eventListener.onAdLoadError(error);
+          }
+        }
+      });
+    }
   }
 
   private void onContentSourceInfoRefreshed(Timeline timeline, Object manifest) {
@@ -222,49 +263,18 @@ public final class ImaAdsMediaSource implements MediaSource {
     maybeUpdateSourceInfo();
   }
 
-  private void onAdGroupPlayedToEnd(int adGroupIndex) {
-    hasPlayedAdGroup[adGroupIndex] = true;
-    maybeUpdateSourceInfo();
-  }
-
-  private void onAdUriLoaded(final int adGroupIndex, final int adIndexInAdGroup, Uri uri) {
-    MediaSource adMediaSource = new ExtractorMediaSource(uri, dataSourceFactory,
-        new DefaultExtractorsFactory(), mainHandler, adLoaderListener);
-    int oldAdCount = adGroupMediaSources[adGroupIndex].length;
-    if (adIndexInAdGroup >= oldAdCount) {
-      int adCount = adIndexInAdGroup + 1;
-      adGroupMediaSources[adGroupIndex] = Arrays.copyOf(adGroupMediaSources[adGroupIndex], adCount);
-      isAdAvailable[adGroupIndex] = Arrays.copyOf(isAdAvailable[adGroupIndex], adCount);
-      adDurationsUs[adGroupIndex] = Arrays.copyOf(adDurationsUs[adGroupIndex], adCount);
-      Arrays.fill(adDurationsUs[adGroupIndex], oldAdCount, adCount, C.TIME_UNSET);
-    }
-    adGroupMediaSources[adGroupIndex][adIndexInAdGroup] = adMediaSource;
-    isAdAvailable[adGroupIndex][adIndexInAdGroup] = true;
-    adMediaSource.prepareSource(player, false, new Listener() {
-      @Override
-      public void onSourceInfoRefreshed(Timeline timeline, Object manifest) {
-        onAdSourceInfoRefreshed(adGroupIndex, adIndexInAdGroup, timeline);
-      }
-    });
-  }
-
   private void onAdSourceInfoRefreshed(int adGroupIndex, int adIndexInAdGroup, Timeline timeline) {
     Assertions.checkArgument(timeline.getPeriodCount() == 1);
     adDurationsUs[adGroupIndex][adIndexInAdGroup] = timeline.getPeriod(0, period).getDurationUs();
     maybeUpdateSourceInfo();
   }
 
-  private void onAdGroupLoaded(int adGroupIndex, int adCountInAdGroup) {
-    if (adCounts[adGroupIndex] == C.LENGTH_UNSET) {
-      adCounts[adGroupIndex] = adCountInAdGroup;
-      maybeUpdateSourceInfo();
-    }
-  }
-
   private void maybeUpdateSourceInfo() {
-    if (adGroupTimesUs != null && contentTimeline != null) {
-      SinglePeriodAdTimeline timeline = new SinglePeriodAdTimeline(contentTimeline, adGroupTimesUs,
-          hasPlayedAdGroup, adCounts, isAdAvailable, adDurationsUs);
+    if (adPlaybackState != null && contentTimeline != null) {
+      Timeline timeline = adPlaybackState.adGroupCount == 0 ? contentTimeline
+          : new SinglePeriodAdTimeline(contentTimeline, adPlaybackState.adGroupTimesUs,
+              adPlaybackState.adCounts, adPlaybackState.adsLoadedCounts,
+              adPlaybackState.adsPlayedCounts, adDurationsUs, adPlaybackState.adResumePositionUs);
       listener.onSourceInfoRefreshed(timeline, contentManifest);
     }
   }
@@ -272,11 +282,11 @@ public final class ImaAdsMediaSource implements MediaSource {
   /**
    * Listener for ad loading events. All methods are called on the main thread.
    */
-  private final class AdListener implements ImaAdsLoader.EventListener,
+  private final class AdsLoaderListener implements ImaAdsLoader.EventListener,
       ExtractorMediaSource.EventListener {
 
     @Override
-    public void onAdGroupTimesUsLoaded(final long[] adGroupTimesUs) {
+    public void onAdPlaybackState(final AdPlaybackState adPlaybackState) {
       if (released) {
         return;
       }
@@ -286,55 +296,7 @@ public final class ImaAdsMediaSource implements MediaSource {
           if (released) {
             return;
           }
-          ImaAdsMediaSource.this.onAdGroupTimesUsLoaded(adGroupTimesUs);
-        }
-      });
-    }
-
-    @Override
-    public void onAdGroupPlayedToEnd(final int adGroupIndex) {
-      if (released) {
-        return;
-      }
-      playerHandler.post(new Runnable() {
-        @Override
-        public void run() {
-          if (released) {
-            return;
-          }
-          ImaAdsMediaSource.this.onAdGroupPlayedToEnd(adGroupIndex);
-        }
-      });
-    }
-
-    @Override
-    public void onAdUriLoaded(final int adGroupIndex, final int adIndexInAdGroup, final Uri uri) {
-      if (released) {
-        return;
-      }
-      playerHandler.post(new Runnable() {
-        @Override
-        public void run() {
-          if (released) {
-            return;
-          }
-          ImaAdsMediaSource.this.onAdUriLoaded(adGroupIndex, adIndexInAdGroup, uri);
-        }
-      });
-    }
-
-    @Override
-    public void onAdGroupLoaded(final int adGroupIndex, final int adCountInAdGroup) {
-      if (released) {
-        return;
-      }
-      playerHandler.post(new Runnable() {
-        @Override
-        public void run() {
-          if (released) {
-            return;
-          }
-          ImaAdsMediaSource.this.onAdGroupLoaded(adGroupIndex, adCountInAdGroup);
+          ImaAdsMediaSource.this.onAdPlaybackState(adPlaybackState);
         }
       });
     }
@@ -350,9 +312,37 @@ public final class ImaAdsMediaSource implements MediaSource {
           if (released) {
             return;
           }
-          adLoadError = error;
+          ImaAdsMediaSource.this.onLoadError(error);
         }
       });
+    }
+
+    @Override
+    public void onAdClicked() {
+      if (eventHandler != null && eventListener != null) {
+        eventHandler.post(new Runnable() {
+          @Override
+          public void run() {
+            if (!released) {
+              eventListener.onAdClicked();
+            }
+          }
+        });
+      }
+    }
+
+    @Override
+    public void onAdTapped() {
+      if (eventHandler != null && eventListener != null) {
+        eventHandler.post(new Runnable() {
+          @Override
+          public void run() {
+            if (!released) {
+              eventListener.onAdTapped();
+            }
+          }
+        });
+      }
     }
 
   }

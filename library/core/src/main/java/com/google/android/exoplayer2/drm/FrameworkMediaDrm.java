@@ -20,8 +20,8 @@ import android.media.DeniedByServerException;
 import android.media.MediaCrypto;
 import android.media.MediaCryptoException;
 import android.media.MediaDrm;
+import android.media.MediaDrmException;
 import android.media.NotProvisionedException;
-import android.media.ResourceBusyException;
 import android.media.UnsupportedSchemeException;
 import android.support.annotation.NonNull;
 import com.google.android.exoplayer2.C;
@@ -37,6 +37,7 @@ import java.util.UUID;
 @TargetApi(18)
 public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto> {
 
+  private final UUID uuid;
   private final MediaDrm mediaDrm;
 
   /**
@@ -57,7 +58,12 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
   }
 
   private FrameworkMediaDrm(UUID uuid) throws UnsupportedSchemeException {
-    this.mediaDrm = new MediaDrm(Assertions.checkNotNull(uuid));
+    Assertions.checkNotNull(uuid);
+    Assertions.checkArgument(!C.COMMON_PSSH_UUID.equals(uuid), "Use C.CLEARKEY_UUID instead");
+    // ClearKey had to be accessed using the Common PSSH UUID prior to API level 27.
+    uuid = Util.SDK_INT < 27 && C.CLEARKEY_UUID.equals(uuid) ? C.COMMON_PSSH_UUID : uuid;
+    this.uuid = uuid;
+    this.mediaDrm = new MediaDrm(uuid);
   }
 
   @Override
@@ -73,7 +79,7 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
   }
 
   @Override
-  public byte[] openSession() throws NotProvisionedException, ResourceBusyException {
+  public byte[] openSession() throws MediaDrmException {
     return mediaDrm.openSession();
   }
 
@@ -163,8 +169,7 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
   }
 
   @Override
-  public FrameworkMediaCrypto createMediaCrypto(UUID uuid, byte[] initData)
-      throws MediaCryptoException {
+  public FrameworkMediaCrypto createMediaCrypto(byte[] initData) throws MediaCryptoException {
     // Work around a bug prior to Lollipop where L1 Widevine forced into L3 mode would still
     // indicate that it required secure video decoders [Internal ref: b/11428937].
     boolean forceAllowInsecureDecoderComponents = Util.SDK_INT < 21

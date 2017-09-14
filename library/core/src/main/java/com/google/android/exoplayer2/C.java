@@ -74,6 +74,10 @@ public final class C {
   public static final long NANOS_PER_SECOND = 1000000000L;
 
   /**
+   * The name of the ASCII charset.
+   */
+  public static final String ASCII_NAME = "US-ASCII";
+  /**
    * The name of the UTF-8 charset.
    */
   public static final String UTF8_NAME = "UTF-8";
@@ -579,17 +583,44 @@ public final class C {
       + DEFAULT_AUDIO_BUFFER_SIZE + DEFAULT_TEXT_BUFFER_SIZE;
 
   /**
+   * "cenc" scheme type name as defined in ISO/IEC 23001-7:2016.
+   */
+  public static final String CENC_TYPE_cenc = "cenc";
+
+  /**
+   * "cbc1" scheme type name as defined in ISO/IEC 23001-7:2016.
+   */
+  public static final String CENC_TYPE_cbc1 = "cbc1";
+
+  /**
+   * "cens" scheme type name as defined in ISO/IEC 23001-7:2016.
+   */
+  public static final String CENC_TYPE_cens = "cens";
+
+  /**
+   * "cbcs" scheme type name as defined in ISO/IEC 23001-7:2016.
+   */
+  public static final String CENC_TYPE_cbcs = "cbcs";
+
+  /**
    * The Nil UUID as defined by
    * <a href="https://tools.ietf.org/html/rfc4122#section-4.1.7">RFC4122</a>.
    */
   public static final UUID UUID_NIL = new UUID(0L, 0L);
 
   /**
+   * UUID for the W3C
+   * <a href="https://w3c.github.io/encrypted-media/format-registry/initdata/cenc.html">Common PSSH
+   * box</a>.
+   */
+  public static final UUID COMMON_PSSH_UUID = new UUID(0x1077EFECC0B24D02L, 0xACE33C1E52E2FB4BL);
+
+  /**
    * UUID for the ClearKey DRM scheme.
    * <p>
    * ClearKey is supported on Android devices running Android 5.0 (API Level 21) and up.
    */
-  public static final UUID CLEARKEY_UUID = new UUID(0x1077EFECC0B24D02L, 0xACE33C1E52E2FB4BL);
+  public static final UUID CLEARKEY_UUID = new UUID(0xE2719D58A985B3C9L, 0x781AB030AF78D30EL);
 
   /**
    * UUID for the Widevine DRM scheme.

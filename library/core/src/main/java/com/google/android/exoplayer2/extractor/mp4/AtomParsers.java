@@ -678,7 +678,8 @@ import java.util.List;
           parent, position, size);
       if (sampleEntryEncryptionData != null) {
         atomType = sampleEntryEncryptionData.first;
-        drmInitData = drmInitData.copyWithSchemeType(sampleEntryEncryptionData.second.schemeType);
+        drmInitData = drmInitData == null ? null
+            : drmInitData.copyWithSchemeType(sampleEntryEncryptionData.second.schemeType);
         out.trackEncryptionBoxes[entryIndex] = sampleEntryEncryptionData.second;
       }
       parent.setPosition(childPosition);
@@ -815,7 +816,7 @@ import java.util.List;
 
   private static void parseAudioSampleEntry(ParsableByteArray parent, int atomType, int position,
       int size, int trackId, String language, boolean isQuickTime, DrmInitData drmInitData,
-      StsdData out, int entryIndex) {
+      StsdData out, int entryIndex) throws ParserException {
     parent.setPosition(position + Atom.HEADER_SIZE + StsdData.STSD_HEADER_SIZE);
 
     int quickTimeSoundDescriptionVersion = 0;
@@ -857,7 +858,8 @@ import java.util.List;
           parent, position, size);
       if (sampleEntryEncryptionData != null) {
         atomType = sampleEntryEncryptionData.first;
-        drmInitData = drmInitData.copyWithSchemeType(sampleEntryEncryptionData.second.schemeType);
+        drmInitData = drmInitData == null ? null
+            : drmInitData.copyWithSchemeType(sampleEntryEncryptionData.second.schemeType);
         out.trackEncryptionBoxes[entryIndex] = sampleEntryEncryptionData.second;
       }
       parent.setPosition(childPosition);
@@ -993,9 +995,10 @@ import java.util.List;
     int objectTypeIndication = parent.readUnsignedByte();
     String mimeType;
     switch (objectTypeIndication) {
-      case 0x6B:
-        mimeType = MimeTypes.AUDIO_MPEG;
-        return Pair.create(mimeType, null);
+      case 0x60:
+      case 0x61:
+        mimeType = MimeTypes.VIDEO_MPEG2;
+        break;
       case 0x20:
         mimeType = MimeTypes.VIDEO_MP4V;
         break;
@@ -1005,6 +1008,9 @@ import java.util.List;
       case 0x23:
         mimeType = MimeTypes.VIDEO_H265;
         break;
+      case 0x6B:
+        mimeType = MimeTypes.AUDIO_MPEG;
+        return Pair.create(mimeType, null);
       case 0x40:
       case 0x66:
       case 0x67:
@@ -1032,8 +1038,8 @@ import java.util.List;
 
     parent.skipBytes(12);
 
-    // Start of the AudioSpecificConfig.
-    parent.skipBytes(1); // AudioSpecificConfig tag
+    // Start of the DecoderSpecificInfo.
+    parent.skipBytes(1); // DecoderSpecificInfo tag
     int initializationDataSize = parseExpandableClassSize(parent);
     byte[] initializationData = new byte[initializationDataSize];
     parent.readBytes(initializationData, 0, initializationDataSize);
@@ -1141,7 +1147,7 @@ import java.util.List;
   }
 
   /**
-   * Parses the proj box from sv3d box, as specified by https://github.com/google/spatial-media
+   * Parses the proj box from sv3d box, as specified by https://github.com/google/spatial-media.
    */
   private static byte[] parseProjFromParent(ParsableByteArray parent, int position, int size) {
     int childPosition = position + Atom.HEADER_SIZE;

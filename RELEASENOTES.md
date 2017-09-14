@@ -1,5 +1,103 @@
 # Release notes #
 
+### r2.5.2 ###
+
+* IMA extension: Fix issue where ad playback could end prematurely for some
+  content types ([#3180](https://github.com/google/ExoPlayer/issues/3180)).
+* RTMP extension: Fix SIGABRT on fast RTMP stream restart
+  ([#3156](https://github.com/google/ExoPlayer/issues/3156)).
+* UI: Allow app to manually specify ad markers
+  ([#3184](https://github.com/google/ExoPlayer/issues/3184)).
+* DASH: Expose segment indices to subclasses of DefaultDashChunkSource
+  ([#3037](https://github.com/google/ExoPlayer/issues/3037)).
+* Captions: Added robustness against malformed WebVTT captions
+  ([#3228](https://github.com/google/ExoPlayer/issues/3228)).
+* DRM: Support forcing a specific license URL.
+* Fix playback error when seeking in media loaded through content:// URIs
+  ([#3216](https://github.com/google/ExoPlayer/issues/3216)).
+* Fix issue playing MP4s in which the last atom specifies a size of zero
+  ([#3191](https://github.com/google/ExoPlayer/issues/3191)).
+* Workaround playback failures on some Xiaomi devices
+  ([#3171](https://github.com/google/ExoPlayer/issues/3171)).
+* Workaround SIGSEGV issue on some devices when setting and swapping surface for
+  secure playbacks ([#3215](https://github.com/google/ExoPlayer/issues/3215)).
+* Workaround for Nexus 7 issue when swapping output surface
+  ([#3236](https://github.com/google/ExoPlayer/issues/3236)).
+* Workaround for SimpleExoPlayerView's surface not being hidden properly
+  ([#3160](https://github.com/google/ExoPlayer/issues/3160)).
+
+### r2.5.1 ###
+
+* Fix an issue that could cause the reported playback position to stop advancing
+  in some cases.
+* Fix an issue where a Surface could be released whilst still in use by the
+  player.
+
+### r2.5.0 ###
+
+* IMA extension: Wraps the Google Interactive Media Ads (IMA) SDK to provide an
+  easy and seamless way of incorporating display ads into ExoPlayer playbacks.
+  You can read more about the IMA extension
+  [here](https://medium.com/google-exoplayer/playing-ads-with-exoplayer-and-ima-868dfd767ea).
+* MediaSession extension: Provides an easy to to connect ExoPlayer with
+  MediaSessionCompat in the Android Support Library.
+* RTMP extension: An extension for playing streams over RTMP.
+* Build: Made it easier for application developers to depend on a local checkout
+  of ExoPlayer. You can learn how to do this
+  [here](https://medium.com/google-exoplayer/howto-2-depend-on-a-local-checkout-of-exoplayer-bcd7f8531720).
+* Core playback improvements:
+  * Eliminated re-buffering when changing audio and text track selections during
+    playback of progressive streams
+    ([#2926](https://github.com/google/ExoPlayer/issues/2926)).
+  * New DynamicConcatenatingMediaSource class to support playback of dynamic
+    playlists.
+  * New ExoPlayer.setRepeatMode method for dynamic toggling of repeat mode
+    during playback. Use of setRepeatMode should be preferred to
+    LoopingMediaSource for most looping use cases. You can read more about
+    setRepeatMode
+    [here](https://medium.com/google-exoplayer/repeat-modes-in-exoplayer-19dd85f036d3).
+  * Eliminated jank when switching video playback from one Surface to another on
+    API level 23+ for unencrypted content, and on devices that support the
+    EGL_EXT_protected_content OpenGL extension for protected content
+    ([#677](https://github.com/google/ExoPlayer/issues/677)).
+  * Enabled ExoPlayer instantiation on background threads without Loopers.
+    Events from such players are delivered on the application's main thread.
+* HLS improvements:
+  * Optimized adaptive switches for playlists that specify the
+    EXT-X-INDEPENDENT-SEGMENTS tag.
+  * Optimized in-buffer seeking
+    ([#551](https://github.com/google/ExoPlayer/issues/551)).
+  * Eliminated re-buffering when changing audio and text track selections during
+    playback, provided the new selection does not require switching to different
+    renditions ([#2718](https://github.com/google/ExoPlayer/issues/2718)).
+  * Exposed all media playlist tags in ExoPlayer's MediaPlaylist object.
+* DASH: Support for seamless switching across streams in different AdaptationSet
+  elements ([#2431](https://github.com/google/ExoPlayer/issues/2431)).
+* DRM: Support for additional crypto schemes (cbc1, cbcs and cens) on
+  API level 24+ ([#1989](https://github.com/google/ExoPlayer/issues/1989)).
+* Captions: Initial support for SSA/ASS subtitles
+  ([#889](https://github.com/google/ExoPlayer/issues/889)).
+* AndroidTV: Fixed issue where tunneled video playback would not start on some
+  devices ([#2985](https://github.com/google/ExoPlayer/issues/2985)).
+* MPEG-TS: Fixed segmentation issue when parsing H262
+  ([#2891](https://github.com/google/ExoPlayer/issues/2891)).
+* Cronet extension: Support for a user-defined fallback if Cronet library is not
+  present.
+* Fix buffer too small IllegalStateException issue affecting some composite
+  media playbacks ([#2900](https://github.com/google/ExoPlayer/issues/2900)).
+* Misc bugfixes.
+
+### r2.4.4 ###
+
+* HLS/MPEG-TS: Some initial optimizations of MPEG-TS extractor performance
+  ([#3040](https://github.com/google/ExoPlayer/issues/3040)).
+* HLS: Fix propagation of format identifier for CEA-608
+  ([#3033](https://github.com/google/ExoPlayer/issues/3033)).
+* HLS: Detect playlist stuck and reset conditions
+  ([#2872](https://github.com/google/ExoPlayer/issues/2872)).
+* Video: Fix video dimension reporting on some devices
+  ([#3007](https://github.com/google/ExoPlayer/issues/3007)).
+
 ### r2.4.3 ###
 
 * Audio: Workaround custom audio decoders misreporting their maximum supported
