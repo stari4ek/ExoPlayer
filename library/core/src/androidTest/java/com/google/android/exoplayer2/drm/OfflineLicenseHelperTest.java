@@ -23,10 +23,10 @@ import android.test.MoreAsserts;
 import android.util.Pair;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
-import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.upstream.HttpDataSource;
 import java.util.HashMap;
 import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
 
 /**
  * Tests {@link OfflineLicenseHelper}.
@@ -40,7 +40,7 @@ public class OfflineLicenseHelperTest extends InstrumentationTestCase {
 
   @Override
   protected void setUp() throws Exception {
-    TestUtil.setUpMockito(this);
+    setUpMockito(this);
     when(mediaDrm.openSession()).thenReturn(new byte[] {1, 2, 3});
     offlineLicenseHelper = new OfflineLicenseHelper<>(mediaDrm, mediaDrmCallback, null);
   }
@@ -153,8 +153,18 @@ public class OfflineLicenseHelperTest extends InstrumentationTestCase {
   }
 
   private static DrmInitData newDrmInitData() {
-    return new DrmInitData(new SchemeData(C.WIDEVINE_UUID, "cenc", "mimeType",
+    return new DrmInitData(new SchemeData(C.WIDEVINE_UUID, "mimeType",
         new byte[] {1, 4, 7, 0, 3, 6}));
+  }
+
+  /**
+   * Sets up Mockito for an instrumentation test.
+   */
+  private static void setUpMockito(InstrumentationTestCase instrumentationTestCase) {
+    // Workaround for https://code.google.com/p/dexmaker/issues/detail?id=2.
+    System.setProperty("dexmaker.dexcache",
+        instrumentationTestCase.getInstrumentation().getTargetContext().getCacheDir().getPath());
+    MockitoAnnotations.initMocks(instrumentationTestCase);
   }
 
 }

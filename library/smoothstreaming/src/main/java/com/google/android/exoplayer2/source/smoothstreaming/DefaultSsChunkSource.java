@@ -101,8 +101,8 @@ public class DefaultSsChunkSource implements SsChunkSource {
           trackEncryptionBoxes, nalUnitLengthFieldLength, null, null);
       FragmentedMp4Extractor extractor = new FragmentedMp4Extractor(
           FragmentedMp4Extractor.FLAG_WORKAROUND_EVERY_VIDEO_FRAME_IS_SYNC_FRAME
-          | FragmentedMp4Extractor.FLAG_WORKAROUND_IGNORE_TFDT_BOX, null, track);
-      extractorWrappers[i] = new ChunkExtractorWrapper(extractor, format);
+          | FragmentedMp4Extractor.FLAG_WORKAROUND_IGNORE_TFDT_BOX, null, track, null);
+      extractorWrappers[i] = new ChunkExtractorWrapper(extractor, streamElement.type, format);
     }
   }
 
@@ -155,7 +155,8 @@ public class DefaultSsChunkSource implements SsChunkSource {
     }
 
     long bufferedDurationUs = previous != null ? (previous.endTimeUs - playbackPositionUs) : 0;
-    trackSelection.updateSelectedTrack(bufferedDurationUs);
+    long timeToLiveEdgeUs = resolveTimeToLiveEdgeUs(playbackPositionUs);
+    trackSelection.updateSelectedTrack(bufferedDurationUs, timeToLiveEdgeUs);
 
     StreamElement streamElement = manifest.streamElements[elementIndex];
     if (streamElement.chunkCount == 0) {
@@ -220,6 +221,22 @@ public class DefaultSsChunkSource implements SsChunkSource {
     return new ContainerMediaChunk(dataSource, dataSpec, format, trackSelectionReason,
         trackSelectionData, chunkStartTimeUs, chunkEndTimeUs, chunkIndex, 1, sampleOffsetUs,
         extractorWrapper);
+  }
+
+  private long resolveTimeToLiveEdgeUs(long playbackPositionUs) {
+    if (!manifest.isLive) {
+      return C.TIME_UNSET;
+    }
+
+    StreamElement currentElement = manifest.streamElements[elementIndex];
+    if (currentElement.chunkCount == 0) {
+      return C.TIME_UNSET;
+    }
+
+    int lastChunkIndex = currentElement.chunkCount - 1;
+    long lastChunkEndTimeUs = currentElement.getStartTimeUs(lastChunkIndex)
+        + currentElement.getChunkDurationUs(lastChunkIndex);
+    return lastChunkEndTimeUs - playbackPositionUs;
   }
 
 }

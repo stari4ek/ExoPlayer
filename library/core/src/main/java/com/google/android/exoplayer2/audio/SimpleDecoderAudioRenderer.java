@@ -78,6 +78,8 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
 
   private DecoderCounters decoderCounters;
   private Format inputFormat;
+  private int encoderDelay;
+  private int encoderPadding;
   private SimpleDecoder<DecoderInputBuffer, ? extends SimpleOutputBuffer,
         ? extends AudioDecoderException> decoder;
   private DecoderInputBuffer inputBuffer;
@@ -159,8 +161,8 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
 
   @Override
   public final int supportsFormat(Format format) {
-    int formatSupport = supportsFormatInternal(format);
-    if (formatSupport == FORMAT_UNSUPPORTED_TYPE || formatSupport == FORMAT_UNSUPPORTED_SUBTYPE) {
+    int formatSupport = supportsFormatInternal(drmSessionManager, format);
+    if (formatSupport <= FORMAT_UNSUPPORTED_DRM) {
       return formatSupport;
     }
     int tunnelingSupport = Util.SDK_INT >= 21 ? TUNNELING_SUPPORTED : TUNNELING_NOT_SUPPORTED;
@@ -171,10 +173,12 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
    * Returns the {@link #FORMAT_SUPPORT_MASK} component of the return value for
    * {@link #supportsFormat(Format)}.
    *
+   * @param drmSessionManager The renderer's {@link DrmSessionManager}.
    * @param format The format.
    * @return The extent to which the renderer supports the format itself.
    */
-  protected abstract int supportsFormatInternal(Format format);
+  protected abstract int supportsFormatInternal(DrmSessionManager<ExoMediaCrypto> drmSessionManager,
+      Format format);
 
   @Override
   public void render(long positionUs, long elapsedRealtimeUs) throws ExoPlaybackException {
@@ -306,7 +310,7 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
     if (audioTrackNeedsConfigure) {
       Format outputFormat = getOutputFormat();
       audioTrack.configure(outputFormat.sampleMimeType, outputFormat.channelCount,
-          outputFormat.sampleRate, outputFormat.pcmEncoding, 0);
+          outputFormat.sampleRate, outputFormat.pcmEncoding, 0, null, encoderDelay, encoderPadding);
       audioTrackNeedsConfigure = false;
     }
 
@@ -584,6 +588,9 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
       maybeInitDecoder();
       audioTrackNeedsConfigure = true;
     }
+
+    encoderDelay = newFormat.encoderDelay == Format.NO_VALUE ? 0 : newFormat.encoderDelay;
+    encoderPadding = newFormat.encoderPadding == Format.NO_VALUE ? 0 : newFormat.encoderPadding;
 
     eventDispatcher.inputFormatChanged(newFormat);
   }

@@ -212,6 +212,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener {
   private Exception exception;
   private TrackGroupArray trackGroups;
   private int positionDiscontinuityCount;
+  private boolean playerWasPrepared;
 
   private ExoPlayerTestRunner(PlayerFactory playerFactory, MediaSource mediaSource,
       RenderersFactory renderersFactory, MappingTrackSelector trackSelector,
@@ -350,7 +351,9 @@ public final class ExoPlayerTestRunner implements Player.EventListener {
     if (periodIndices.isEmpty() && playbackState == Player.STATE_READY) {
       periodIndices.add(player.getCurrentPeriodIndex());
     }
-    if (playbackState == Player.STATE_ENDED) {
+    playerWasPrepared |= playbackState != Player.STATE_IDLE;
+    if (playbackState == Player.STATE_ENDED
+        || (playbackState == Player.STATE_IDLE && playerWasPrepared)) {
       endedCountDownLatch.countDown();
     }
   }
@@ -371,7 +374,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener {
   }
 
   @Override
-  public void onPositionDiscontinuity() {
+  public void onPositionDiscontinuity(@Player.DiscontinuityReason int reason) {
     positionDiscontinuityCount++;
     periodIndices.add(player.getCurrentPeriodIndex());
   }
