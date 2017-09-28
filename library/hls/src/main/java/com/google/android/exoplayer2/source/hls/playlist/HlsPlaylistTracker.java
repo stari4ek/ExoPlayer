@@ -40,18 +40,39 @@ import java.util.List;
  */
 public final class HlsPlaylistTracker implements Loader.Callback<ParsingLoadable<HlsPlaylist>> {
 
+  // TVirl: ability to log additional info for investigation
+  public static class HlsPlaylistException extends IOException {
+
+    public final String url;
+
+    public HlsMediaPlaylist loadedPlaylist = null;
+    public HlsMediaPlaylist oldPlaylist = null;
+    public HlsMediaPlaylist playlistSnapshot = null;
+    public long currentTimeMs = 0;
+    public long lastSnapshotChangeMs = 0;
+
+    private HlsPlaylistException(String url) {
+      this.url = url;
+    }
+  }
+
+
   /**
    * Thrown when a playlist is considered to be stuck due to a server side error.
    */
-  public static final class PlaylistStuckException extends IOException {
+  // TVirl
+//  public static final class PlaylistStuckException extends IOException {
+    public static final class PlaylistStuckException extends HlsPlaylistException {
+
 
     /**
      * The url of the stuck playlist.
      */
-    public final String url;
+//    public final String url;
 
     private PlaylistStuckException(String url) {
-      this.url = url;
+//      this.url = url;
+      super(url);
     }
 
   }
@@ -59,15 +80,17 @@ public final class HlsPlaylistTracker implements Loader.Callback<ParsingLoadable
   /**
    * Thrown when the media sequence of a new snapshot indicates the server has reset.
    */
-  public static final class PlaylistResetException extends IOException {
+  // public static final class PlaylistResetException extends IOException {
+  public static final class PlaylistResetException extends HlsPlaylistException {
 
     /**
      * The url of the reset playlist.
      */
-    public final String url;
+//    public final String url;
 
     private PlaylistResetException(String url) {
-      this.url = url;
+//      this.url = url;
+      super(url);
     }
 
   }
@@ -602,6 +625,19 @@ public final class HlsPlaylistTracker implements Loader.Callback<ParsingLoadable
           // The media sequence has jumped backwards. The server has likely reset.
           playlistError = new PlaylistResetException(playlistUrl.url);
         }
+
+        // TVirl
+        if (playlistError != null) {
+          if (playlistError instanceof HlsPlaylistException) {
+            HlsPlaylistException ex = (HlsPlaylistException)playlistError;
+            ex.currentTimeMs = currentTimeMs;
+            ex.lastSnapshotChangeMs = lastSnapshotChangeMs;
+            ex.loadedPlaylist = loadedPlaylist;
+            ex.oldPlaylist = oldPlaylist;
+            ex.playlistSnapshot = playlistSnapshot;
+          }
+        }// !TVirl
+
         refreshDelayUs = playlistSnapshot.targetDurationUs / 2;
       }
       if (refreshDelayUs != C.TIME_UNSET) {
