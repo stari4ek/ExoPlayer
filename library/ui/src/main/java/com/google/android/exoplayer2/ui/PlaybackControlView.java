@@ -30,13 +30,9 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
-import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
-import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.RepeatModeUtil;
 import com.google.android.exoplayer2.util.Util;
@@ -829,9 +825,19 @@ public class PlaybackControlView extends FrameLayout {
     if (playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED) {
       long delayMs;
       if (player.getPlayWhenReady() && playbackState == Player.STATE_READY) {
-        delayMs = 1000 - (position % 1000);
-        if (delayMs < 200) {
-          delayMs += 1000;
+        float playbackSpeed = player.getPlaybackParameters().speed;
+        if (playbackSpeed <= 0.1f) {
+          delayMs = 1000;
+        } else if (playbackSpeed <= 5f) {
+          long mediaTimeUpdatePeriodMs = 1000 / Math.max(1, Math.round(1 / playbackSpeed));
+          long mediaTimeDelayMs = mediaTimeUpdatePeriodMs - (position % mediaTimeUpdatePeriodMs);
+          if (mediaTimeDelayMs < (mediaTimeUpdatePeriodMs / 5)) {
+            mediaTimeDelayMs += mediaTimeUpdatePeriodMs;
+          }
+          delayMs = playbackSpeed == 1 ? mediaTimeDelayMs
+              : (long) (mediaTimeDelayMs / playbackSpeed);
+        } else {
+          delayMs = 200;
         }
       } else {
         delayMs = 1000;
@@ -1046,8 +1052,8 @@ public class PlaybackControlView extends FrameLayout {
     return true;
   }
 
-  private final class ComponentListener implements Player.EventListener, TimeBar.OnScrubListener,
-      OnClickListener {
+  private final class ComponentListener extends Player.DefaultEventListener implements
+      TimeBar.OnScrubListener, OnClickListener {
 
     @Override
     public void onScrubStart(TimeBar timeBar, long position) {
@@ -1096,30 +1102,10 @@ public class PlaybackControlView extends FrameLayout {
     }
 
     @Override
-    public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {
-      // Do nothing.
-    }
-
-    @Override
     public void onTimelineChanged(Timeline timeline, Object manifest) {
       updateNavigation();
       updateTimeBarMode();
       updateProgress();
-    }
-
-    @Override
-    public void onLoadingChanged(boolean isLoading) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onTracksChanged(TrackGroupArray tracks, TrackSelectionArray selections) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onPlayerError(ExoPlaybackException error) {
-      // Do nothing.
     }
 
     @Override

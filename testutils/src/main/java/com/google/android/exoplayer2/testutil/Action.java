@@ -18,17 +18,13 @@ package com.google.android.exoplayer2.testutil;
 import android.os.Handler;
 import android.util.Log;
 import android.view.Surface;
-import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.testutil.ActionSchedule.ActionNode;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
-import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 
 /**
  * Base class for actions to perform during playback tests.
@@ -326,7 +322,7 @@ public abstract class Action {
     protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
         final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
         final ActionNode nextAction) {
-      PlayerListener listener = new PlayerListener() {
+      Player.EventListener listener = new Player.DefaultEventListener() {
         @Override
         public void onTimelineChanged(Timeline timeline, Object manifest) {
           if (timeline.equals(expectedTimeline)) {
@@ -351,7 +347,7 @@ public abstract class Action {
   }
 
   /**
-   * Waits for {@link Player.EventListener#onPositionDiscontinuity()}.
+   * Waits for {@link Player.EventListener#onPositionDiscontinuity(int)}.
    */
   public static final class WaitForPositionDiscontinuity extends Action {
 
@@ -366,13 +362,56 @@ public abstract class Action {
     protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
         final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
         final ActionNode nextAction) {
-      player.addListener(new PlayerListener() {
+      player.addListener(new Player.DefaultEventListener() {
         @Override
         public void onPositionDiscontinuity(@Player.DiscontinuityReason int reason) {
           player.removeListener(this);
           nextAction.schedule(player, trackSelector, surface, handler);
         }
       });
+    }
+
+    @Override
+    protected void doActionImpl(SimpleExoPlayer player, MappingTrackSelector trackSelector,
+        Surface surface) {
+      // Not triggered.
+    }
+
+  }
+
+  /**
+   * Waits for a specified playback state, returning either immediately or after a call to
+   * {@link Player.EventListener#onPlayerStateChanged(boolean, int)}.
+   */
+  public static final class WaitForPlaybackState extends Action {
+
+    private final int targetPlaybackState;
+
+    /**
+     * @param tag A tag to use for logging.
+     */
+    public WaitForPlaybackState(String tag, int targetPlaybackState) {
+      super(tag, "WaitForPlaybackState");
+      this.targetPlaybackState = targetPlaybackState;
+    }
+
+    @Override
+    protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
+        final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
+        final ActionNode nextAction) {
+      if (targetPlaybackState == player.getPlaybackState()) {
+        nextAction.schedule(player, trackSelector, surface, handler);
+      } else {
+        player.addListener(new Player.DefaultEventListener() {
+          @Override
+          public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+            if (targetPlaybackState == playbackState) {
+              player.removeListener(this);
+              nextAction.schedule(player, trackSelector, surface, handler);
+            }
+          }
+        });
+      }
     }
 
     @Override
@@ -402,56 +441,6 @@ public abstract class Action {
     protected void doActionImpl(SimpleExoPlayer player, MappingTrackSelector trackSelector,
         Surface surface) {
       runnable.run();
-    }
-
-  }
-
-  /** Listener implementation used for overriding. Does nothing. */
-  private static class PlayerListener implements Player.EventListener {
-
-    @Override
-    public void onTimelineChanged(Timeline timeline, Object manifest) {
-
-    }
-
-    @Override
-    public void onTracksChanged(TrackGroupArray trackGroups, TrackSelectionArray trackSelections) {
-
-    }
-
-    @Override
-    public void onLoadingChanged(boolean isLoading) {
-
-    }
-
-    @Override
-    public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-
-    }
-
-    @Override
-    public void onRepeatModeChanged(@ExoPlayer.RepeatMode int repeatMode) {
-
-    }
-
-    @Override
-    public void onShuffleModeEnabledChanged(boolean shuffleModeEnabled) {
-
-    }
-
-    @Override
-    public void onPlayerError(ExoPlaybackException error) {
-
-    }
-
-    @Override
-    public void onPositionDiscontinuity(@Player.DiscontinuityReason int reason) {
-
-    }
-
-    @Override
-    public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {
-
     }
 
   }

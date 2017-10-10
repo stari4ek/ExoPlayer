@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.testutil;
 
 import android.os.Handler;
+import android.os.Looper;
 import android.view.Surface;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Player;
@@ -32,6 +33,7 @@ import com.google.android.exoplayer2.testutil.Action.SetRepeatMode;
 import com.google.android.exoplayer2.testutil.Action.SetShuffleModeEnabled;
 import com.google.android.exoplayer2.testutil.Action.SetVideoSurface;
 import com.google.android.exoplayer2.testutil.Action.Stop;
+import com.google.android.exoplayer2.testutil.Action.WaitForPlaybackState;
 import com.google.android.exoplayer2.testutil.Action.WaitForPositionDiscontinuity;
 import com.google.android.exoplayer2.testutil.Action.WaitForTimelineChanged;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
@@ -257,6 +259,16 @@ public final class ActionSchedule {
     }
 
     /**
+     * Schedules a delay until the playback state changed to the specified state.
+     *
+     * @param targetPlaybackState The target playback state.
+     * @return The builder, for convenience.
+     */
+    public Builder waitForPlaybackState(int targetPlaybackState) {
+      return apply(new WaitForPlaybackState(tag, targetPlaybackState));
+    }
+
+    /**
      * Schedules a {@link Runnable} to be executed.
      *
      * @return The builder, for convenience.
@@ -342,7 +354,11 @@ public final class ActionSchedule {
       this.trackSelector = trackSelector;
       this.surface = surface;
       this.mainHandler = mainHandler;
-      clock.postDelayed(mainHandler, this, delayMs);
+      if (delayMs == 0 && Looper.myLooper() == mainHandler.getLooper()) {
+        run();
+      } else {
+        clock.postDelayed(mainHandler, this, delayMs);
+      }
     }
 
     @Override
