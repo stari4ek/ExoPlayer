@@ -474,11 +474,7 @@ public final class HlsPlaylistTracker implements Loader.Callback<ParsingLoadable
       return primaryUrlDiscontinuitySequence;
     }
     Segment firstOldOverlappingSegment = getFirstOldOverlappingSegment(oldPlaylist, loadedPlaylist);
-    // TVirl: we can get IndexOutOfBoundsException, cause there are no segments
-    // https://github.com/stari4ek/iptv-for-androidtv/issues/685
-    // if (firstOldOverlappingSegment != null) {
-    if (firstOldOverlappingSegment != null && !loadedPlaylist.segments.isEmpty()) {
-    // !TVirl
+    if (firstOldOverlappingSegment != null) {
       return oldPlaylist.discontinuitySequence
           + firstOldOverlappingSegment.relativeDiscontinuitySequence
           - loadedPlaylist.segments.get(0).relativeDiscontinuitySequence;
