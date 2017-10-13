@@ -34,6 +34,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.C.ContentType;
 import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayerFactory;
@@ -217,8 +218,8 @@ public class PlayerActivity extends Activity implements OnClickListener,
 
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
-    // If the event was not handled then see if the player view can handle it.
-    return super.dispatchKeyEvent(event) || simpleExoPlayerView.dispatchKeyEvent(event);
+    // See whether the player view wants to handle media or DPAD keys events.
+    return simpleExoPlayerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event);
   }
 
   // OnClickListener methods
@@ -357,7 +358,7 @@ public class PlayerActivity extends Activity implements OnClickListener,
   }
 
   private MediaSource buildMediaSource(Uri uri, String overrideExtension) {
-    int type = TextUtils.isEmpty(overrideExtension) ? Util.inferContentType(uri)
+    @ContentType int type = TextUtils.isEmpty(overrideExtension) ? Util.inferContentType(uri)
         : Util.inferContentType("." + overrideExtension);
     switch (type) {
       case C.TYPE_SS:

@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.ui;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.res.Resources;
@@ -37,6 +38,7 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ControlDispatcher;
 import com.google.android.exoplayer2.DefaultControlDispatcher;
 import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.Player.DiscontinuityReason;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.id3.ApicFrame;
@@ -520,8 +522,10 @@ public final class SimpleExoPlayerView extends FrameLayout {
       overlayFrameLayout.requestFocus();
       return super.dispatchKeyEvent(event);
     }
+    boolean isDpadWhenControlHidden = isDpadKey(event.getKeyCode()) && useController
+        && !controller.isVisible();
     maybeShowController(true);
-    return dispatchMediaKeyEvent(event) || super.dispatchKeyEvent(event);
+    return isDpadWhenControlHidden || dispatchMediaKeyEvent(event) || super.dispatchKeyEvent(event);
   }
 
   /**
@@ -751,6 +755,10 @@ public final class SimpleExoPlayerView extends FrameLayout {
    * Shows the playback controls, but only if forced or shown indefinitely.
    */
   private void maybeShowController(boolean isForced) {
+    if (isPlayingAd()) {
+      // Never show the controller if an ad is currently playing.
+      return;
+    }
     if (useController) {
       boolean wasShowingIndefinitely = controller.isVisible() && controller.getShowTimeoutMs() <= 0;
       boolean shouldShowIndefinitely = shouldShowControllerIndefinitely();
@@ -775,6 +783,10 @@ public final class SimpleExoPlayerView extends FrameLayout {
     }
     controller.setShowTimeoutMs(showIndefinitely ? 0 : controllerShowTimeoutMs);
     controller.show();
+  }
+
+  private boolean isPlayingAd() {
+    return player != null && player.isPlayingAd() && player.getPlayWhenReady();
   }
 
   private void updateForCurrentTrackSelections() {
@@ -862,10 +874,18 @@ public final class SimpleExoPlayerView extends FrameLayout {
     logo.setBackgroundColor(resources.getColor(R.color.exo_edit_mode_background_color));
   }
 
-
   @SuppressWarnings("ResourceType")
   private static void setResizeModeRaw(AspectRatioFrameLayout aspectRatioFrame, int resizeMode) {
     aspectRatioFrame.setResizeMode(resizeMode);
+  }
+
+  @SuppressLint("InlinedApi")
+  private boolean isDpadKey(int keyCode) {
+    return keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_UP_RIGHT
+        || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_DOWN_RIGHT
+        || keyCode == KeyEvent.KEYCODE_DPAD_DOWN || keyCode == KeyEvent.KEYCODE_DPAD_DOWN_LEFT
+        || keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_UP_LEFT
+        || keyCode == KeyEvent.KEYCODE_DPAD_CENTER;
   }
 
   private final class ComponentListener extends Player.DefaultEventListener implements TextOutput,
@@ -907,7 +927,18 @@ public final class SimpleExoPlayerView extends FrameLayout {
 
     @Override
     public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-      maybeShowController(false);
+      if (isPlayingAd()) {
+        hideController();
+      } else {
+        maybeShowController(false);
+      }
+    }
+
+    @Override
+    public void onPositionDiscontinuity(@DiscontinuityReason int reason) {
+      if (isPlayingAd()) {
+        hideController();
+      }
     }
 
   }

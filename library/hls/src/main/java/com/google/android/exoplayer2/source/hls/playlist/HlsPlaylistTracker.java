@@ -138,7 +138,7 @@ public final class HlsPlaylistTracker implements Loader.Callback<ParsingLoadable
 
   private final Uri initialPlaylistUri;
   private final HlsDataSourceFactory dataSourceFactory;
-  private final HlsPlaylistParser playlistParser;
+  private final ParsingLoadable.Parser<HlsPlaylist> playlistParser;
   private final int minRetryCount;
   private final IdentityHashMap<HlsUrl, MediaPlaylistBundle> playlistBundles;
   private final Handler playlistRefreshHandler;
@@ -163,15 +163,16 @@ public final class HlsPlaylistTracker implements Loader.Callback<ParsingLoadable
    */
   public HlsPlaylistTracker(Uri initialPlaylistUri, HlsDataSourceFactory dataSourceFactory,
       EventDispatcher eventDispatcher, int minRetryCount,
-      PrimaryPlaylistListener primaryPlaylistListener) {
+      PrimaryPlaylistListener primaryPlaylistListener,
+      ParsingLoadable.Parser<HlsPlaylist> playlistParser) {
     this.initialPlaylistUri = initialPlaylistUri;
     this.dataSourceFactory = dataSourceFactory;
     this.eventDispatcher = eventDispatcher;
     this.minRetryCount = minRetryCount;
     this.primaryPlaylistListener = primaryPlaylistListener;
+    this.playlistParser = playlistParser;
     listeners = new ArrayList<>();
     initialPlaylistLoader = new Loader("HlsPlaylistTracker:MasterPlaylist");
-    playlistParser = new HlsPlaylistParser();
     playlistBundles = new IdentityHashMap<>();
     playlistRefreshHandler = new Handler();
   }

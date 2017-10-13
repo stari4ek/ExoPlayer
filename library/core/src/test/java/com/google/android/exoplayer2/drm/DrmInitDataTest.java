@@ -20,12 +20,13 @@ import static com.google.android.exoplayer2.C.UUID_NIL;
 import static com.google.android.exoplayer2.C.WIDEVINE_UUID;
 import static com.google.android.exoplayer2.util.MimeTypes.VIDEO_MP4;
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.fail;
 
 import android.os.Parcel;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
 import com.google.android.exoplayer2.testutil.TestUtil;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -97,7 +98,8 @@ public class DrmInitDataTest {
   }
 
   @Test
-  public void testGet() {
+  @Deprecated
+  public void testGetByUuid() {
     // Basic matching.
     DrmInitData testInitData = new DrmInitData(DATA_1, DATA_2);
     assertThat(testInitData.get(WIDEVINE_UUID)).isEqualTo(DATA_1);
@@ -124,27 +126,20 @@ public class DrmInitDataTest {
   }
 
   @Test
-  public void testDuplicateSchemeDataRejected() {
-    try {
-      new DrmInitData(DATA_1, DATA_1);
-      fail();
-    } catch (IllegalArgumentException e) {
-      // Expected.
-    }
+  public void testGetByIndex() {
+    DrmInitData testInitData = new DrmInitData(DATA_1, DATA_2);
+    assertThat(getAllSchemeData(testInitData)).containsAllOf(DATA_1, DATA_2);
+  }
 
-    try {
-      new DrmInitData(DATA_1, DATA_1B);
-      fail();
-    } catch (IllegalArgumentException e) {
-      // Expected.
-    }
-
-    try {
-      new DrmInitData(DATA_1, DATA_2, DATA_1B);
-      fail();
-    } catch (IllegalArgumentException e) {
-      // Expected.
-    }
+  @Test
+  public void testSchemeDatasWithSameUuid() {
+    DrmInitData testInitData = new DrmInitData(DATA_1, DATA_1B);
+    assertThat(testInitData.schemeDataCount).isEqualTo(2);
+    // Deprecated get method should return first entry.
+    assertThat(testInitData.get(WIDEVINE_UUID)).isEqualTo(DATA_1);
+    // Test retrieval of first and second entry.
+    assertThat(testInitData.get(0)).isEqualTo(DATA_1);
+    assertThat(testInitData.get(1)).isEqualTo(DATA_1B);
   }
 
   @Test
@@ -160,6 +155,14 @@ public class DrmInitDataTest {
     assertThat(DATA_UNIVERSAL.matches(WIDEVINE_UUID)).isTrue();
     assertThat(DATA_UNIVERSAL.matches(PLAYREADY_UUID)).isTrue();
     assertThat(DATA_UNIVERSAL.matches(UUID_NIL)).isTrue();
+  }
+
+  private List<SchemeData> getAllSchemeData(DrmInitData drmInitData) {
+    ArrayList<SchemeData> schemeDatas = new ArrayList<>();
+    for (int i = 0; i < drmInitData.schemeDataCount; i++) {
+      schemeDatas.add(drmInitData.get(i));
+    }
+    return schemeDatas;
   }
 
 }

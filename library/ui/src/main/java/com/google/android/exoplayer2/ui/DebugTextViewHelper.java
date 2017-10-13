@@ -154,8 +154,9 @@ public final class DebugTextViewHelper extends Player.DefaultEventListener imple
     return " sib:" + counters.skippedInputBufferCount
         + " sb:" + counters.skippedOutputBufferCount
         + " rb:" + counters.renderedOutputBufferCount
-        + " db:" + counters.droppedOutputBufferCount
-        + " mcdb:" + counters.maxConsecutiveDroppedOutputBufferCount;
+        + " db:" + counters.droppedBufferCount
+        + " mcdb:" + counters.maxConsecutiveDroppedBufferCount
+        + " dk:" + counters.droppedToKeyframeCount;
   }
 
   private static String getPixelAspectRatioString(float pixelAspectRatio) {

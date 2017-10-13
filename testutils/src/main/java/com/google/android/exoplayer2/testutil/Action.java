@@ -322,6 +322,9 @@ public abstract class Action {
     protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
         final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
         final ActionNode nextAction) {
+      if (nextAction == null) {
+        return;
+      }
       Player.EventListener listener = new Player.DefaultEventListener() {
         @Override
         public void onTimelineChanged(Timeline timeline, Object manifest) {
@@ -362,6 +365,9 @@ public abstract class Action {
     protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
         final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
         final ActionNode nextAction) {
+      if (nextAction == null) {
+        return;
+      }
       player.addListener(new Player.DefaultEventListener() {
         @Override
         public void onPositionDiscontinuity(@Player.DiscontinuityReason int reason) {
@@ -399,6 +405,9 @@ public abstract class Action {
     protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
         final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
         final ActionNode nextAction) {
+      if (nextAction == null) {
+        return;
+      }
       if (targetPlaybackState == player.getPlaybackState()) {
         nextAction.schedule(player, trackSelector, surface, handler);
       } else {
@@ -412,6 +421,42 @@ public abstract class Action {
           }
         });
       }
+    }
+
+    @Override
+    protected void doActionImpl(SimpleExoPlayer player, MappingTrackSelector trackSelector,
+        Surface surface) {
+      // Not triggered.
+    }
+
+  }
+
+  /**
+   * Waits for {@link Player.EventListener#onSeekProcessed()}.
+   */
+  public static final class WaitForSeekProcessed extends Action {
+
+    /**
+     * @param tag A tag to use for logging.
+     */
+    public WaitForSeekProcessed(String tag) {
+      super(tag, "WaitForSeekProcessed");
+    }
+
+    @Override
+    protected void doActionAndScheduleNextImpl(final SimpleExoPlayer player,
+        final MappingTrackSelector trackSelector, final Surface surface, final Handler handler,
+        final ActionNode nextAction) {
+      if (nextAction == null) {
+        return;
+      }
+      player.addListener(new Player.DefaultEventListener() {
+        @Override
+        public void onSeekProcessed() {
+          player.removeListener(this);
+          nextAction.schedule(player, trackSelector, surface, handler);
+        }
+      });
     }
 
     @Override
