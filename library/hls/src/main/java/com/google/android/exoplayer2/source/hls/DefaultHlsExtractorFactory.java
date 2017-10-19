@@ -48,6 +48,18 @@ public final class DefaultHlsExtractorFactory implements HlsExtractorFactory {
   public static final String VTT_FILE_EXTENSION = ".vtt";
   public static final String WEBVTT_FILE_EXTENSION = ".webvtt";
 
+
+  // TVirl: we hi-jack it cause we'd prefer do not miss any changes in it
+  private final int defaultTsFlags;
+  public DefaultHlsExtractorFactory() {
+    this(0);
+  }
+
+  public DefaultHlsExtractorFactory(int defaultTsFlags) {
+    this.defaultTsFlags = defaultTsFlags;
+  }
+  // !TVirl
+
   @Override
   public Pair<Extractor, Boolean> createExtractor(Extractor previousExtractor, Uri uri,
       Format format, List<Format> muxedCaptionFormats, DrmInitData drmInitData,
@@ -97,6 +109,9 @@ public final class DefaultHlsExtractorFactory implements HlsExtractorFactory {
           esReaderFactoryFlags |= DefaultTsPayloadReaderFactory.FLAG_IGNORE_H264_STREAM;
         }
       }
+      // TVirl
+      esReaderFactoryFlags |= defaultTsFlags;
+      // !TVirl
       extractor = new TsExtractor(TsExtractor.MODE_HLS, timestampAdjuster,
           new DefaultTsPayloadReaderFactory(esReaderFactoryFlags, muxedCaptionFormats));
     }
