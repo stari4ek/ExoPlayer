@@ -19,7 +19,6 @@ import android.os.Handler;
 import android.text.TextUtils;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
-import com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoader;
 import com.google.android.exoplayer2.source.MediaPeriod;
@@ -45,6 +44,7 @@ import java.util.List;
 public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper.Callback,
     HlsPlaylistTracker.PlaylistEventListener {
 
+  private final HlsExtractorFactory extractorFactory;
   private final HlsPlaylistTracker playlistTracker;
   private final HlsDataSourceFactory dataSourceFactory;
   private final int minLoadableRetryCount;
@@ -61,15 +61,10 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private HlsSampleStreamWrapper[] enabledSampleStreamWrappers;
   private CompositeSequenceableLoader sequenceableLoader;
 
-  // TVirl: workaround for https://github.com/google/ExoPlayer/issues/2748
-  @DefaultTsPayloadReaderFactory.Flags
-  private final int defaultTsReaderFlags;
-  // !TVirl
-
-  public HlsMediaPeriod(HlsPlaylistTracker playlistTracker, HlsDataSourceFactory dataSourceFactory,
-      int minLoadableRetryCount, EventDispatcher eventDispatcher, Allocator allocator,
-      // TVirl
-      @DefaultTsPayloadReaderFactory.Flags int defaultTsReaderFlags) {
+  public HlsMediaPeriod(HlsExtractorFactory extractorFactory, HlsPlaylistTracker playlistTracker,
+      HlsDataSourceFactory dataSourceFactory, int minLoadableRetryCount,
+      EventDispatcher eventDispatcher, Allocator allocator) {
+    this.extractorFactory = extractorFactory;
     this.playlistTracker = playlistTracker;
     this.dataSourceFactory = dataSourceFactory;
     this.minLoadableRetryCount = minLoadableRetryCount;
@@ -80,8 +75,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
     continueLoadingHandler = new Handler();
     sampleStreamWrappers = new HlsSampleStreamWrapper[0];
     enabledSampleStreamWrappers = new HlsSampleStreamWrapper[0];
-    // TVirl
-    this.defaultTsReaderFlags = defaultTsReaderFlags;
   }
 
   public void release() {
@@ -354,12 +347,8 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
 
   private HlsSampleStreamWrapper buildSampleStreamWrapper(int trackType, HlsUrl[] variants,
       Format muxedAudioFormat, List<Format> muxedCaptionFormats, long positionUs) {
-
-    HlsChunkSource defaultChunkSource = new HlsChunkSource(playlistTracker, variants,
-        dataSourceFactory, timestampAdjusterProvider, muxedCaptionFormats,
-        // TVirl
-        defaultTsReaderFlags);
-
+    HlsChunkSource defaultChunkSource = new HlsChunkSource(extractorFactory, playlistTracker,
+        variants, dataSourceFactory, timestampAdjusterProvider, muxedCaptionFormats);
     return new HlsSampleStreamWrapper(trackType, this, defaultChunkSource, allocator, positionUs,
         muxedAudioFormat, minLoadableRetryCount, eventDispatcher);
   }

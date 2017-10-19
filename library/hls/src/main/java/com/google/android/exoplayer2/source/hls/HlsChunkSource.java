@@ -19,7 +19,6 @@ import android.net.Uri;
 import android.os.SystemClock;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
-import com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory;
 import com.google.android.exoplayer2.source.BehindLiveWindowException;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.chunk.Chunk;
@@ -81,6 +80,7 @@ import java.util.List;
 
   }
 
+  private final HlsExtractorFactory extractorFactory;
   private final DataSource mediaDataSource;
   private final DataSource encryptionDataSource;
   private final TimestampAdjusterProvider timestampAdjusterProvider;
@@ -88,11 +88,6 @@ import java.util.List;
   private final HlsPlaylistTracker playlistTracker;
   private final TrackGroup trackGroup;
   private final List<Format> muxedCaptionFormats;
-
-  // TVirl: workaround for https://github.com/google/ExoPlayer/issues/2748
-  @DefaultTsPayloadReaderFactory.Flags
-  private final int defaultTsReaderFlags;
-  // !TVirl
 
   private boolean isTimestampMaster;
   private byte[] scratchSpace;
@@ -112,6 +107,8 @@ import java.util.List;
   private long liveEdgeTimeUs;
 
   /**
+   * @param extractorFactory An {@link HlsExtractorFactory} from which to obtain the extractors for
+   *     media chunks.
    * @param playlistTracker The {@link HlsPlaylistTracker} from which to obtain media playlists.
    * @param variants The available variants.
    * @param dataSourceFactory An {@link HlsDataSourceFactory} to create {@link DataSource}s for the
@@ -122,11 +119,10 @@ import java.util.List;
    * @param muxedCaptionFormats List of muxed caption {@link Format}s. Null if no closed caption
    *     information is available in the master playlist.
    */
-  public HlsChunkSource(HlsPlaylistTracker playlistTracker, HlsUrl[] variants,
-      HlsDataSourceFactory dataSourceFactory, TimestampAdjusterProvider timestampAdjusterProvider,
-      List<Format> muxedCaptionFormats,
-      // TVirl
-      @DefaultTsPayloadReaderFactory.Flags int defaultTsReaderFlags) {
+  public HlsChunkSource(HlsExtractorFactory extractorFactory, HlsPlaylistTracker playlistTracker,
+      HlsUrl[] variants, HlsDataSourceFactory dataSourceFactory,
+      TimestampAdjusterProvider timestampAdjusterProvider, List<Format> muxedCaptionFormats) {
+    this.extractorFactory = extractorFactory;
     this.playlistTracker = playlistTracker;
     this.variants = variants;
     this.timestampAdjusterProvider = timestampAdjusterProvider;
@@ -142,11 +138,7 @@ import java.util.List;
     encryptionDataSource = dataSourceFactory.createDataSource(C.DATA_TYPE_DRM);
     trackGroup = new TrackGroup(variantFormats);
     trackSelection = new InitializationTrackSelection(trackGroup, initialTrackSelection);
-
-    // TVirl
-    this.defaultTsReaderFlags = defaultTsReaderFlags;
   }
-
 
   /**
    * If the source is currently having difficulty providing chunks, then this method throws the
@@ -212,17 +204,22 @@ import java.util.List;
    * contain the {@link HlsUrl} that refers to the playlist that needs refreshing.
    *
    * @param previous The most recently loaded media chunk.
-   * @param playbackPositionUs The current playback position. If {@code previous} is null then this
-   *     parameter is the position from which playback is expected to start (or restart) and hence
-   *     should be interpreted as a seek position.
+   * @param playbackPositionUs The current playback position in microseconds. If playback of the
+   *     period to which this chunk source belongs has not yet started, the value will be the
+   *     starting position in the period minus the duration of any media in previous periods still
+   *     to be played.
+   * @param loadPositionUs The current load position in microseconds. If {@code previous} is null,
+   *     this is the starting position from which chunks should be provided. Else it's equal to
+   *     {@code previous.endTimeUs}.
    * @param out A holder to populate.
    */
-  public void getNextChunk(HlsMediaChunk previous, long playbackPositionUs, HlsChunkHolder out) {
+  public void getNextChunk(HlsMediaChunk previous, long playbackPositionUs, long loadPositionUs,
+      HlsChunkHolder out) {
     int oldVariantIndex = previous == null ? C.INDEX_UNSET
         : trackGroup.indexOf(previous.trackFormat);
     expectedPlaylistUrl = null;
-    long bufferedDurationUs = previous == null ? 0 : previous.endTimeUs - playbackPositionUs;
 
+    long bufferedDurationUs = loadPositionUs - playbackPositionUs;
     long timeToLiveEdgeUs = resolveTimeToLiveEdgeUs(playbackPositionUs);
     if (previous != null && !independentSegments) {
       // Unless segments are known to be independent, switching variant will require downloading
@@ -239,7 +236,7 @@ import java.util.List;
     }
 
     // Select the variant.
-    trackSelection.updateSelectedTrack(bufferedDurationUs, timeToLiveEdgeUs);
+    trackSelection.updateSelectedTrack(playbackPositionUs, bufferedDurationUs, timeToLiveEdgeUs);
     int selectedVariantIndex = trackSelection.getSelectedIndexInTrackGroup();
 
     boolean switchingVariant = oldVariantIndex != selectedVariantIndex;
@@ -258,8 +255,8 @@ import java.util.List;
     // Select the chunk.
     int chunkMediaSequence;
     if (previous == null || switchingVariant) {
-      long targetPositionUs = previous == null ? playbackPositionUs
-          : independentSegments ? previous.endTimeUs : previous.startTimeUs;
+      long targetPositionUs = (previous == null || independentSegments) ? loadPositionUs
+          : previous.startTimeUs;
       if (!mediaPlaylist.hasEndTag && targetPositionUs >= mediaPlaylist.getEndTimeUs()) {
         // If the playlist is too old to contain the chunk, we need to refresh it.
         chunkMediaSequence = mediaPlaylist.mediaSequence + mediaPlaylist.segments.size();
@@ -333,13 +330,11 @@ import java.util.List;
     Uri chunkUri = UriUtil.resolveToUri(mediaPlaylist.baseUri, segment.url);
     DataSpec dataSpec = new DataSpec(chunkUri, segment.byterangeOffset, segment.byterangeLength,
         null);
-    out.chunk = new HlsMediaChunk(mediaDataSource, dataSpec, initDataSpec, selectedUrl,
-        muxedCaptionFormats, trackSelection.getSelectionReason(), trackSelection.getSelectionData(),
-        startTimeUs, startTimeUs + segment.durationUs, chunkMediaSequence, discontinuitySequence,
-        isTimestampMaster, timestampAdjuster, previous, mediaPlaylist.drmInitData, encryptionKey,
-        encryptionIv,
-        // TVirl
-        defaultTsReaderFlags);
+    out.chunk = new HlsMediaChunk(extractorFactory, mediaDataSource, dataSpec, initDataSpec,
+        selectedUrl, muxedCaptionFormats, trackSelection.getSelectionReason(),
+        trackSelection.getSelectionData(), startTimeUs, startTimeUs + segment.durationUs,
+        chunkMediaSequence, discontinuitySequence, isTimestampMaster, timestampAdjuster, previous,
+        mediaPlaylist.drmInitData, encryptionKey, encryptionIv);
   }
 
   /**
@@ -447,7 +442,8 @@ import java.util.List;
     }
 
     @Override
-    public void updateSelectedTrack(long bufferedDurationUs, long availableDurationUs) {
+    public void updateSelectedTrack(long playbackPositionUs, long bufferedDurationUs,
+        long availableDurationUs) {
       long nowMs = SystemClock.elapsedRealtime();
       if (!isBlacklisted(selectedIndex, nowMs)) {
         return;

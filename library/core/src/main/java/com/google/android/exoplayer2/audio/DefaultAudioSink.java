@@ -149,13 +149,6 @@ public final class DefaultAudioSink implements AudioSink {
   private static final int MIN_TIMESTAMP_SAMPLE_INTERVAL_US = 500000;
 
   /**
-   * The minimum number of output bytes from {@link #sonicAudioProcessor} at which the speedup is
-   * calculated using the input/output byte counts from the processor, rather than using the
-   * current playback parameters speed.
-   */
-  private static final int SONIC_MIN_BYTES_FOR_SPEEDUP = 1024;
-
-  /**
    * Whether to enable a workaround for an issue where an audio effect does not keep its session
    * active across releasing/initializing a new audio track, on platform builds where
    * {@link Util#SDK_INT} &lt; 21.
@@ -189,6 +182,7 @@ public final class DefaultAudioSink implements AudioSink {
    */
   private AudioTrack keepSessionIdAudioTrack;
   private AudioTrack audioTrack;
+  private int inputSampleRate;
   private int sampleRate;
   private int channelConfig;
   private @C.Encoding int encoding;
@@ -299,8 +293,6 @@ public final class DefaultAudioSink implements AudioSink {
 
   @Override
   public long getCurrentPositionUs(boolean sourceEnded) {
-    // If the device supports it, use the playback timestamp from AudioTrack.getTimestamp.
-    // Otherwise, derive a smoothed position by sampling the track's frame position.
     if (!hasCurrentPositionUs()) {
       return CURRENT_POSITION_NOT_SET;
     }
@@ -309,6 +301,8 @@ public final class DefaultAudioSink implements AudioSink {
       maybeSampleSyncParams();
     }
 
+    // If the device supports it, use the playback timestamp from AudioTrack.getTimestamp.
+    // Otherwise, derive a smoothed position by sampling the track's frame position.
     long systemClockUs = System.nanoTime() / 1000;
     long positionUs;
     if (audioTimestampSet) {
@@ -337,14 +331,18 @@ public final class DefaultAudioSink implements AudioSink {
   }
 
   @Override
-  public void configure(String mimeType, int channelCount, int sampleRate,
-      @C.PcmEncoding int pcmEncoding, int specifiedBufferSize, @Nullable int[] outputChannels,
+  public void configure(String inputMimeType, int inputChannelCount, int inputSampleRate,
+      @C.PcmEncoding int inputPcmEncoding, int specifiedBufferSize, @Nullable int[] outputChannels,
       int trimStartSamples, int trimEndSamples) throws ConfigurationException {
-    boolean passthrough = !MimeTypes.AUDIO_RAW.equals(mimeType);
-    @C.Encoding int encoding = passthrough ? getEncodingForMimeType(mimeType) : pcmEncoding;
+    this.inputSampleRate = inputSampleRate;
+    int channelCount = inputChannelCount;
+    int sampleRate = inputSampleRate;
+    @C.Encoding int encoding;
+    boolean passthrough = !MimeTypes.AUDIO_RAW.equals(inputMimeType);
     boolean flush = false;
     if (!passthrough) {
-      pcmFrameSize = Util.getPcmFrameSize(pcmEncoding, channelCount);
+      encoding = inputPcmEncoding;
+      pcmFrameSize = Util.getPcmFrameSize(inputPcmEncoding, channelCount);
       trimmingAudioProcessor.setTrimSampleCount(trimStartSamples, trimEndSamples);
       channelMappingAudioProcessor.setChannelMap(outputChannels);
       for (AudioProcessor audioProcessor : availableAudioProcessors) {
@@ -355,12 +353,15 @@ public final class DefaultAudioSink implements AudioSink {
         }
         if (audioProcessor.isActive()) {
           channelCount = audioProcessor.getOutputChannelCount();
+          sampleRate = audioProcessor.getOutputSampleRateHz();
           encoding = audioProcessor.getOutputEncoding();
         }
       }
       if (flush) {
         resetAudioProcessors();
       }
+    } else {
+      encoding = getEncodingForMimeType(inputMimeType);
     }
 
     int channelConfig;
@@ -598,8 +599,8 @@ public final class DefaultAudioSink implements AudioSink {
         startMediaTimeState = START_IN_SYNC;
       } else {
         // Sanity check that presentationTimeUs is consistent with the expected value.
-        long expectedPresentationTimeUs = startMediaTimeUs
-            + framesToDurationUs(getSubmittedFrames());
+        long expectedPresentationTimeUs =
+            startMediaTimeUs + inputFramesToDurationUs(getSubmittedFrames());
         if (startMediaTimeState == START_IN_SYNC
             && Math.abs(expectedPresentationTimeUs - presentationTimeUs) > 200000) {
           Log.e(TAG, "Discontinuity detected [expected " + expectedPresentationTimeUs + ", got "
@@ -637,6 +638,13 @@ public final class DefaultAudioSink implements AudioSink {
       inputBuffer = null;
       return true;
     }
+
+    if (audioTrackUtil.needsReset(getWrittenFrames())) {
+      Log.w(TAG, "Resetting stalled audio track");
+      reset();
+      return true;
+    }
+
     return false;
   }
 
@@ -997,15 +1005,11 @@ public final class DefaultAudioSink implements AudioSink {
       return positionUs + playbackParametersOffsetUs - playbackParametersPositionUs;
     }
 
-    if (playbackParametersCheckpoints.isEmpty()
-        && sonicAudioProcessor.getOutputByteCount() >= SONIC_MIN_BYTES_FOR_SPEEDUP) {
+    if (playbackParametersCheckpoints.isEmpty()) {
       return playbackParametersOffsetUs
-          + Util.scaleLargeTimestamp(positionUs - playbackParametersPositionUs,
-          sonicAudioProcessor.getInputByteCount(), sonicAudioProcessor.getOutputByteCount());
+          + sonicAudioProcessor.scaleDurationForSpeedup(positionUs - playbackParametersPositionUs);
     }
-
-    // We are playing drained data at a previous playback speed, or don't have enough bytes to
-    // calculate an accurate speedup, so fall back to multiplying by the speed.
+    // We are playing data at a previous playback speed, so fall back to multiplying by the speed.
     return playbackParametersOffsetUs
         + (long) ((double) playbackParameters.speed * (positionUs - playbackParametersPositionUs));
   }
@@ -1096,6 +1100,10 @@ public final class DefaultAudioSink implements AudioSink {
 
   private boolean isInitialized() {
     return audioTrack != null;
+  }
+
+  private long inputFramesToDurationUs(long frameCount) {
+    return (frameCount * C.MICROS_PER_SECOND) / inputSampleRate;
   }
 
   private long framesToDurationUs(long frameCount) {
@@ -1291,6 +1299,8 @@ public final class DefaultAudioSink implements AudioSink {
    */
   private static class AudioTrackUtil {
 
+    private static final long FORCE_RESET_WORKAROUND_TIMEOUT_MS = 200;
+
     protected AudioTrack audioTrack;
     private boolean needsPassthroughWorkaround;
     private int sampleRate;
@@ -1299,6 +1309,7 @@ public final class DefaultAudioSink implements AudioSink {
     private long passthroughWorkaroundPauseOffset;
 
     private long stopTimestampUs;
+    private long forceResetWorkaroundTimeMs;
     private long stopPlaybackHeadPosition;
     private long endPlaybackHeadPosition;
 
@@ -1313,6 +1324,7 @@ public final class DefaultAudioSink implements AudioSink {
       this.audioTrack = audioTrack;
       this.needsPassthroughWorkaround = needsPassthroughWorkaround;
       stopTimestampUs = C.TIME_UNSET;
+      forceResetWorkaroundTimeMs = C.TIME_UNSET;
       lastRawPlaybackHeadPosition = 0;
       rawPlaybackHeadWrapCount = 0;
       passthroughWorkaroundPauseOffset = 0;
@@ -1348,6 +1360,17 @@ public final class DefaultAudioSink implements AudioSink {
     }
 
     /**
+     * Returns whether the track is in an invalid state and must be reset.
+     *
+     * @see #getPlaybackHeadPosition()
+     */
+    public boolean needsReset(long writtenFrames) {
+      return forceResetWorkaroundTimeMs != C.TIME_UNSET && writtenFrames > 0
+          && SystemClock.elapsedRealtime() - forceResetWorkaroundTimeMs
+              >= FORCE_RESET_WORKAROUND_TIMEOUT_MS;
+    }
+
+    /**
      * {@link AudioTrack#getPlaybackHeadPosition()} returns a value intended to be interpreted as an
      * unsigned 32 bit integer, which also wraps around periodically. This method returns the
      * playback head position as a long that will only wrap around if the value exceeds
@@ -1379,6 +1402,24 @@ public final class DefaultAudioSink implements AudioSink {
         }
         rawPlaybackHeadPosition += passthroughWorkaroundPauseOffset;
       }
+
+      if (Util.SDK_INT <= 26) {
+        if (rawPlaybackHeadPosition == 0 && lastRawPlaybackHeadPosition > 0
+            && state == PLAYSTATE_PLAYING) {
+          // If connecting a Bluetooth audio device fails, the AudioTrack may be left in a state
+          // where its Java API is in the playing state, but the native track is stopped. When this
+          // happens the playback head position gets stuck at zero. In this case, return the old
+          // playback head position and force the track to be reset after
+          // {@link #FORCE_RESET_WORKAROUND_TIMEOUT_MS} has elapsed.
+          if (forceResetWorkaroundTimeMs == C.TIME_UNSET) {
+            forceResetWorkaroundTimeMs = SystemClock.elapsedRealtime();
+          }
+          return lastRawPlaybackHeadPosition;
+        } else {
+          forceResetWorkaroundTimeMs = C.TIME_UNSET;
+        }
+      }
+
       if (lastRawPlaybackHeadPosition > rawPlaybackHeadPosition) {
         // The value must have wrapped around.
         rawPlaybackHeadWrapCount++;

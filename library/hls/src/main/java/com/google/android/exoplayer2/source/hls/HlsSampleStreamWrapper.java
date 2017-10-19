@@ -103,6 +103,7 @@ import java.util.LinkedList;
   private boolean[] trackGroupEnabledStates;
   private boolean[] trackGroupIsAudioVideoFlags;
 
+  private long sampleOffsetUs;
   private long lastSeekPositionUs;
   private long pendingResetPositionUs;
   private boolean pendingResetUpstreamFormats;
@@ -254,7 +255,8 @@ import java.util.LinkedList;
         // may need to be discarded.
         boolean primarySampleQueueDirty = false;
         if (!seenFirstTrackSelection) {
-          primaryTrackSelection.updateSelectedTrack(0, C.TIME_UNSET);
+          long bufferedDurationUs = positionUs < 0 ? -positionUs : 0;
+          primaryTrackSelection.updateSelectedTrack(positionUs, bufferedDurationUs, C.TIME_UNSET);
           int chunkIndex = chunkSource.getTrackGroup().indexOf(mediaChunks.getLast().trackFormat);
           if (primaryTrackSelection.getSelectedIndexInTrackGroup() != chunkIndex) {
             // This is the first selection and the chunk loaded during preparation does not match
@@ -369,16 +371,16 @@ import java.util.LinkedList;
 
   // SampleStream implementation.
 
-  /* package */ boolean isReady(int trackGroupIndex) {
+  public boolean isReady(int trackGroupIndex) {
     return loadingFinished || (!isPendingReset() && sampleQueues[trackGroupIndex].hasNextSample());
   }
 
-  /* package */ void maybeThrowError() throws IOException {
+  public void maybeThrowError() throws IOException {
     loader.maybeThrowError();
     chunkSource.maybeThrowError();
   }
 
-  /* package */ int readData(int trackGroupIndex, FormatHolder formatHolder,
+  public int readData(int trackGroupIndex, FormatHolder formatHolder,
       DecoderInputBuffer buffer, boolean requireFormat) {
     if (isPendingReset()) {
       return C.RESULT_NOTHING_READ;
@@ -402,7 +404,7 @@ import java.util.LinkedList;
         lastSeekPositionUs);
   }
 
-  /* package */ int skipData(int trackGroupIndex, long positionUs) {
+  public int skipData(int trackGroupIndex, long positionUs) {
     SampleQueue sampleQueue = sampleQueues[trackGroupIndex];
     if (loadingFinished && positionUs > sampleQueue.getLargestQueuedTimestampUs()) {
       return sampleQueue.advanceToEnd();
@@ -437,9 +439,16 @@ import java.util.LinkedList;
       return false;
     }
 
-    chunkSource.getNextChunk(mediaChunks.isEmpty() ? null : mediaChunks.getLast(),
-        pendingResetPositionUs != C.TIME_UNSET ? pendingResetPositionUs : positionUs,
-        nextChunkHolder);
+    HlsMediaChunk previousChunk;
+    long loadPositionUs;
+    if (isPendingReset()) {
+      previousChunk = null;
+      loadPositionUs = pendingResetPositionUs;
+    } else {
+      previousChunk = mediaChunks.getLast();
+      loadPositionUs = previousChunk.endTimeUs;
+    }
+    chunkSource.getNextChunk(previousChunk, positionUs, loadPositionUs, nextChunkHolder);
     boolean endOfStream = nextChunkHolder.endOfStream;
     Chunk loadable = nextChunkHolder.chunk;
     HlsMasterPlaylist.HlsUrl playlistToLoad = nextChunkHolder.playlist;
@@ -573,6 +582,7 @@ import java.util.LinkedList;
       }
     }
     SampleQueue trackOutput = new SampleQueue(allocator);
+    trackOutput.setSampleOffsetUs(sampleOffsetUs);
     trackOutput.setUpstreamFormatChangeListener(this);
     sampleQueueTrackIds = Arrays.copyOf(sampleQueueTrackIds, trackCount + 1);
     sampleQueueTrackIds[trackCount] = id;
@@ -597,6 +607,15 @@ import java.util.LinkedList;
   @Override
   public void onUpstreamFormatChanged(Format format) {
     handler.post(maybeFinishPrepareRunnable);
+  }
+
+  // Called by the loading thread.
+
+  public void setSampleOffsetUs(long sampleOffsetUs) {
+    this.sampleOffsetUs = sampleOffsetUs;
+    for (SampleQueue sampleQueue : sampleQueues) {
+      sampleQueue.setSampleOffsetUs(sampleOffsetUs);
+    }
   }
 
   // Internal methods.
