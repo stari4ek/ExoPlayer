@@ -17,7 +17,6 @@ package com.google.android.exoplayer2.drm;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.media.DeniedByServerException;
 import android.media.NotProvisionedException;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -86,6 +85,7 @@ import java.util.UUID;
 
   /* package */ final MediaDrmCallback callback;
   /* package */ final UUID uuid;
+  /* package */ final PostResponseHandler postResponseHandler;
 
   private @DrmSession.State int state;
   private int openCount;
@@ -95,8 +95,6 @@ import java.util.UUID;
   private DrmSessionException lastException;
   private byte[] sessionId;
   private byte[] offlineLicenseKeySetId;
-
-  /* package */ PostResponseHandler postResponseHandler;
 
   /**
    * Instantiates a new DRM session.
@@ -282,7 +280,7 @@ import java.util.UUID;
 
     try {
       mediaDrm.provideProvisionResponse((byte[]) response);
-    } catch (DeniedByServerException e) {
+    } catch (Exception e) {
       provisioningManager.onProvisionError(e);
       return;
     }

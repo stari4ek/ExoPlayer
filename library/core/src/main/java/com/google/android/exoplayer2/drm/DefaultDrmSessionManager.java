@@ -24,8 +24,10 @@ import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.text.TextUtils;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.drm.DefaultDrmSession.ProvisioningManager;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
+import com.google.android.exoplayer2.drm.DrmSession.DrmSessionException;
 import com.google.android.exoplayer2.drm.ExoMediaDrm.OnEventListener;
 import com.google.android.exoplayer2.extractor.mp4.PsshAtomUtil;
 import com.google.android.exoplayer2.util.Assertions;
@@ -57,6 +59,13 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
 
     /**
      * Called when a drm error occurs.
+     * <p>
+     * This method being called does not indicate that playback has failed, or that it will fail.
+     * The player may be able to recover from the error and continue. Hence applications should
+     * <em>not</em> implement this method to display a user visible error or initiate an application
+     * level retry ({@link Player.EventListener#onPlayerError} is the appropriate place to implement
+     * such behavior). This method is called to provide the application with an opportunity to log
+     * the error if it wishes to do so.
      *
      * @param e The corresponding exception.
      */
@@ -339,7 +348,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
 
   @Override
   public boolean canAcquireSession(@NonNull DrmInitData drmInitData) {
-    SchemeData schemeData = getSchemeData(drmInitData, uuid);
+    SchemeData schemeData = getSchemeData(drmInitData, uuid, true);
     if (schemeData == null) {
       // No data for this manager's scheme.
       return false;
@@ -367,30 +376,33 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
       }
     }
 
-    DefaultDrmSession<T> session = null;
     byte[] initData = null;
     String mimeType = null;
-
     if (offlineLicenseKeySetId == null) {
-      SchemeData data = getSchemeData(drmInitData, uuid);
+      SchemeData data = getSchemeData(drmInitData, uuid, false);
       if (data == null) {
+        final IllegalStateException error = new IllegalStateException(
+            "Media does not support uuid: " + uuid);
         if (eventHandler != null && eventListener != null) {
           eventHandler.post(new Runnable() {
             @Override
             public void run() {
-              eventListener.onDrmSessionManagerError(new IllegalStateException(
-                  "Media does not support uuid: " + uuid));
+              eventListener.onDrmSessionManagerError(error);
             }
           });
         }
-      } else {
-        initData = getSchemeInitData(data, uuid);
-        mimeType = getSchemeMimeType(data, uuid);
+        return new ErrorStateDrmSession<>(new DrmSessionException(error));
       }
+      initData = getSchemeInitData(data, uuid);
+      mimeType = getSchemeMimeType(data, uuid);
     }
 
+    DefaultDrmSession<T> session;
     if (!multiSession) {
-      // Look for an existing session to use.
+      session = sessions.isEmpty() ? null : sessions.get(0);
+    } else {
+      // Only use an existing session if it has matching init data.
+      session = null;
       for (DefaultDrmSession<T> existingSession : sessions) {
         if (existingSession.hasInitData(initData)) {
           session = existingSession;
@@ -412,6 +424,11 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
 
   @Override
   public void releaseSession(DrmSession<T> session) {
+    if (session instanceof ErrorStateDrmSession) {
+      // Do nothing.
+      return;
+    }
+
     DefaultDrmSession<T> drmSession = (DefaultDrmSession<T>) session;
     if (drmSession.release()) {
       sessions.remove(drmSession);
@@ -458,15 +475,19 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
    *
    * @param drmInitData The {@link DrmInitData} from which to extract the {@link SchemeData}.
    * @param uuid The UUID.
+   * @param allowMissingData Whether a {@link SchemeData} with null {@link SchemeData#data} may be
+   *     returned.
    * @return The extracted {@link SchemeData}, or null if no suitable data is present.
    */
-  private static SchemeData getSchemeData(DrmInitData drmInitData, UUID uuid) {
+  private static SchemeData getSchemeData(DrmInitData drmInitData, UUID uuid,
+      boolean allowMissingData) {
     // Look for matching scheme data (matching the Common PSSH box for ClearKey).
     List<SchemeData> matchingSchemeDatas = new ArrayList<>(drmInitData.schemeDataCount);
     for (int i = 0; i < drmInitData.schemeDataCount; i++) {
       SchemeData schemeData = drmInitData.get(i);
-      if (schemeData.matches(uuid)
-          || (C.CLEARKEY_UUID.equals(uuid) && schemeData.matches(C.COMMON_PSSH_UUID))) {
+      boolean uuidMatches = schemeData.matches(uuid)
+          || (C.CLEARKEY_UUID.equals(uuid) && schemeData.matches(C.COMMON_PSSH_UUID));
+      if (uuidMatches && (schemeData.data != null || allowMissingData)) {
         matchingSchemeDatas.add(schemeData);
       }
     }
@@ -479,7 +500,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
     if (C.WIDEVINE_UUID.equals(uuid)) {
       for (int i = 0; i < matchingSchemeDatas.size(); i++) {
         SchemeData matchingSchemeData = matchingSchemeDatas.get(i);
-        int version = PsshAtomUtil.parseVersion(matchingSchemeData.data);
+        int version = matchingSchemeData.hasData()
+            ? PsshAtomUtil.parseVersion(matchingSchemeData.data) : -1;
         if (Util.SDK_INT < 23 && version == 0) {
           return matchingSchemeData;
         } else if (Util.SDK_INT >= 23 && version == 1) {

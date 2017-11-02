@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.ext.cronet;
 
 import android.net.Uri;
-import android.os.ConditionVariable;
 import android.text.TextUtils;
 import android.util.Log;
 import com.google.android.exoplayer2.C;
@@ -27,15 +26,12 @@ import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
+import com.google.android.exoplayer2.util.ConditionVariable;
 import com.google.android.exoplayer2.util.Predicate;
 import java.io.IOException;
-import java.net.CookieManager;
 import java.net.SocketTimeoutException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -78,6 +74,14 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
 
   }
 
+  /** Thrown on catching an InterruptedException. */
+  public static final class InterruptedIOException extends IOException {
+
+    public InterruptedIOException(InterruptedException e) {
+      super(e);
+    }
+  }
+
   static {
     ExoPlayerLibraryInfo.registerModule("goog.exo.cronet");
   }
@@ -93,11 +97,13 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
 
   private static final String TAG = "CronetDataSource";
   private static final String CONTENT_TYPE = "Content-Type";
+  private static final String SET_COOKIE = "Set-Cookie";
+  private static final String COOKIE = "Cookie";
+
   private static final Pattern CONTENT_RANGE_HEADER_PATTERN =
       Pattern.compile("^bytes (\\d+)-(\\d+)/(\\d+)$");
   // The size of read buffer passed to cronet UrlRequest.read().
   private static final int READ_BUFFER_SIZE_BYTES = 32 * 1024;
-  private static final String SET_COOKIE = "Set-Cookie";
 
   private final CronetEngine cronetEngine;
   private final Executor executor;
@@ -106,11 +112,11 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
   private final int connectTimeoutMs;
   private final int readTimeoutMs;
   private final boolean resetTimeoutOnRedirects;
+  private final boolean handleSetCookieRequests;
   private final RequestProperties defaultRequestProperties;
   private final RequestProperties requestProperties;
   private final ConditionVariable operation;
   private final Clock clock;
-  private final CookieManager cookieManager;
 
   // Accessed by the calling thread only.
   private boolean opened;
@@ -150,7 +156,7 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
   public CronetDataSource(CronetEngine cronetEngine, Executor executor,
       Predicate<String> contentTypePredicate, TransferListener<? super CronetDataSource> listener) {
     this(cronetEngine, executor, contentTypePredicate, listener, DEFAULT_CONNECT_TIMEOUT_MILLIS,
-        DEFAULT_READ_TIMEOUT_MILLIS, false, null, /* cookieManager= */ null);
+        DEFAULT_READ_TIMEOUT_MILLIS, false, null, false);
   }
 
   /**
@@ -174,10 +180,8 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
       int connectTimeoutMs, int readTimeoutMs, boolean resetTimeoutOnRedirects,
       RequestProperties defaultRequestProperties) {
     this(cronetEngine, executor, contentTypePredicate, listener, connectTimeoutMs,
-        readTimeoutMs, resetTimeoutOnRedirects, Clock.DEFAULT, defaultRequestProperties,
-        /* cookieManager= */ null);
+        readTimeoutMs, resetTimeoutOnRedirects, Clock.DEFAULT, defaultRequestProperties, false);
   }
-
 
   /**
    * @param cronetEngine A CronetEngine.
@@ -194,22 +198,22 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
    * @param readTimeoutMs The read timeout, in milliseconds.
    * @param resetTimeoutOnRedirects Whether the connect timeout is reset when a redirect occurs.
    * @param defaultRequestProperties The default request properties to be used.
-   * @param cookieManager An optional {@link CookieManager} to be used to handle "Set-Cookie"
-   *     requests. If this is null, then "Set-Cookie" requests will be ignored.
+   * @param handleSetCookieRequests Whether "Set-Cookie" requests on redirect should be forwarded to
+   *     the redirect url in the "Cookie" header.
    */
   public CronetDataSource(CronetEngine cronetEngine, Executor executor,
       Predicate<String> contentTypePredicate, TransferListener<? super CronetDataSource> listener,
       int connectTimeoutMs, int readTimeoutMs, boolean resetTimeoutOnRedirects,
-      RequestProperties defaultRequestProperties, CookieManager cookieManager) {
+      RequestProperties defaultRequestProperties, boolean handleSetCookieRequests) {
     this(cronetEngine, executor, contentTypePredicate, listener, connectTimeoutMs,
         readTimeoutMs, resetTimeoutOnRedirects, Clock.DEFAULT, defaultRequestProperties,
-        cookieManager);
+        handleSetCookieRequests);
   }
 
   /* package */ CronetDataSource(CronetEngine cronetEngine, Executor executor,
       Predicate<String> contentTypePredicate, TransferListener<? super CronetDataSource> listener,
       int connectTimeoutMs, int readTimeoutMs, boolean resetTimeoutOnRedirects, Clock clock,
-      RequestProperties defaultRequestProperties, CookieManager cookieManager) {
+      RequestProperties defaultRequestProperties, boolean handleSetCookieRequests) {
     this.cronetEngine = Assertions.checkNotNull(cronetEngine);
     this.executor = Assertions.checkNotNull(executor);
     this.contentTypePredicate = contentTypePredicate;
@@ -219,7 +223,7 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
     this.resetTimeoutOnRedirects = resetTimeoutOnRedirects;
     this.clock = Assertions.checkNotNull(clock);
     this.defaultRequestProperties = defaultRequestProperties;
-    this.cookieManager = cookieManager;
+    this.handleSetCookieRequests = handleSetCookieRequests;
     requestProperties = new RequestProperties();
     operation = new ConditionVariable();
   }
@@ -259,20 +263,24 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
     operation.close();
     resetConnectTimeout();
     currentDataSpec = dataSpec;
-
     try {
-      currentUrlRequest = buildRequest(dataSpec);
+      currentUrlRequest = buildRequestBuilder(dataSpec).build();
     } catch (IOException e) {
-      throw new OpenException(e, dataSpec, Status.IDLE);
+      throw new OpenException(e, currentDataSpec, Status.IDLE);
     }
     currentUrlRequest.start();
-    boolean requestStarted = blockUntilConnectTimeout();
 
-    if (exception != null) {
-      throw new OpenException(exception, currentDataSpec, getStatus(currentUrlRequest));
-    } else if (!requestStarted) {
-      // The timeout was reached before the connection was opened.
-      throw new OpenException(new SocketTimeoutException(), dataSpec, getStatus(currentUrlRequest));
+    try {
+      boolean connectionOpened = blockUntilConnectTimeout();
+      if (exception != null) {
+        throw new OpenException(exception, currentDataSpec, getStatus(currentUrlRequest));
+      } else if (!connectionOpened) {
+        // The timeout was reached before the connection was opened.
+        throw new OpenException(
+            new SocketTimeoutException(), dataSpec, getStatus(currentUrlRequest));
+      }
+    } catch (InterruptedException e) {
+      throw new OpenException(new InterruptedIOException(e), dataSpec, Status.INVALID);
     }
 
     // Check for a valid response code.
@@ -340,14 +348,24 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
       operation.close();
       readBuffer.clear();
       currentUrlRequest.read(readBuffer);
-      if (!operation.block(readTimeoutMs)) {
-        // We're timing out, but since the operation is still ongoing we'll need to replace
-        // readBuffer to avoid the possibility of it being written to by this operation during a
-        // subsequent request.
+      try {
+        if (!operation.block(readTimeoutMs)) {
+          throw new SocketTimeoutException();
+        }
+      } catch (InterruptedException | SocketTimeoutException e) {
+        // If we're timing out or getting interrupted, the operation is still ongoing.
+        // So we'll need to replace readBuffer to avoid the possibility of it being written to by
+        // this operation during a subsequent request.
         readBuffer = null;
         throw new HttpDataSourceException(
-            new SocketTimeoutException(), currentDataSpec, HttpDataSourceException.TYPE_READ);
-      } else if (exception != null) {
+            e instanceof InterruptedException
+                ? new InterruptedIOException((InterruptedException) e)
+                : (SocketTimeoutException) e,
+            currentDataSpec,
+            HttpDataSourceException.TYPE_READ);
+      }
+
+      if (exception != null) {
         throw new HttpDataSourceException(exception, currentDataSpec,
             HttpDataSourceException.TYPE_READ);
       } else if (finished) {
@@ -422,21 +440,25 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
     }
 
     Map<String, List<String>> headers = info.getAllHeaders();
-    if (cookieManager == null || isEmpty(headers.get(SET_COOKIE))) {
+    if (!handleSetCookieRequests || isEmpty(headers.get(SET_COOKIE))) {
       request.followRedirect();
     } else {
       currentUrlRequest.cancel();
-      UrlRequest.Builder requestBuilder =
-          cronetEngine.newUrlRequestBuilder(newLocationUrl, this, executor).allowDirectExecutor();
+      DataSpec redirectUrlDataSpec = new DataSpec(Uri.parse(newLocationUrl),
+          currentDataSpec.postBody, currentDataSpec.absoluteStreamPosition,
+          currentDataSpec.position, currentDataSpec.length, currentDataSpec.key,
+          currentDataSpec.flags);
+      UrlRequest.Builder requestBuilder;
       try {
-        parseCookies(info);
-        attachCookies(newLocationUrl, requestBuilder);
-        currentUrlRequest = requestBuilder.build();
-        currentUrlRequest.start();
+        requestBuilder = buildRequestBuilder(redirectUrlDataSpec);
       } catch (IOException e) {
         exception = e;
-        operation.open();
+        return;
       }
+      String cookieHeadersValue = parseCookies(headers.get(SET_COOKIE));
+      attachCookies(requestBuilder, cookieHeadersValue);
+      currentUrlRequest = requestBuilder.build();
+      currentUrlRequest.start();
     }
   }
 
@@ -445,12 +467,7 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
     if (request != currentUrlRequest) {
       return;
     }
-    try {
-      parseCookies(info);
-      responseInfo = info;
-    } catch (IOException e) {
-      exception = e;
-    }
+    responseInfo = info;
     operation.open();
   }
 
@@ -490,7 +507,7 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
 
   // Internal methods.
 
-  private UrlRequest buildRequest(DataSpec dataSpec) throws IOException {
+  private UrlRequest.Builder buildRequestBuilder(DataSpec dataSpec) throws IOException {
     UrlRequest.Builder requestBuilder = cronetEngine.newUrlRequestBuilder(
         dataSpec.uri.toString(), this, executor).allowDirectExecutor();
     // Set the headers.
@@ -509,17 +526,16 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
       requestBuilder.addHeader(key, headerEntry.getValue());
     }
     if (dataSpec.postBody != null && dataSpec.postBody.length != 0 && !isContentTypeHeaderSet) {
-      throw new OpenException("POST request with non-empty body must set Content-Type", dataSpec,
-          Status.IDLE);
+      throw new IOException("POST request with non-empty body must set Content-Type");
     }
     // Set the Range header.
-    if (currentDataSpec.position != 0 || currentDataSpec.length != C.LENGTH_UNSET) {
+    if (dataSpec.position != 0 || dataSpec.length != C.LENGTH_UNSET) {
       StringBuilder rangeValue = new StringBuilder();
       rangeValue.append("bytes=");
-      rangeValue.append(currentDataSpec.position);
+      rangeValue.append(dataSpec.position);
       rangeValue.append("-");
-      if (currentDataSpec.length != C.LENGTH_UNSET) {
-        rangeValue.append(currentDataSpec.position + currentDataSpec.length - 1);
+      if (dataSpec.length != C.LENGTH_UNSET) {
+        rangeValue.append(dataSpec.position + dataSpec.length - 1);
       }
       requestBuilder.addHeader("Range", rangeValue.toString());
     }
@@ -537,11 +553,10 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
             executor);
       }
     }
-    attachCookies(dataSpec.uri.toString(), requestBuilder);
-    return requestBuilder.build();
+    return requestBuilder;
   }
 
-  private boolean blockUntilConnectTimeout() {
+  private boolean blockUntilConnectTimeout() throws InterruptedException {
     long now = clock.elapsedRealtime();
     boolean opened = false;
     while (!opened && now < currentConnectTimeoutMs) {
@@ -553,37 +568,6 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
 
   private void resetConnectTimeout() {
     currentConnectTimeoutMs = clock.elapsedRealtime() + connectTimeoutMs;
-  }
-
-  private void parseCookies(UrlResponseInfo info) throws IOException {
-    if (cookieManager == null) {
-      return;
-    }
-    try {
-      cookieManager.put(new URI(info.getUrl()), info.getAllHeaders());
-    } catch (URISyntaxException e) {
-      throw new IOException("Failed to parse cookies", e);
-    }
-  }
-
-  private void attachCookies(String url, UrlRequest.Builder requestBuilder) throws IOException {
-    if (cookieManager == null) {
-      return;
-    }
-    try {
-      for (Entry<String, List<String>> headers :
-          cookieManager.get(new URI(url), Collections.emptyMap()).entrySet()) {
-        StringBuilder cookies = new StringBuilder();
-        for (String cookie : headers.getValue()) {
-          cookies.append(cookie).append("; ");
-        }
-        if (cookies.length() > 0) {
-          requestBuilder.addHeader(headers.getKey(), cookies.substring(0, cookies.length() - 1));
-        }
-      }
-    } catch (URISyntaxException e) {
-      throw new IOException("Failed to attach cookies", e);
-    }
   }
 
   private static boolean getIsCompressed(UrlResponseInfo info) {
@@ -639,7 +623,18 @@ public class CronetDataSource extends UrlRequest.Callback implements HttpDataSou
     return contentLength;
   }
 
-  private static int getStatus(UrlRequest request) {
+  private static String parseCookies(List<String> setCookieHeaders) {
+    return TextUtils.join(";", setCookieHeaders);
+  }
+
+  private static void attachCookies(UrlRequest.Builder requestBuilder, String cookies) {
+    if (TextUtils.isEmpty(cookies)) {
+      return;
+    }
+    requestBuilder.addHeader(COOKIE, cookies);
+  }
+
+  private static int getStatus(UrlRequest request) throws InterruptedException {
     final ConditionVariable conditionVariable = new ConditionVariable();
     final int[] statusHolder = new int[1];
     request.getStatus(new UrlRequest.StatusListener() {
