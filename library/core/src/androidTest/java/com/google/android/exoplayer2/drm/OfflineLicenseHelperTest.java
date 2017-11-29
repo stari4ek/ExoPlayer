@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.google.android.exoplayer2.drm;
 
 import static org.mockito.Matchers.any;
@@ -24,8 +23,7 @@ import android.test.MoreAsserts;
 import android.util.Pair;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
-import com.google.android.exoplayer2.testutil.TestUtil;
-import com.google.android.exoplayer2.upstream.HttpDataSource;
+import com.google.android.exoplayer2.testutil.MockitoUtil;
 import java.util.HashMap;
 import org.mockito.Mock;
 
@@ -35,15 +33,15 @@ import org.mockito.Mock;
 public class OfflineLicenseHelperTest extends InstrumentationTestCase {
 
   private OfflineLicenseHelper<?> offlineLicenseHelper;
-  @Mock private HttpDataSource httpDataSource;
   @Mock private MediaDrmCallback mediaDrmCallback;
   @Mock private ExoMediaDrm<ExoMediaCrypto> mediaDrm;
 
   @Override
   protected void setUp() throws Exception {
-    TestUtil.setUpMockito(this);
+    MockitoUtil.setUpMockito(this);
     when(mediaDrm.openSession()).thenReturn(new byte[] {1, 2, 3});
-    offlineLicenseHelper = new OfflineLicenseHelper<>(mediaDrm, mediaDrmCallback, null);
+    offlineLicenseHelper = new OfflineLicenseHelper<>(C.WIDEVINE_UUID, mediaDrm, mediaDrmCallback,
+        null);
   }
 
   @Override
@@ -154,7 +152,7 @@ public class OfflineLicenseHelperTest extends InstrumentationTestCase {
   }
 
   private static DrmInitData newDrmInitData() {
-    return new DrmInitData(new SchemeData(C.WIDEVINE_UUID, "cenc", "mimeType",
+    return new DrmInitData(new SchemeData(C.WIDEVINE_UUID, "mimeType",
         new byte[] {1, 4, 7, 0, 3, 6}));
   }
 

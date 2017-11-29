@@ -24,20 +24,26 @@ android {
     }
 
     buildTypes {
-        debug {
-//            testCoverageEnabled = true
-        }
+        // Re-enable test coverage when the following issue is fixed:
+        // https://issuetracker.google.com/issues/37019591
+        // debug {
+        //    testCoverageEnabled = true
+        // }
     }
 }
 
 dependencies {
     compile project(modulePrefix + 'library-core')
     compile 'com.android.support:support-annotations:' + supportLibraryVersion
-    compile 'com.android.support:support-core-utils:' + supportLibraryVersion
     androidTestCompile project(modulePrefix + 'testutils')
     androidTestCompile 'com.google.dexmaker:dexmaker:' + dexmakerVersion
     androidTestCompile 'com.google.dexmaker:dexmaker-mockito:' + dexmakerVersion
     androidTestCompile 'org.mockito:mockito-core:' + mockitoVersion
+    testCompile project(modulePrefix + 'testutils')
+    testCompile 'com.google.truth:truth:' + truthVersion
+    testCompile 'junit:junit:' + junitVersion
+    testCompile 'org.mockito:mockito-core:' + mockitoVersion
+    testCompile 'org.robolectric:robolectric:' + robolectricVersion
 }
 
 ext {

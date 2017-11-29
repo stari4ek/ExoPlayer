@@ -17,7 +17,7 @@ package com.google.android.exoplayer2.upstream.cache;
 
 import android.test.InstrumentationTestCase;
 import com.google.android.exoplayer2.extractor.ChunkIndex;
-import com.google.android.exoplayer2.testutil.TestUtil;
+import com.google.android.exoplayer2.testutil.MockitoUtil;
 import com.google.android.exoplayer2.util.Util;
 import java.io.File;
 import java.io.IOException;
@@ -46,10 +46,9 @@ public final class CachedRegionTrackerTest extends InstrumentationTestCase {
 
   @Override
   protected void setUp() throws Exception {
-    TestUtil.setUpMockito(this);
+    MockitoUtil.setUpMockito(this);
 
     tracker = new CachedRegionTracker(cache, CACHE_KEY, CHUNK_INDEX);
-
     cacheDir = Util.createTempDirectory(getInstrumentation().getContext(), "ExoPlayerTest");
     index = new CachedContentIndex(cacheDir);
   }

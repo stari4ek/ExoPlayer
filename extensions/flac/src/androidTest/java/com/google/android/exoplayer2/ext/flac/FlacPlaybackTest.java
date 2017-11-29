@@ -22,14 +22,11 @@ import android.test.InstrumentationTestCase;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.ExoPlayerFactory;
-import com.google.android.exoplayer2.PlaybackParameters;
+import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Renderer;
-import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.extractor.mkv.MatroskaExtractor;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
-import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
-import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory;
 
 /**
@@ -44,20 +41,22 @@ public class FlacPlaybackTest extends InstrumentationTestCase {
   }
 
   private void playUri(String uri) throws ExoPlaybackException {
-    TestPlaybackThread thread = new TestPlaybackThread(Uri.parse(uri),
+    TestPlaybackRunnable testPlaybackRunnable = new TestPlaybackRunnable(Uri.parse(uri),
         getInstrumentation().getContext());
+    Thread thread = new Thread(testPlaybackRunnable);
     thread.start();
     try {
       thread.join();
     } catch (InterruptedException e) {
       fail(); // Should never happen.
     }
-    if (thread.playbackException != null) {
-      throw thread.playbackException;
+    if (testPlaybackRunnable.playbackException != null) {
+      throw testPlaybackRunnable.playbackException;
     }
   }
 
-  private static class TestPlaybackThread extends Thread implements ExoPlayer.EventListener {
+  private static class TestPlaybackRunnable extends Player.DefaultEventListener
+      implements Runnable {
 
     private final Context context;
     private final Uri uri;
@@ -65,7 +64,7 @@ public class FlacPlaybackTest extends InstrumentationTestCase {
     private ExoPlayer player;
     private ExoPlaybackException playbackException;
 
-    public TestPlaybackThread(Uri uri, Context context) {
+    public TestPlaybackRunnable(Uri uri, Context context) {
       this.uri = uri;
       this.context = context;
     }
@@ -77,40 +76,13 @@ public class FlacPlaybackTest extends InstrumentationTestCase {
       DefaultTrackSelector trackSelector = new DefaultTrackSelector();
       player = ExoPlayerFactory.newInstance(new Renderer[] {audioRenderer}, trackSelector);
       player.addListener(this);
-      ExtractorMediaSource mediaSource = new ExtractorMediaSource(
-          uri,
-          new DefaultDataSourceFactory(context, "ExoPlayerExtFlacTest"),
-          MatroskaExtractor.FACTORY,
-          null,
-          null);
+      ExtractorMediaSource mediaSource = new ExtractorMediaSource.Builder(
+          uri, new DefaultDataSourceFactory(context, "ExoPlayerExtFlacTest"))
+          .setExtractorsFactory(MatroskaExtractor.FACTORY)
+          .build();
       player.prepare(mediaSource);
       player.setPlayWhenReady(true);
       Looper.loop();
-    }
-
-    @Override
-    public void onLoadingChanged(boolean isLoading) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onTracksChanged(TrackGroupArray trackGroups, TrackSelectionArray trackSelections) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onPositionDiscontinuity() {
-      // Do nothing.
-    }
-
-    @Override
-    public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onTimelineChanged(Timeline timeline, Object manifest) {
-      // Do nothing.
     }
 
     @Override
@@ -120,20 +92,11 @@ public class FlacPlaybackTest extends InstrumentationTestCase {
 
     @Override
     public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
-      if (playbackState == ExoPlayer.STATE_ENDED
-          || (playbackState == ExoPlayer.STATE_IDLE && playbackException != null)) {
-        releasePlayerAndQuitLooper();
+      if (playbackState == Player.STATE_ENDED
+          || (playbackState == Player.STATE_IDLE && playbackException != null)) {
+        player.release();
+        Looper.myLooper().quit();
       }
-    }
-
-    @Override
-    public void onRepeatModeChanged(int repeatMode) {
-      // Do nothing.
-    }
-
-    private void releasePlayerAndQuitLooper() {
-      player.release();
-      Looper.myLooper().quit();
     }
 
   }

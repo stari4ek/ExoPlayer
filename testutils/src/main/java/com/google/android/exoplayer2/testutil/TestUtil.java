@@ -16,13 +16,10 @@
 package com.google.android.exoplayer2.testutil;
 
 import android.app.Instrumentation;
-import android.test.InstrumentationTestCase;
+import android.content.Context;
 import android.test.MoreAsserts;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.extractor.Extractor;
-import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.MediaSource.Listener;
 import com.google.android.exoplayer2.testutil.FakeExtractorInput.SimulatedIOException;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
@@ -33,7 +30,6 @@ import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Random;
 import junit.framework.Assert;
-import org.mockito.MockitoAnnotations;
 
 /**
  * Utility methods for tests.
@@ -121,21 +117,22 @@ public class TestUtil {
     return joined;
   }
 
-  public static void setUpMockito(InstrumentationTestCase instrumentationTestCase) {
-    // Workaround for https://code.google.com/p/dexmaker/issues/detail?id=2.
-    System.setProperty("dexmaker.dexcache",
-        instrumentationTestCase.getInstrumentation().getTargetContext().getCacheDir().getPath());
-    MockitoAnnotations.initMocks(instrumentationTestCase);
-  }
-
   public static byte[] getByteArray(Instrumentation instrumentation, String fileName)
       throws IOException {
-    return Util.toByteArray(getInputStream(instrumentation, fileName));
+    return getByteArray(instrumentation.getContext(), fileName);
+  }
+
+  public static byte[] getByteArray(Context context, String fileName) throws IOException {
+    return Util.toByteArray(getInputStream(context, fileName));
   }
 
   public static InputStream getInputStream(Instrumentation instrumentation, String fileName)
       throws IOException {
-    return instrumentation.getContext().getResources().getAssets().open(fileName);
+    return getInputStream(instrumentation.getContext(), fileName);
+  }
+
+  public static InputStream getInputStream(Context context, String fileName) throws IOException {
+    return context.getResources().getAssets().open(fileName);
   }
 
   public static String getString(Instrumentation instrumentation, String fileName)
@@ -144,44 +141,20 @@ public class TestUtil {
   }
 
   /**
-   * Extracts the timeline from a media source.
-   */
-  public static Timeline extractTimelineFromMediaSource(MediaSource mediaSource) {
-    class TimelineListener implements Listener {
-      private Timeline timeline;
-      @Override
-      public synchronized void onSourceInfoRefreshed(Timeline timeline, Object manifest) {
-        this.timeline = timeline;
-        this.notify();
-      }
-    }
-    TimelineListener listener = new TimelineListener();
-    mediaSource.prepareSource(null, true, listener);
-    synchronized (listener) {
-      while (listener.timeline == null) {
-        try {
-          listener.wait();
-        } catch (InterruptedException e) {
-          Assert.fail(e.getMessage());
-        }
-      }
-    }
-    return listener.timeline;
-  }
-
-  /**
    * Asserts that data read from a {@link DataSource} matches {@code expected}.
    *
    * @param dataSource The {@link DataSource} through which to read.
    * @param dataSpec The {@link DataSpec} to use when opening the {@link DataSource}.
    * @param expectedData The expected data.
+   * @param expectKnownLength Whether to assert that {@link DataSource#open} returns the expected
+   *     data length. If false then it's asserted that {@link C#LENGTH_UNSET} is returned.
    * @throws IOException If an error occurs reading fom the {@link DataSource}.
    */
   public static void assertDataSourceContent(DataSource dataSource, DataSpec dataSpec,
-      byte[] expectedData) throws IOException {
+      byte[] expectedData, boolean expectKnownLength) throws IOException {
     try {
       long length = dataSource.open(dataSpec);
-      Assert.assertEquals(length, expectedData.length);
+      Assert.assertEquals(expectKnownLength ? expectedData.length : C.LENGTH_UNSET, length);
       byte[] readData = TestUtil.readToEnd(dataSource);
       MoreAsserts.assertEquals(expectedData, readData);
     } finally {

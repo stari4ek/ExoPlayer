@@ -16,12 +16,15 @@
 package com.google.android.exoplayer2.source;
 
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import java.io.IOException;
 
 /**
- * A source of a single period of media.
+ * Loads media corresponding to a {@link Timeline.Period}, and allows that media to be read. All
+ * methods are called on the player's internal playback thread, as described in the
+ * {@link ExoPlayer} Javadoc.
  */
 public interface MediaPeriod extends SequenceableLoader {
 
@@ -50,13 +53,13 @@ public interface MediaPeriod extends SequenceableLoader {
    * {@link #maybeThrowPrepareError()} will throw an {@link IOException}.
    * <p>
    * If preparation succeeds and results in a source timeline change (e.g. the period duration
-   * becoming known), {@link MediaSource.Listener#onSourceInfoRefreshed(Timeline, Object)} will be
+   * becoming known),
+   * {@link MediaSource.Listener#onSourceInfoRefreshed(MediaSource, Timeline, Object)} will be
    * called before {@code callback.onPrepared}.
    *
    * @param callback Callback to receive updates from this period, including being notified when
    *     preparation completes.
-   * @param positionUs The position in microseconds relative to the start of the period at which to
-   *     start loading data.
+   * @param positionUs The expected starting position, in microseconds.
    */
   void prepare(Callback callback, long positionUs);
 
@@ -100,7 +103,8 @@ public interface MediaPeriod extends SequenceableLoader {
    *     selections.
    * @param streamResetFlags Will be updated to indicate new sample streams, and sample streams that
    *     have been retained but with the requirement that the consuming renderer be reset.
-   * @param positionUs The current playback position in microseconds.
+   * @param positionUs The current playback position in microseconds. If playback of this period has
+    *    not yet started, the value will be the starting position.
    * @return The actual position at which the tracks were enabled, in microseconds.
    */
   long selectTracks(TrackSelection[] selections, boolean[] mayRetainStreamFlags,
@@ -112,8 +116,10 @@ public interface MediaPeriod extends SequenceableLoader {
    * This method should only be called after the period has been prepared.
    *
    * @param positionUs The position in microseconds.
+   * @param toKeyframe If true then for each track discards samples up to the keyframe before or at
+   *     the specified position, rather than any sample before or at that position.
    */
-  void discardBuffer(long positionUs);
+  void discardBuffer(long positionUs, boolean toKeyframe);
 
   /**
    * Attempts to read a discontinuity.
@@ -129,16 +135,6 @@ public interface MediaPeriod extends SequenceableLoader {
   long readDiscontinuity();
 
   /**
-   * Returns an estimate of the position up to which data is buffered for the enabled tracks.
-   * <p>
-   * This method should only be called when at least one track is selected.
-   *
-   * @return An estimate of the absolute position in microseconds up to which data is buffered, or
-   *     {@link C#TIME_END_OF_SOURCE} if the track is fully buffered.
-   */
-  long getBufferedPositionUs();
-
-  /**
    * Attempts to seek to the specified position in microseconds.
    * <p>
    * After this method has been called, all {@link SampleStream}s provided by the period are
@@ -152,6 +148,17 @@ public interface MediaPeriod extends SequenceableLoader {
   long seekToUs(long positionUs);
 
   // SequenceableLoader interface. Overridden to provide more specific documentation.
+
+  /**
+   * Returns an estimate of the position up to which data is buffered for the enabled tracks.
+   * <p>
+   * This method should only be called when at least one track is selected.
+   *
+   * @return An estimate of the absolute position in microseconds up to which data is buffered, or
+   *     {@link C#TIME_END_OF_SOURCE} if the track is fully buffered.
+   */
+  @Override
+  long getBufferedPositionUs();
 
   /**
    * Returns the next load time, or {@link C#TIME_END_OF_SOURCE} if loading has finished.
@@ -172,7 +179,9 @@ public interface MediaPeriod extends SequenceableLoader {
    * called when the period is permitted to continue loading data. A period may do this both during
    * and after preparation.
    *
-   * @param positionUs The current playback position.
+   * @param positionUs The current playback position in microseconds. If playback of this period has
+   *     not yet started, the value will be the starting position in this period minus the duration
+   *     of any media in previous periods still to be played.
    * @return True if progress was made, meaning that {@link #getNextLoadPositionUs()} will return
    *     a different value than prior to the call. False otherwise.
    */

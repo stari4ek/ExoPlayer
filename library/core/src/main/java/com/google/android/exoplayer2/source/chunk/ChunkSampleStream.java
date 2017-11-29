@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.source.chunk;
 
+import android.util.Log;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
@@ -26,9 +28,10 @@ import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.Loader;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedList;
 import java.util.List;
 
 /**
@@ -37,6 +40,8 @@ import java.util.List;
  */
 public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, SequenceableLoader,
     Loader.Callback<Chunk>, Loader.ReleaseCallback {
+
+  private static final String TAG = "ChunkSampleStream";
 
   private final int primaryTrackType;
   private final int[] embeddedTrackTypes;
@@ -47,7 +52,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
   private final int minLoadableRetryCount;
   private final Loader loader;
   private final ChunkHolder nextChunkHolder;
-  private final LinkedList<BaseMediaChunk> mediaChunks;
+  private final ArrayList<BaseMediaChunk> mediaChunks;
   private final List<BaseMediaChunk> readOnlyMediaChunks;
   private final SampleQueue primarySampleQueue;
   private final SampleQueue[] embeddedSampleQueues;
@@ -81,7 +86,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     this.minLoadableRetryCount = minLoadableRetryCount;
     loader = new Loader("Loader:ChunkSampleStream");
     nextChunkHolder = new ChunkHolder();
-    mediaChunks = new LinkedList<>();
+    mediaChunks = new ArrayList<>();
     readOnlyMediaChunks = Collections.unmodifiableList(mediaChunks);
 
     int embeddedTrackCount = embeddedTrackTypes == null ? 0 : embeddedTrackTypes.length;
@@ -106,21 +111,19 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     lastSeekPositionUs = positionUs;
   }
 
-  // TODO: Generalize this method to also discard from the primary sample queue and stop discarding
-  // from this queue in readData and skipData. This will cause samples to be kept in the queue until
-  // they've been rendered, rather than being discarded as soon as they're read by the renderer.
-  // This will make in-buffer seeks more likely when seeking slightly forward from the current
-  // position. This change will need handling with care, in particular when considering removal of
-  // chunks from the front of the mediaChunks list.
   /**
-   * Discards buffered media for embedded tracks, up to the specified position.
+   * Discards buffered media up to the specified position.
    *
    * @param positionUs The position to discard up to, in microseconds.
+   * @param toKeyframe If true then for each track discards samples up to the keyframe before or at
+   *     the specified position, rather than any sample before or at that position.
    */
-  public void discardEmbeddedTracksTo(long positionUs) {
+  public void discardBuffer(long positionUs, boolean toKeyframe) {
+    primarySampleQueue.discardTo(positionUs, toKeyframe, true);
     for (int i = 0; i < embeddedSampleQueues.length; i++) {
-      embeddedSampleQueues[i].discardTo(positionUs, true, embeddedTracksSelected[i]);
+      embeddedSampleQueues[i].discardTo(positionUs, toKeyframe, embeddedTracksSelected[i]);
     }
+    discardDownstreamMediaChunks(primarySampleQueue.getFirstIndex());
   }
 
   /**
@@ -160,6 +163,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
    * @return An estimate of the absolute position in microseconds up to which data is buffered, or
    *     {@link C#TIME_END_OF_SOURCE} if the track is fully buffered.
    */
+  @Override
   public long getBufferedPositionUs() {
     if (loadingFinished) {
       return C.TIME_END_OF_SOURCE;
@@ -167,7 +171,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
       return pendingResetPositionUs;
     } else {
       long bufferedPositionUs = lastSeekPositionUs;
-      BaseMediaChunk lastMediaChunk = mediaChunks.getLast();
+      BaseMediaChunk lastMediaChunk = getLastMediaChunk();
       BaseMediaChunk lastCompletedMediaChunk = lastMediaChunk.isLoadCompleted() ? lastMediaChunk
           : mediaChunks.size() > 1 ? mediaChunks.get(mediaChunks.size() - 2) : null;
       if (lastCompletedMediaChunk != null) {
@@ -184,16 +188,15 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
    */
   public void seekToUs(long positionUs) {
     lastSeekPositionUs = positionUs;
+    primarySampleQueue.rewind();
     // If we're not pending a reset, see if we can seek within the primary sample queue.
-    boolean seekInsideBuffer = !isPendingReset() && primarySampleQueue.advanceTo(positionUs, true,
-        positionUs < getNextLoadPositionUs());
+    boolean seekInsideBuffer = !isPendingReset() && (primarySampleQueue.advanceTo(positionUs, true,
+        positionUs < getNextLoadPositionUs()) != SampleQueue.ADVANCE_FAILED);
     if (seekInsideBuffer) {
       // We succeeded. Discard samples and corresponding chunks prior to the seek position.
-      discardDownstreamMediaChunks(primarySampleQueue.getReadIndex());
-      primarySampleQueue.discardToRead();
       for (SampleQueue embeddedSampleQueue : embeddedSampleQueues) {
         embeddedSampleQueue.rewind();
-        embeddedSampleQueue.discardTo(positionUs, true, false);
+        embeddedSampleQueue.advanceTo(positionUs, true, false);
       }
     } else {
       // We failed, and need to restart.
@@ -256,23 +259,32 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     if (isPendingReset()) {
       return C.RESULT_NOTHING_READ;
     }
-    discardDownstreamMediaChunks(primarySampleQueue.getReadIndex());
     int result = primarySampleQueue.read(formatHolder, buffer, formatRequired, loadingFinished,
         lastSeekPositionUs);
     if (result == C.RESULT_BUFFER_READ) {
-      primarySampleQueue.discardToRead();
+      maybeNotifyPrimaryTrackFormatChanged(primarySampleQueue.getReadIndex(), 1);
     }
     return result;
   }
 
   @Override
-  public void skipData(long positionUs) {
-    if (loadingFinished && positionUs > primarySampleQueue.getLargestQueuedTimestampUs()) {
-      primarySampleQueue.advanceToEnd();
-    } else {
-      primarySampleQueue.advanceTo(positionUs, true, true);
+  public int skipData(long positionUs) {
+    if (isPendingReset()) {
+      return 0;
     }
-    primarySampleQueue.discardToRead();
+    int skipCount;
+    if (loadingFinished && positionUs > primarySampleQueue.getLargestQueuedTimestampUs()) {
+      skipCount = primarySampleQueue.advanceToEnd();
+    } else {
+      skipCount = primarySampleQueue.advanceTo(positionUs, true, true);
+      if (skipCount == SampleQueue.ADVANCE_FAILED) {
+        skipCount = 0;
+      }
+    }
+    if (skipCount > 0) {
+      maybeNotifyPrimaryTrackFormatChanged(primarySampleQueue.getReadIndex(), skipCount);
+    }
+    return skipCount;
   }
 
   // Loader.Callback implementation.
@@ -308,19 +320,23 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
       IOException error) {
     long bytesLoaded = loadable.bytesLoaded();
     boolean isMediaChunk = isMediaChunk(loadable);
-    boolean cancelable = !isMediaChunk || bytesLoaded == 0 || mediaChunks.size() > 1;
+    boolean cancelable = bytesLoaded == 0 || !isMediaChunk || !haveReadFromLastMediaChunk();
     boolean canceled = false;
     if (chunkSource.onChunkLoadError(loadable, cancelable, error)) {
-      canceled = true;
-      if (isMediaChunk) {
-        BaseMediaChunk removed = mediaChunks.removeLast();
-        Assertions.checkState(removed == loadable);
-        primarySampleQueue.discardUpstreamSamples(removed.getFirstSampleIndex(0));
-        for (int i = 0; i < embeddedSampleQueues.length; i++) {
-          embeddedSampleQueues[i].discardUpstreamSamples(removed.getFirstSampleIndex(i + 1));
-        }
-        if (mediaChunks.isEmpty()) {
-          pendingResetPositionUs = lastSeekPositionUs;
+      if (!cancelable) {
+        Log.w(TAG, "Ignoring attempt to cancel non-cancelable load.");
+      } else {
+        canceled = true;
+        if (isMediaChunk) {
+          BaseMediaChunk removed = mediaChunks.remove(mediaChunks.size() - 1);
+          Assertions.checkState(removed == loadable);
+          primarySampleQueue.discardUpstreamSamples(removed.getFirstSampleIndex(0));
+          for (int i = 0; i < embeddedSampleQueues.length; i++) {
+            embeddedSampleQueues[i].discardUpstreamSamples(removed.getFirstSampleIndex(i + 1));
+          }
+          if (mediaChunks.isEmpty()) {
+            pendingResetPositionUs = lastSeekPositionUs;
+          }
         }
       }
     }
@@ -344,9 +360,16 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
       return false;
     }
 
-    chunkSource.getNextChunk(mediaChunks.isEmpty() ? null : mediaChunks.getLast(),
-        pendingResetPositionUs != C.TIME_UNSET ? pendingResetPositionUs : positionUs,
-        nextChunkHolder);
+    MediaChunk previousChunk;
+    long loadPositionUs;
+    if (isPendingReset()) {
+      previousChunk = null;
+      loadPositionUs = pendingResetPositionUs;
+    } else {
+      previousChunk = getLastMediaChunk();
+      loadPositionUs = previousChunk.endTimeUs;
+    }
+    chunkSource.getNextChunk(previousChunk, positionUs, loadPositionUs, nextChunkHolder);
     boolean endOfStream = nextChunkHolder.endOfStream;
     Chunk loadable = nextChunkHolder.chunk;
     nextChunkHolder.clear();
@@ -379,7 +402,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     if (isPendingReset()) {
       return pendingResetPositionUs;
     } else {
-      return loadingFinished ? C.TIME_END_OF_SOURCE : mediaChunks.getLast().endTimeUs;
+      return loadingFinished ? C.TIME_END_OF_SOURCE : getLastMediaChunk().endTimeUs;
     }
   }
 
@@ -392,6 +415,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
    *
    * @param positionUs The current playback position in microseconds.
    */
+  @SuppressWarnings("unused")
   private void maybeDiscardUpstream(long positionUs) {
     int queueSize = chunkSource.getPreferredQueueSize(positionUs, readOnlyMediaChunks);
     discardUpstreamMediaChunks(Math.max(1, queueSize));
@@ -401,25 +425,71 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     return chunk instanceof BaseMediaChunk;
   }
 
+  /**
+   * Returns whether samples have been read from {@code mediaChunks.getLast()}.
+   */
+  private boolean haveReadFromLastMediaChunk() {
+    BaseMediaChunk lastChunk = getLastMediaChunk();
+    if (primarySampleQueue.getReadIndex() > lastChunk.getFirstSampleIndex(0)) {
+      return true;
+    }
+    for (int i = 0; i < embeddedSampleQueues.length; i++) {
+      if (embeddedSampleQueues[i].getReadIndex() > lastChunk.getFirstSampleIndex(i + 1)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /* package */ boolean isPendingReset() {
     return pendingResetPositionUs != C.TIME_UNSET;
   }
 
-  private void discardDownstreamMediaChunks(int primaryStreamReadIndex) {
-    if (!mediaChunks.isEmpty()) {
-      while (mediaChunks.size() > 1
-          && mediaChunks.get(1).getFirstSampleIndex(0) <= primaryStreamReadIndex) {
-        mediaChunks.removeFirst();
-      }
-      BaseMediaChunk currentChunk = mediaChunks.getFirst();
-      Format trackFormat = currentChunk.trackFormat;
-      if (!trackFormat.equals(primaryDownstreamTrackFormat)) {
-        eventDispatcher.downstreamFormatChanged(primaryTrackType, trackFormat,
-            currentChunk.trackSelectionReason, currentChunk.trackSelectionData,
-            currentChunk.startTimeUs);
-      }
-      primaryDownstreamTrackFormat = trackFormat;
+  private void discardDownstreamMediaChunks(int discardToPrimaryStreamIndex) {
+    int discardToMediaChunkIndex =
+        primaryStreamIndexToMediaChunkIndex(discardToPrimaryStreamIndex, /* minChunkIndex= */ 0);
+    if (discardToMediaChunkIndex > 0) {
+      Util.removeRange(mediaChunks, /* fromIndex= */ 0, /* toIndex= */ discardToMediaChunkIndex);
     }
+  }
+
+  private void maybeNotifyPrimaryTrackFormatChanged(int toPrimaryStreamReadIndex, int readCount) {
+    int fromMediaChunkIndex = primaryStreamIndexToMediaChunkIndex(
+        toPrimaryStreamReadIndex - readCount, /* minChunkIndex= */ 0);
+    int toMediaChunkIndexInclusive = readCount == 1 ? fromMediaChunkIndex
+        : primaryStreamIndexToMediaChunkIndex(toPrimaryStreamReadIndex - 1,
+            /* minChunkIndex= */ fromMediaChunkIndex);
+    for (int i = fromMediaChunkIndex; i <= toMediaChunkIndexInclusive; i++) {
+      maybeNotifyPrimaryTrackFormatChanged(i);
+    }
+  }
+
+  private void maybeNotifyPrimaryTrackFormatChanged(int mediaChunkReadIndex) {
+    BaseMediaChunk currentChunk = mediaChunks.get(mediaChunkReadIndex);
+    Format trackFormat = currentChunk.trackFormat;
+    if (!trackFormat.equals(primaryDownstreamTrackFormat)) {
+      eventDispatcher.downstreamFormatChanged(primaryTrackType, trackFormat,
+          currentChunk.trackSelectionReason, currentChunk.trackSelectionData,
+          currentChunk.startTimeUs);
+    }
+    primaryDownstreamTrackFormat = trackFormat;
+  }
+
+  /**
+   * Returns media chunk index for primary stream sample index. May be -1 if the list of media
+   * chunks is empty or the requested index is less than the first index in the first media chunk.
+   */
+  private int primaryStreamIndexToMediaChunkIndex(int primaryStreamIndex, int minChunkIndex) {
+    for (int i = minChunkIndex + 1; i < mediaChunks.size(); i++) {
+      if (mediaChunks.get(i).getFirstSampleIndex(0) > primaryStreamIndex) {
+        return i - 1;
+      }
+    }
+    return mediaChunks.size() - 1;
+  }
+
+  private BaseMediaChunk getLastMediaChunk() {
+    return mediaChunks.get(mediaChunks.size() - 1);
   }
 
   /**
@@ -432,16 +502,14 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     if (mediaChunks.size() <= queueLength) {
       return false;
     }
-    BaseMediaChunk removed;
-    long startTimeUs;
-    long endTimeUs = mediaChunks.getLast().endTimeUs;
-    do {
-      removed = mediaChunks.removeLast();
-      startTimeUs = removed.startTimeUs;
-    } while (mediaChunks.size() > queueLength);
-    primarySampleQueue.discardUpstreamSamples(removed.getFirstSampleIndex(0));
+
+    long endTimeUs = getLastMediaChunk().endTimeUs;
+    BaseMediaChunk firstRemovedChunk = mediaChunks.get(queueLength);
+    long startTimeUs = firstRemovedChunk.startTimeUs;
+    Util.removeRange(mediaChunks, /* fromIndex= */ queueLength, /* toIndex= */ mediaChunks.size());
+    primarySampleQueue.discardUpstreamSamples(firstRemovedChunk.getFirstSampleIndex(0));
     for (int i = 0; i < embeddedSampleQueues.length; i++) {
-      embeddedSampleQueues[i].discardUpstreamSamples(removed.getFirstSampleIndex(i + 1));
+      embeddedSampleQueues[i].discardUpstreamSamples(firstRemovedChunk.getFirstSampleIndex(i + 1));
     }
     loadingFinished = false;
     eventDispatcher.upstreamDiscarded(primaryTrackType, startTimeUs, endTimeUs);
@@ -470,11 +538,12 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     }
 
     @Override
-    public void skipData(long positionUs) {
+    public int skipData(long positionUs) {
       if (loadingFinished && positionUs > sampleQueue.getLargestQueuedTimestampUs()) {
-        sampleQueue.advanceToEnd();
+        return sampleQueue.advanceToEnd();
       } else {
-        sampleQueue.advanceTo(positionUs, true, true);
+        int skipCount = sampleQueue.advanceTo(positionUs, true, true);
+        return skipCount == SampleQueue.ADVANCE_FAILED ? 0 : skipCount;
       }
     }
 

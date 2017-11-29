@@ -19,7 +19,7 @@ import android.net.Uri;
 import android.os.Handler;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorsFactory;
@@ -39,7 +39,7 @@ import java.io.IOException;
  * <p>
  * Note that the built-in extractors for AAC, MPEG PS/TS and FLV streams do not support seeking.
  */
-public final class ExtractorMediaSource implements MediaSource, MediaSource.Listener {
+public final class ExtractorMediaSource implements MediaSource, ExtractorMediaPeriod.Listener {
 
   /**
    * Listener of {@link ExtractorMediaSource} events.
@@ -48,6 +48,13 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
 
     /**
      * Called when an error occurs loading media data.
+     * <p>
+     * This method being called does not indicate that playback has failed, or that it will fail.
+     * The player may be able to recover from the error and continue. Hence applications should
+     * <em>not</em> implement this method to display a user visible error or initiate an application
+     * level retry ({@link Player.EventListener#onPlayerError} is the appropriate place to implement
+     * such behavior). This method is called to provide the application with an opportunity to log
+     * the error if it wishes to do so.
      *
      * @param error The load error.
      */
@@ -84,13 +91,129 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
   private final int minLoadableRetryCount;
   private final Handler eventHandler;
   private final EventListener eventListener;
-  private final Timeline.Period period;
   private final String customCacheKey;
   private final int continueLoadingCheckIntervalBytes;
 
   private MediaSource.Listener sourceListener;
-  private Timeline timeline;
-  private boolean timelineHasDuration;
+  private long timelineDurationUs;
+  private boolean timelineIsSeekable;
+
+  /**
+   * Builder for {@link ExtractorMediaSource}. Each builder instance can only be used once.
+   */
+  public static final class Builder {
+
+    private final Uri uri;
+    private final DataSource.Factory dataSourceFactory;
+
+    private ExtractorsFactory extractorsFactory;
+    private int minLoadableRetryCount;
+    private Handler eventHandler;
+    private EventListener eventListener;
+    private String customCacheKey;
+    private int continueLoadingCheckIntervalBytes;
+    private boolean isBuildCalled;
+
+    /**
+     * @param uri The {@link Uri} of the media stream.
+     * @param dataSourceFactory A factory for {@link DataSource}s to read the media.
+     */
+    public Builder(Uri uri, DataSource.Factory dataSourceFactory) {
+      this.uri = uri;
+      this.dataSourceFactory = dataSourceFactory;
+
+      minLoadableRetryCount = MIN_RETRY_COUNT_DEFAULT_FOR_MEDIA;
+      continueLoadingCheckIntervalBytes = DEFAULT_LOADING_CHECK_INTERVAL_BYTES;
+    }
+
+    /**
+     * Sets the minimum number of times to retry if a loading error occurs. The default value is
+     * {@link #MIN_RETRY_COUNT_DEFAULT_FOR_MEDIA}.
+     *
+     * @param minLoadableRetryCount The minimum number of times to retry if a loading error occurs.
+     * @return This builder.
+     */
+    public Builder setMinLoadableRetryCount(int minLoadableRetryCount) {
+      this.minLoadableRetryCount = minLoadableRetryCount;
+      return this;
+    }
+
+    /**
+     * Sets the factory for {@link Extractor}s to process the media stream. Default value is an
+     * instance of {@link DefaultExtractorsFactory}.
+     *
+     * @param extractorsFactory A factory for {@link Extractor}s to process the media stream. If the
+     *     possible formats are known, pass a factory that instantiates extractors for those
+     *     formats.
+     * @return This builder.
+     */
+    public Builder setExtractorsFactory(ExtractorsFactory extractorsFactory) {
+      this.extractorsFactory = extractorsFactory;
+      return this;
+    }
+
+    /**
+     * Sets the custom key that uniquely identifies the original stream. Used for cache indexing.
+     * Default value is null.
+     *
+     * @param customCacheKey A custom key that uniquely identifies the original stream. Used for
+     *     cache indexing.
+     * @return This builder.
+     */
+    public Builder setCustomCacheKey(String customCacheKey) {
+      this.customCacheKey = customCacheKey;
+      return this;
+    }
+
+    /**
+     * Sets the number of bytes that should be loaded between each invocation of
+     * {@link MediaPeriod.Callback#onContinueLoadingRequested(SequenceableLoader)}. Default value
+     * is {@link #DEFAULT_LOADING_CHECK_INTERVAL_BYTES}.
+     *
+     * @param continueLoadingCheckIntervalBytes The number of bytes that should be loaded between
+     *     each invocation of
+     *     {@link MediaPeriod.Callback#onContinueLoadingRequested(SequenceableLoader)}.
+     * @return This builder.
+     */
+    public Builder setContinueLoadingCheckIntervalBytes(int continueLoadingCheckIntervalBytes) {
+      this.continueLoadingCheckIntervalBytes = continueLoadingCheckIntervalBytes;
+      return this;
+    }
+
+    /**
+     * Sets the listener to respond to {@link ExtractorMediaSource} events and the handler to
+     * deliver these events.
+     *
+     * @param eventHandler A handler for events.
+     * @param eventListener A listener of events.
+     * @return This builder.
+     */
+    public Builder setEventListener(Handler eventHandler, EventListener eventListener) {
+      this.eventHandler = eventHandler;
+      this.eventListener = eventListener;
+      return this;
+    }
+
+    /**
+     * Builds a new {@link ExtractorMediaSource} using the current parameters.
+     * <p>
+     * After this call, the builder should not be re-used.
+     *
+     * @return The newly built {@link ExtractorMediaSource}.
+     */
+    public ExtractorMediaSource build() {
+      Assertions.checkArgument((eventListener == null) == (eventHandler == null));
+      Assertions.checkState(!isBuildCalled);
+      isBuildCalled = true;
+      if (extractorsFactory == null) {
+        extractorsFactory = new DefaultExtractorsFactory();
+      }
+      return new ExtractorMediaSource(uri, dataSourceFactory, extractorsFactory,
+          minLoadableRetryCount, eventHandler, eventListener, customCacheKey,
+          continueLoadingCheckIntervalBytes);
+    }
+
+  }
 
   /**
    * @param uri The {@link Uri} of the media stream.
@@ -100,7 +223,9 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
    *     Otherwise, pass a {@link DefaultExtractorsFactory} to use default extractors.
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public ExtractorMediaSource(Uri uri, DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory, Handler eventHandler, EventListener eventListener) {
     this(uri, dataSourceFactory, extractorsFactory, eventHandler, eventListener, null);
@@ -116,7 +241,9 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    * @param customCacheKey A custom key that uniquely identifies the original stream. Used for cache
    *     indexing. May be null.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public ExtractorMediaSource(Uri uri, DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory, Handler eventHandler, EventListener eventListener,
       String customCacheKey) {
@@ -137,7 +264,9 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
    *     indexing. May be null.
    * @param continueLoadingCheckIntervalBytes The number of bytes that should be loaded between each
    *     invocation of {@link MediaPeriod.Callback#onContinueLoadingRequested(SequenceableLoader)}.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public ExtractorMediaSource(Uri uri, DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory, int minLoadableRetryCount, Handler eventHandler,
       EventListener eventListener, String customCacheKey, int continueLoadingCheckIntervalBytes) {
@@ -149,14 +278,12 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
     this.eventListener = eventListener;
     this.customCacheKey = customCacheKey;
     this.continueLoadingCheckIntervalBytes = continueLoadingCheckIntervalBytes;
-    period = new Timeline.Period();
   }
 
   @Override
   public void prepareSource(ExoPlayer player, boolean isTopLevelSource, Listener listener) {
     sourceListener = listener;
-    timeline = new SinglePeriodTimeline(C.TIME_UNSET, false);
-    listener.onSourceInfoRefreshed(timeline, null);
+    notifySourceInfoRefreshed(C.TIME_UNSET, false);
   }
 
   @Override
@@ -182,19 +309,27 @@ public final class ExtractorMediaSource implements MediaSource, MediaSource.List
     sourceListener = null;
   }
 
-  // MediaSource.Listener implementation.
+  // ExtractorMediaPeriod.Listener implementation.
 
   @Override
-  public void onSourceInfoRefreshed(Timeline newTimeline, Object manifest) {
-    long newTimelineDurationUs = newTimeline.getPeriod(0, period).getDurationUs();
-    boolean newTimelineHasDuration = newTimelineDurationUs != C.TIME_UNSET;
-    if (timelineHasDuration && !newTimelineHasDuration) {
-      // Suppress source info changes that would make the duration unknown when it is already known.
+  public void onSourceInfoRefreshed(long durationUs, boolean isSeekable) {
+    // If we already have the duration from a previous source info refresh, use it.
+    durationUs = durationUs == C.TIME_UNSET ? timelineDurationUs : durationUs;
+    if (timelineDurationUs == durationUs && timelineIsSeekable == isSeekable) {
+      // Suppress no-op source info changes.
       return;
     }
-    timeline = newTimeline;
-    timelineHasDuration = newTimelineHasDuration;
-    sourceListener.onSourceInfoRefreshed(timeline, null);
+    notifySourceInfoRefreshed(durationUs, isSeekable);
+  }
+
+  // Internal methods.
+
+  private void notifySourceInfoRefreshed(long durationUs, boolean isSeekable) {
+    timelineDurationUs = durationUs;
+    timelineIsSeekable = isSeekable;
+    // TODO: Make timeline dynamic until its duration is known. This is non-trivial. See b/69703223.
+    sourceListener.onSourceInfoRefreshed(this,
+        new SinglePeriodTimeline(timelineDurationUs, timelineIsSeekable, false), null);
   }
 
 }

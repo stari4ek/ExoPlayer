@@ -25,7 +25,7 @@ import com.google.android.exoplayer2.util.Util;
 /**
  * The default {@link LoadControl} implementation.
  */
-public final class DefaultLoadControl implements LoadControl {
+public class DefaultLoadControl implements LoadControl {
 
   /**
    * The default minimum duration of media that the player will attempt to ensure is buffered at all
@@ -50,10 +50,6 @@ public final class DefaultLoadControl implements LoadControl {
    * action.
    */
   public static final int DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS  = 5000;
-
-  private static final int ABOVE_HIGH_WATERMARK = 0;
-  private static final int BETWEEN_WATERMARKS = 1;
-  private static final int BELOW_LOW_WATERMARK = 2;
 
   private final DefaultAllocator allocator;
 
@@ -164,18 +160,34 @@ public final class DefaultLoadControl implements LoadControl {
   }
 
   @Override
-  public boolean shouldStartPlayback(long bufferedDurationUs, boolean rebuffering) {
+  public long getBackBufferDurationUs() {
+    return 0;
+  }
+
+  @Override
+  public boolean retainBackBufferFromKeyframe() {
+    return false;
+  }
+
+  @Override
+  public boolean shouldStartPlayback(long bufferedDurationUs, float playbackSpeed,
+      boolean rebuffering) {
+    if (bufferedDurationUs >= minBufferUs) {
+      // It's possible that we're not loading, so allow playback to start unconditionally.
+      return true;
+    }
+    bufferedDurationUs = Util.getPlayoutDurationForMediaDuration(bufferedDurationUs, playbackSpeed);
     long minBufferDurationUs = rebuffering ? bufferForPlaybackAfterRebufferUs : bufferForPlaybackUs;
     return minBufferDurationUs <= 0 || bufferedDurationUs >= minBufferDurationUs;
   }
 
   @Override
-  public boolean shouldContinueLoading(long bufferedDurationUs) {
-    int bufferTimeState = getBufferTimeState(bufferedDurationUs);
+  public boolean shouldContinueLoading(long bufferedDurationUs, float playbackSpeed) {
     boolean targetBufferSizeReached = allocator.getTotalBytesAllocated() >= targetBufferSize;
     boolean wasBuffering = isBuffering;
-    isBuffering = bufferTimeState == BELOW_LOW_WATERMARK
-        || (bufferTimeState == BETWEEN_WATERMARKS && isBuffering && !targetBufferSizeReached);
+    isBuffering = bufferedDurationUs < minBufferUs // below low watermark
+        || (bufferedDurationUs <= maxBufferUs // between watermarks
+            && isBuffering && !targetBufferSizeReached);
     if (priorityTaskManager != null && isBuffering != wasBuffering) {
       if (isBuffering) {
         priorityTaskManager.add(C.PRIORITY_PLAYBACK);
@@ -184,11 +196,6 @@ public final class DefaultLoadControl implements LoadControl {
       }
     }
     return isBuffering;
-  }
-
-  private int getBufferTimeState(long bufferedDurationUs) {
-    return bufferedDurationUs > maxBufferUs ? ABOVE_HIGH_WATERMARK
-        : (bufferedDurationUs < minBufferUs ? BELOW_LOW_WATERMARK : BETWEEN_WATERMARKS);
   }
 
   private void reset(boolean resetAllocator) {

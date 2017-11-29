@@ -23,6 +23,7 @@ import com.google.android.exoplayer2.text.SimpleSubtitleDecoder;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.LongArray;
 import com.google.android.exoplayer2.util.ParsableByteArray;
+import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -52,13 +53,14 @@ public final class SsaDecoder extends SimpleSubtitleDecoder {
   }
 
   /**
-   * @param initializationData Optional initialization data for the decoder. If not null, the
-   *     initialization data must consist of two byte arrays. The first must contain an SSA format
-   *     line. The second must contain an SSA header that will be assumed common to all samples.
+   * @param initializationData Optional initialization data for the decoder. If not null or empty,
+   *     the initialization data must consist of two byte arrays. The first must contain an SSA
+   *     format line. The second must contain an SSA header that will be assumed common to all
+   *     samples.
    */
   public SsaDecoder(List<byte[]> initializationData) {
     super("SsaDecoder");
-    if (initializationData != null) {
+    if (initializationData != null && !initializationData.isEmpty()) {
       haveInitializationData = true;
       String formatLine = new String(initializationData.get(0));
       Assertions.checkArgument(formatLine.startsWith(FORMAT_LINE_PREFIX));
@@ -132,7 +134,7 @@ public final class SsaDecoder extends SimpleSubtitleDecoder {
     formatEndIndex = C.INDEX_UNSET;
     formatTextIndex = C.INDEX_UNSET;
     for (int i = 0; i < formatKeyCount; i++) {
-      String key = values[i].trim().toLowerCase();
+      String key = Util.toLowerInvariant(values[i].trim());
       switch (key) {
         case "start":
           formatStartIndex = i;

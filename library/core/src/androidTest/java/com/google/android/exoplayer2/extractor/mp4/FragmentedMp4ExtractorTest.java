@@ -16,10 +16,13 @@
 package com.google.android.exoplayer2.extractor.mp4;
 
 import android.test.InstrumentationTestCase;
-import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.testutil.ExtractorAsserts;
 import com.google.android.exoplayer2.testutil.ExtractorAsserts.ExtractorFactory;
+import com.google.android.exoplayer2.util.MimeTypes;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Unit test for {@link FragmentedMp4Extractor}.
@@ -27,31 +30,23 @@ import com.google.android.exoplayer2.testutil.ExtractorAsserts.ExtractorFactory;
 public final class FragmentedMp4ExtractorTest extends InstrumentationTestCase {
 
   public void testSample() throws Exception {
-    ExtractorAsserts
-        .assertOutput(getExtractorFactory(), "mp4/sample_fragmented.mp4", getInstrumentation());
+    ExtractorAsserts.assertBehavior(getExtractorFactory(Collections.<Format>emptyList()),
+        "mp4/sample_fragmented.mp4", getInstrumentation());
   }
 
   public void testSampleWithSeiPayloadParsing() throws Exception {
     // Enabling the CEA-608 track enables SEI payload parsing.
-    ExtractorAsserts.assertOutput(
-        getExtractorFactory(FragmentedMp4Extractor.FLAG_ENABLE_CEA608_TRACK),
-        "mp4/sample_fragmented_sei.mp4", getInstrumentation());
+    ExtractorFactory extractorFactory = getExtractorFactory(Collections.singletonList(
+        Format.createTextSampleFormat(null, MimeTypes.APPLICATION_CEA608, 0, null)));
+    ExtractorAsserts.assertBehavior(extractorFactory, "mp4/sample_fragmented_sei.mp4",
+        getInstrumentation());
   }
 
-  public void testAtomWithZeroSize() throws Exception {
-    ExtractorAsserts.assertThrows(getExtractorFactory(), "mp4/sample_fragmented_zero_size_atom.mp4",
-        getInstrumentation(), ParserException.class);
-  }
-
-  private static ExtractorFactory getExtractorFactory() {
-    return getExtractorFactory(0);
-  }
-
-  private static ExtractorFactory getExtractorFactory(final int flags) {
+  private static ExtractorFactory getExtractorFactory(final List<Format> closedCaptionFormats) {
     return new ExtractorFactory() {
       @Override
       public Extractor create() {
-        return new FragmentedMp4Extractor(flags, null);
+        return new FragmentedMp4Extractor(0, null, null, null, closedCaptionFormats);
       }
     };
   }

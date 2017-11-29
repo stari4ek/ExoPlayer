@@ -15,21 +15,67 @@
  */
 package com.google.android.exoplayer2.source;
 
+import android.support.annotation.IntDef;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.ExoPlayer.RepeatMode;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 
 /**
  * {@link MediaSource} that wraps a source and clips its timeline based on specified start/end
- * positions. The wrapped source may only have a single period/window and it must not be dynamic
- * (live).
+ * positions. The wrapped source must consist of a single period that starts at the beginning of the
+ * corresponding window.
  */
 public final class ClippingMediaSource implements MediaSource, MediaSource.Listener {
+
+  /**
+   * Thrown when a {@link ClippingMediaSource} cannot clip its wrapped source.
+   */
+  public static final class IllegalClippingException extends IOException {
+
+    /**
+     * The reason the clipping failed.
+     */
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({REASON_INVALID_PERIOD_COUNT, REASON_PERIOD_OFFSET_IN_WINDOW,
+        REASON_NOT_SEEKABLE_TO_START, REASON_START_EXCEEDS_END})
+    public @interface Reason {}
+    /**
+     * The wrapped source doesn't consist of a single period.
+     */
+    public static final int REASON_INVALID_PERIOD_COUNT = 0;
+    /**
+     * The wrapped source period doesn't start at the beginning of the corresponding window.
+     */
+    public static final int REASON_PERIOD_OFFSET_IN_WINDOW = 1;
+    /**
+     * The wrapped source is not seekable and a non-zero clipping start position was specified.
+     */
+    public static final int REASON_NOT_SEEKABLE_TO_START = 2;
+    /**
+     * The wrapped source ends before the specified clipping start position.
+     */
+    public static final int REASON_START_EXCEEDS_END = 3;
+
+    /**
+     * The reason clipping failed.
+     */
+    @Reason
+    public final int reason;
+
+    /**
+     * @param reason The reason clipping failed.
+     */
+    public IllegalClippingException(@Reason int reason) {
+      this.reason = reason;
+    }
+
+  }
 
   private final MediaSource mediaSource;
   private final long startUs;
@@ -38,17 +84,19 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
   private final ArrayList<ClippingMediaPeriod> mediaPeriods;
 
   private MediaSource.Listener sourceListener;
-  private ClippingTimeline clippingTimeline;
+  private IllegalClippingException clippingError;
 
   /**
    * Creates a new clipping source that wraps the specified source.
    *
-   * @param mediaSource The single-period, non-dynamic source to wrap.
+   * @param mediaSource The single-period source to wrap.
    * @param startPositionUs The start position within {@code mediaSource}'s timeline at which to
    *     start providing samples, in microseconds.
    * @param endPositionUs The end position within {@code mediaSource}'s timeline at which to stop
    *     providing samples, in microseconds. Specify {@link C#TIME_END_OF_SOURCE} to provide samples
-   *     from the specified start point up to the end of the source.
+   *     from the specified start point up to the end of the source. Specifying a position that
+   *     exceeds the {@code mediaSource}'s duration will also result in the end of the source not
+   *     being clipped.
    */
   public ClippingMediaSource(MediaSource mediaSource, long startPositionUs, long endPositionUs) {
     this(mediaSource, startPositionUs, endPositionUs, true);
@@ -61,12 +109,14 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
    * {@code enableInitialPositionDiscontinuity} to suppress an initial discontinuity when a period
    * is first read from.
    *
-   * @param mediaSource The single-period, non-dynamic source to wrap.
+   * @param mediaSource The single-period source to wrap.
    * @param startPositionUs The start position within {@code mediaSource}'s timeline at which to
    *     start providing samples, in microseconds.
    * @param endPositionUs The end position within {@code mediaSource}'s timeline at which to stop
    *     providing samples, in microseconds. Specify {@link C#TIME_END_OF_SOURCE} to provide samples
-   *     from the specified start point up to the end of the source.
+   *     from the specified start point up to the end of the source. Specifying a position that
+   *     exceeds the {@code mediaSource}'s duration will also result in the end of the source not
+   *     being clipped.
    * @param enableInitialDiscontinuity Whether the initial discontinuity should be enabled.
    */
   public ClippingMediaSource(MediaSource mediaSource, long startPositionUs, long endPositionUs,
@@ -87,6 +137,9 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
 
   @Override
   public void maybeThrowSourceInfoRefreshError() throws IOException {
+    if (clippingError != null) {
+      throw clippingError;
+    }
     mediaSource.maybeThrowSourceInfoRefreshError();
   }
 
@@ -95,7 +148,7 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
     ClippingMediaPeriod mediaPeriod = new ClippingMediaPeriod(
         mediaSource.createPeriod(id, allocator), enableInitialDiscontinuity);
     mediaPeriods.add(mediaPeriod);
-    mediaPeriod.setClipping(clippingTimeline.startUs, clippingTimeline.endUs);
+    mediaPeriod.setClipping(startUs, endUs);
     return mediaPeriod;
   }
 
@@ -113,12 +166,18 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
   // MediaSource.Listener implementation.
 
   @Override
-  public void onSourceInfoRefreshed(Timeline timeline, Object manifest) {
-    clippingTimeline = new ClippingTimeline(timeline, startUs, endUs);
-    sourceListener.onSourceInfoRefreshed(clippingTimeline, manifest);
-    long startUs = clippingTimeline.startUs;
-    long endUs = clippingTimeline.endUs == C.TIME_UNSET ? C.TIME_END_OF_SOURCE
-        : clippingTimeline.endUs;
+  public void onSourceInfoRefreshed(MediaSource source, Timeline timeline, Object manifest) {
+    if (clippingError != null) {
+      return;
+    }
+    ClippingTimeline clippingTimeline;
+    try {
+      clippingTimeline = new ClippingTimeline(timeline, startUs, endUs);
+    } catch (IllegalClippingException e) {
+      clippingError = e;
+      return;
+    }
+    sourceListener.onSourceInfoRefreshed(this, clippingTimeline, manifest);
     int count = mediaPeriods.size();
     for (int i = 0; i < count; i++) {
       mediaPeriods.get(i).setClipping(startUs, endUs);
@@ -128,9 +187,8 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
   /**
    * Provides a clipped view of a specified timeline.
    */
-  private static final class ClippingTimeline extends Timeline {
+  private static final class ClippingTimeline extends ForwardingTimeline {
 
-    private final Timeline timeline;
     private final long startUs;
     private final long endUs;
 
@@ -141,38 +199,32 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
      * @param startUs The number of microseconds to clip from the start of {@code timeline}.
      * @param endUs The end position in microseconds for the clipped timeline relative to the start
      *     of {@code timeline}, or {@link C#TIME_END_OF_SOURCE} to clip no samples from the end.
+     * @throws IllegalClippingException If the timeline could not be clipped.
      */
-    public ClippingTimeline(Timeline timeline, long startUs, long endUs) {
-      Assertions.checkArgument(timeline.getWindowCount() == 1);
-      Assertions.checkArgument(timeline.getPeriodCount() == 1);
+    public ClippingTimeline(Timeline timeline, long startUs, long endUs)
+        throws IllegalClippingException {
+      super(timeline);
+      if (timeline.getPeriodCount() != 1) {
+        throw new IllegalClippingException(IllegalClippingException.REASON_INVALID_PERIOD_COUNT);
+      }
+      if (timeline.getPeriod(0, new Period()).getPositionInWindowUs() != 0) {
+        throw new IllegalClippingException(IllegalClippingException.REASON_PERIOD_OFFSET_IN_WINDOW);
+      }
       Window window = timeline.getWindow(0, new Window(), false);
-      Assertions.checkArgument(!window.isDynamic);
       long resolvedEndUs = endUs == C.TIME_END_OF_SOURCE ? window.durationUs : endUs;
       if (window.durationUs != C.TIME_UNSET) {
-        Assertions.checkArgument(startUs == 0 || window.isSeekable);
-        Assertions.checkArgument(resolvedEndUs <= window.durationUs);
-        Assertions.checkArgument(startUs <= resolvedEndUs);
+        if (resolvedEndUs > window.durationUs) {
+          resolvedEndUs = window.durationUs;
+        }
+        if (startUs != 0 && !window.isSeekable) {
+          throw new IllegalClippingException(IllegalClippingException.REASON_NOT_SEEKABLE_TO_START);
+        }
+        if (startUs > resolvedEndUs) {
+          throw new IllegalClippingException(IllegalClippingException.REASON_START_EXCEEDS_END);
+        }
       }
-      Period period = timeline.getPeriod(0, new Period());
-      Assertions.checkArgument(period.getPositionInWindowUs() == 0);
-      this.timeline = timeline;
       this.startUs = startUs;
       this.endUs = resolvedEndUs;
-    }
-
-    @Override
-    public int getWindowCount() {
-      return 1;
-    }
-
-    @Override
-    public int getNextWindowIndex(int windowIndex, @RepeatMode int repeatMode) {
-      return timeline.getNextWindowIndex(windowIndex, repeatMode);
-    }
-
-    @Override
-    public int getPreviousWindowIndex(int windowIndex, @RepeatMode int repeatMode) {
-      return timeline.getPreviousWindowIndex(windowIndex, repeatMode);
     }
 
     @Override
@@ -197,20 +249,10 @@ public final class ClippingMediaSource implements MediaSource, MediaSource.Liste
     }
 
     @Override
-    public int getPeriodCount() {
-      return 1;
-    }
-
-    @Override
     public Period getPeriod(int periodIndex, Period period, boolean setIds) {
       period = timeline.getPeriod(0, period, setIds);
       period.durationUs = endUs != C.TIME_UNSET ? endUs - startUs : C.TIME_UNSET;
       return period;
-    }
-
-    @Override
-    public int getIndexOfPeriod(Object uid) {
-      return timeline.getIndexOfPeriod(uid);
     }
 
   }

@@ -47,6 +47,7 @@ import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -85,16 +86,17 @@ public class DefaultDashChunkSource implements DashChunkSource {
   private final int[] adaptationSetIndices;
   private final TrackSelection trackSelection;
   private final int trackType;
-  private final RepresentationHolder[] representationHolders;
   private final DataSource dataSource;
   private final long elapsedRealtimeOffsetMs;
   private final int maxSegmentsPerLoad;
 
+  protected final RepresentationHolder[] representationHolders;
+
   private DashManifest manifest;
   private int periodIndex;
-
   private IOException fatalError;
   private boolean missingLastSegment;
+  private long liveEdgeTimeUs;
 
   /**
    * @param manifestLoaderErrorThrower Throws errors affecting loading of manifests.
@@ -130,12 +132,13 @@ public class DefaultDashChunkSource implements DashChunkSource {
     this.maxSegmentsPerLoad = maxSegmentsPerLoad;
 
     long periodDurationUs = manifest.getPeriodDurationUs(periodIndex);
+    liveEdgeTimeUs = C.TIME_UNSET;
     List<Representation> representations = getRepresentations();
     representationHolders = new RepresentationHolder[trackSelection.length()];
     for (int i = 0; i < representationHolders.length; i++) {
       Representation representation = representations.get(trackSelection.getIndexInTrackGroup(i));
-      representationHolders[i] = new RepresentationHolder(periodDurationUs, representation,
-          enableEventMessageTrack, enableCea608Track);
+      representationHolders[i] = new RepresentationHolder(periodDurationUs, trackType,
+          representation, enableEventMessageTrack, enableCea608Track);
     }
   }
 
@@ -173,13 +176,15 @@ public class DefaultDashChunkSource implements DashChunkSource {
   }
 
   @Override
-  public final void getNextChunk(MediaChunk previous, long playbackPositionUs, ChunkHolder out) {
+  public void getNextChunk(MediaChunk previous, long playbackPositionUs, long loadPositionUs,
+      ChunkHolder out) {
     if (fatalError != null) {
       return;
     }
 
-    long bufferedDurationUs = previous != null ? (previous.endTimeUs - playbackPositionUs) : 0;
-    trackSelection.updateSelectedTrack(bufferedDurationUs);
+    long bufferedDurationUs = loadPositionUs - playbackPositionUs;
+    long timeToLiveEdgeUs = resolveTimeToLiveEdgeUs(playbackPositionUs);
+    trackSelection.updateSelectedTrack(playbackPositionUs, bufferedDurationUs, timeToLiveEdgeUs);
 
     RepresentationHolder representationHolder =
         representationHolders[trackSelection.getSelectedIndex()];
@@ -203,7 +208,6 @@ public class DefaultDashChunkSource implements DashChunkSource {
       }
     }
 
-    long nowUs = getNowUnixTimeUs();
     int availableSegmentCount = representationHolder.getSegmentCount();
     if (availableSegmentCount == 0) {
       // The index doesn't define any segments.
@@ -216,24 +220,26 @@ public class DefaultDashChunkSource implements DashChunkSource {
     if (availableSegmentCount == DashSegmentIndex.INDEX_UNBOUNDED) {
       // The index is itself unbounded. We need to use the current time to calculate the range of
       // available segments.
-      long liveEdgeTimeUs = nowUs - manifest.availabilityStartTime * 1000;
-      long periodStartUs = manifest.getPeriod(periodIndex).startMs * 1000;
+      long liveEdgeTimeUs = getNowUnixTimeUs() - C.msToUs(manifest.availabilityStartTimeMs);
+      long periodStartUs = C.msToUs(manifest.getPeriod(periodIndex).startMs);
       long liveEdgeTimeInPeriodUs = liveEdgeTimeUs - periodStartUs;
-      if (manifest.timeShiftBufferDepth != C.TIME_UNSET) {
-        long bufferDepthUs = manifest.timeShiftBufferDepth * 1000;
+      if (manifest.timeShiftBufferDepthMs != C.TIME_UNSET) {
+        long bufferDepthUs = C.msToUs(manifest.timeShiftBufferDepthMs);
         firstAvailableSegmentNum = Math.max(firstAvailableSegmentNum,
             representationHolder.getSegmentNum(liveEdgeTimeInPeriodUs - bufferDepthUs));
       }
-      // getSegmentNum(liveEdgeTimestampUs) will not be completed yet, so subtract one to get the
+      // getSegmentNum(liveEdgeTimeInPeriodUs) will not be completed yet, so subtract one to get the
       // index of the last completed segment.
       lastAvailableSegmentNum = representationHolder.getSegmentNum(liveEdgeTimeInPeriodUs) - 1;
     } else {
       lastAvailableSegmentNum = firstAvailableSegmentNum + availableSegmentCount - 1;
     }
 
+    updateLiveEdgeTimeUs(representationHolder, lastAvailableSegmentNum);
+
     int segmentNum;
     if (previous == null) {
-      segmentNum = Util.constrainValue(representationHolder.getSegmentNum(playbackPositionUs),
+      segmentNum = Util.constrainValue(representationHolder.getSegmentNum(loadPositionUs),
           firstAvailableSegmentNum, lastAvailableSegmentNum);
     } else {
       segmentNum = previous.getNextChunkIndex();
@@ -300,7 +306,7 @@ public class DefaultDashChunkSource implements DashChunkSource {
         trackSelection.indexOf(chunk.trackFormat), e);
   }
 
-  // Private methods.
+  // Internal methods.
 
   private ArrayList<Representation> getRepresentations() {
     List<AdaptationSet> manifestAdapationSets = manifest.getPeriod(periodIndex).adaptationSets;
@@ -311,6 +317,12 @@ public class DefaultDashChunkSource implements DashChunkSource {
     return representations;
   }
 
+  private void updateLiveEdgeTimeUs(RepresentationHolder representationHolder,
+      int lastAvailableSegmentNum) {
+    liveEdgeTimeUs = manifest.dynamic
+        ? representationHolder.getSegmentEndTimeUs(lastAvailableSegmentNum) : C.TIME_UNSET;
+  }
+
   private long getNowUnixTimeUs() {
     if (elapsedRealtimeOffsetMs != 0) {
       return (SystemClock.elapsedRealtime() + elapsedRealtimeOffsetMs) * 1000;
@@ -319,7 +331,12 @@ public class DefaultDashChunkSource implements DashChunkSource {
     }
   }
 
-  private static Chunk newInitializationChunk(RepresentationHolder representationHolder,
+  private long resolveTimeToLiveEdgeUs(long playbackPositionUs) {
+    boolean resolveTimeToLiveEdgePossible = manifest.dynamic && liveEdgeTimeUs != C.TIME_UNSET;
+    return resolveTimeToLiveEdgePossible ? liveEdgeTimeUs - playbackPositionUs : C.TIME_UNSET;
+  }
+
+  protected static Chunk newInitializationChunk(RepresentationHolder representationHolder,
       DataSource dataSource, Format trackFormat, int trackSelectionReason,
       Object trackSelectionData, RangedUri initializationUri, RangedUri indexUri) {
     RangedUri requestUri;
@@ -340,7 +357,7 @@ public class DefaultDashChunkSource implements DashChunkSource {
         trackSelectionReason, trackSelectionData, representationHolder.extractorWrapper);
   }
 
-  private static Chunk newMediaChunk(RepresentationHolder representationHolder,
+  protected static Chunk newMediaChunk(RepresentationHolder representationHolder,
       DataSource dataSource, int trackType, Format trackFormat, int trackSelectionReason,
       Object trackSelectionData, int firstSegmentNum, int maxSegmentCount) {
     Representation representation = representationHolder.representation;
@@ -377,9 +394,12 @@ public class DefaultDashChunkSource implements DashChunkSource {
 
   // Protected classes.
 
+  /**
+   * Holds information about a single {@link Representation}.
+   */
   protected static final class RepresentationHolder {
 
-    public final ChunkExtractorWrapper extractorWrapper;
+    /* package */ final ChunkExtractorWrapper extractorWrapper;
 
     public Representation representation;
     public DashSegmentIndex segmentIndex;
@@ -387,8 +407,8 @@ public class DefaultDashChunkSource implements DashChunkSource {
     private long periodDurationUs;
     private int segmentNumShift;
 
-    public RepresentationHolder(long periodDurationUs, Representation representation,
-        boolean enableEventMessageTrack, boolean enableCea608Track) {
+    /* package */ RepresentationHolder(long periodDurationUs, int trackType,
+        Representation representation, boolean enableEventMessageTrack, boolean enableCea608Track) {
       this.periodDurationUs = periodDurationUs;
       this.representation = representation;
       String containerMimeType = representation.format.containerMimeType;
@@ -405,20 +425,22 @@ public class DefaultDashChunkSource implements DashChunkSource {
           if (enableEventMessageTrack) {
             flags |= FragmentedMp4Extractor.FLAG_ENABLE_EMSG_TRACK;
           }
-          if (enableCea608Track) {
-            flags |= FragmentedMp4Extractor.FLAG_ENABLE_CEA608_TRACK;
-          }
-          extractor = new FragmentedMp4Extractor(flags);
+          // TODO: Use caption format information from the manifest if available.
+          List<Format> closedCaptionFormats = enableCea608Track
+              ? Collections.singletonList(
+                  Format.createTextSampleFormat(null, MimeTypes.APPLICATION_CEA608, 0, null))
+              : Collections.<Format>emptyList();
+          extractor = new FragmentedMp4Extractor(flags, null, null, null, closedCaptionFormats);
         }
         // Prefer drmInitData obtained from the manifest over drmInitData obtained from the stream,
         // as per DASH IF Interoperability Recommendations V3.0, 7.5.3.
-        extractorWrapper = new ChunkExtractorWrapper(extractor, representation.format);
+        extractorWrapper = new ChunkExtractorWrapper(extractor, trackType, representation.format);
       }
       segmentIndex = representation.getIndex();
     }
 
-    public void updateRepresentation(long newPeriodDurationUs, Representation newRepresentation)
-        throws BehindLiveWindowException{
+    /* package */ void updateRepresentation(long newPeriodDurationUs,
+        Representation newRepresentation) throws BehindLiveWindowException {
       DashSegmentIndex oldIndex = representation.getIndex();
       DashSegmentIndex newIndex = newRepresentation.getIndex();
 
