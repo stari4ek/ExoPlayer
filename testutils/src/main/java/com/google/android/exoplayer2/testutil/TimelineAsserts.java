@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.testutil;
 
 import static junit.framework.Assert.assertEquals;
-
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
@@ -60,7 +59,7 @@ public final class TimelineAsserts {
   }
 
   /**
-   * Asserts that window properties {@link Window}.isDynamic are set correctly..
+   * Asserts that window properties {@link Window}.isDynamic are set correctly.
    */
   public static void assertWindowIsDynamic(Timeline timeline, boolean... windowIsDynamic) {
     Window window = new Window();
@@ -139,5 +138,15 @@ public final class TimelineAsserts {
     }
   }
 
-}
+  /**
+   * Asserts that periods' {@link Period#getAdGroupCount()} are set correctly.
+   */
+  public static void assertAdGroupCounts(Timeline timeline, int... expectedAdGroupCounts) {
+    Period period = new Period();
+    for (int i = 0; i < timeline.getPeriodCount(); i++) {
+      timeline.getPeriod(i, period);
+      assertEquals(expectedAdGroupCounts[i], period.getAdGroupCount());
+    }
+  }
 
+}

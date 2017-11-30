@@ -113,6 +113,13 @@ import java.util.List;
  *         <li>Default: {@code surface_view}</li>
  *       </ul>
  *   </li>
+ *   <li><b>{@code shutter_background_color}</b> - The background color of the {@code exo_shutter}
+ *       view.
+ *       <ul>
+ *         <li>Corresponding method: {@link #setShutterBackgroundColor(int)}</li>
+ *         <li>Default: {@code unset}</li>
+ *       </ul>
+ *   </li>
  *   <li><b>{@code player_layout_id}</b> - Specifies the id of the layout to be inflated. See below
  *       for more details.
  *       <ul>
@@ -249,6 +256,8 @@ public final class SimpleExoPlayerView extends FrameLayout {
       return;
     }
 
+    boolean shutterColorSet = false;
+    int shutterColor = 0;
     int playerLayoutId = R.layout.exo_simple_player_view;
     boolean useArtwork = true;
     int defaultArtworkId = 0;
@@ -262,6 +271,9 @@ public final class SimpleExoPlayerView extends FrameLayout {
       TypedArray a = context.getTheme().obtainStyledAttributes(attrs,
           R.styleable.SimpleExoPlayerView, 0, 0);
       try {
+        shutterColorSet = a.hasValue(R.styleable.SimpleExoPlayerView_shutter_background_color);
+        shutterColor = a.getColor(R.styleable.SimpleExoPlayerView_shutter_background_color,
+              shutterColor);
         playerLayoutId = a.getResourceId(R.styleable.SimpleExoPlayerView_player_layout_id,
             playerLayoutId);
         useArtwork = a.getBoolean(R.styleable.SimpleExoPlayerView_use_artwork, useArtwork);
@@ -293,6 +305,9 @@ public final class SimpleExoPlayerView extends FrameLayout {
 
     // Shutter view.
     shutterView = findViewById(R.id.exo_shutter);
+    if (shutterView != null && shutterColorSet) {
+      shutterView.setBackgroundColor(shutterColor);
+    }
 
     // Create a surface view and insert it into the content frame, if there is one.
     if (contentFrame != null && surfaceType != SURFACE_TYPE_NONE) {
@@ -510,6 +525,17 @@ public final class SimpleExoPlayerView extends FrameLayout {
     } else if (controller != null) {
       controller.hide();
       controller.setPlayer(null);
+    }
+  }
+
+  /**
+   * Sets the background color of the {@code exo_shutter} view.
+   *
+   * @param color The background color.
+   */
+  public void setShutterBackgroundColor(int color) {
+    if (shutterView != null) {
+      shutterView.setBackgroundColor(color);
     }
   }
 

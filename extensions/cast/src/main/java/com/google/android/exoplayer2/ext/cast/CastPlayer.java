@@ -86,7 +86,6 @@ public final class CastPlayer implements Player {
   private static final int RENDERER_INDEX_AUDIO = 1;
   private static final int RENDERER_INDEX_TEXT = 2;
   private static final long PROGRESS_REPORT_PERIOD_MS = 1000;
-  private static final TrackGroupArray EMPTY_TRACK_GROUP_ARRAY = new TrackGroupArray();
   private static final TrackSelectionArray EMPTY_TRACK_SELECTION_ARRAY =
       new TrackSelectionArray(null, null, null);
   private static final long[] EMPTY_TRACK_ID_ARRAY = new long[0];
@@ -117,6 +116,7 @@ public final class CastPlayer implements Player {
   private int pendingSeekCount;
   private int pendingSeekWindowIndex;
   private long pendingSeekPositionMs;
+  private boolean waitingForInitialTimeline;
 
   /**
    * @param castContext The context from which the cast session is obtained.
@@ -137,7 +137,7 @@ public final class CastPlayer implements Player {
     playbackState = STATE_IDLE;
     repeatMode = REPEAT_MODE_OFF;
     currentTimeline = CastTimeline.EMPTY_CAST_TIMELINE;
-    currentTrackGroups = EMPTY_TRACK_GROUP_ARRAY;
+    currentTrackGroups = TrackGroupArray.EMPTY;
     currentTrackSelection = EMPTY_TRACK_SELECTION_ARRAY;
     pendingSeekWindowIndex = C.INDEX_UNSET;
     pendingSeekPositionMs = C.TIME_UNSET;
@@ -171,6 +171,7 @@ public final class CastPlayer implements Player {
   public PendingResult<MediaChannelResult> loadItems(MediaQueueItem[] items, int startIndex,
       long positionMs, @RepeatMode int repeatMode) {
     if (remoteMediaClient != null) {
+      waitingForInitialTimeline = true;
       return remoteMediaClient.queueLoad(items, startIndex, getCastRepeatMode(repeatMode),
           positionMs, null);
     }
@@ -557,8 +558,11 @@ public final class CastPlayer implements Player {
 
   private void maybeUpdateTimelineAndNotify() {
     if (updateTimeline()) {
+      @Player.TimelineChangeReason int reason = waitingForInitialTimeline
+          ? Player.TIMELINE_CHANGE_REASON_PREPARED : Player.TIMELINE_CHANGE_REASON_DYNAMIC;
+      waitingForInitialTimeline = false;
       for (EventListener listener : listeners) {
-        listener.onTimelineChanged(currentTimeline, null);
+        listener.onTimelineChanged(currentTimeline, null, reason);
       }
     }
   }
@@ -596,8 +600,8 @@ public final class CastPlayer implements Player {
     MediaInfo mediaInfo = mediaStatus != null ? mediaStatus.getMediaInfo() : null;
     List<MediaTrack> castMediaTracks = mediaInfo != null ? mediaInfo.getMediaTracks() : null;
     if (castMediaTracks == null || castMediaTracks.isEmpty()) {
-      boolean hasChanged = currentTrackGroups != EMPTY_TRACK_GROUP_ARRAY;
-      currentTrackGroups = EMPTY_TRACK_GROUP_ARRAY;
+      boolean hasChanged = !currentTrackGroups.isEmpty();
+      currentTrackGroups = TrackGroupArray.EMPTY;
       currentTrackSelection = EMPTY_TRACK_SELECTION_ARRAY;
       return hasChanged;
     }

@@ -25,6 +25,7 @@ import android.os.Message;
 import android.util.Log;
 import android.util.Pair;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.drm.ExoMediaDrm.DefaultKeyRequest;
 import com.google.android.exoplayer2.drm.ExoMediaDrm.KeyRequest;
 import com.google.android.exoplayer2.drm.ExoMediaDrm.ProvisionRequest;
 import java.util.Arrays;
@@ -362,6 +363,10 @@ import java.util.UUID;
     try {
       KeyRequest request = mediaDrm.getKeyRequest(scope, initData, mimeType, type,
           optionalKeyRequestParameters);
+      if (C.CLEARKEY_UUID.equals(uuid)) {
+        request = new DefaultKeyRequest(ClearKeyUtil.adjustRequestData(request.getData()),
+            request.getDefaultUrl());
+      }
       postRequestHandler.obtainMessage(MSG_KEYS, request, allowRetry).sendToTarget();
     } catch (Exception e) {
       onKeysError(e);
@@ -380,8 +385,12 @@ import java.util.UUID;
     }
 
     try {
+      byte[] responseData = (byte[]) response;
+      if (C.CLEARKEY_UUID.equals(uuid)) {
+        responseData = ClearKeyUtil.adjustResponseData(responseData);
+      }
       if (mode == DefaultDrmSessionManager.MODE_RELEASE) {
-        mediaDrm.provideKeyResponse(offlineLicenseKeySetId, (byte[]) response);
+        mediaDrm.provideKeyResponse(offlineLicenseKeySetId, responseData);
         if (eventHandler != null && eventListener != null) {
           eventHandler.post(new Runnable() {
             @Override
@@ -391,7 +400,7 @@ import java.util.UUID;
           });
         }
       } else {
-        byte[] keySetId = mediaDrm.provideKeyResponse(sessionId, (byte[]) response);
+        byte[] keySetId = mediaDrm.provideKeyResponse(sessionId, responseData);
         if ((mode == DefaultDrmSessionManager.MODE_DOWNLOAD
             || (mode == DefaultDrmSessionManager.MODE_PLAYBACK && offlineLicenseKeySetId != null))
             && keySetId != null && keySetId.length != 0) {

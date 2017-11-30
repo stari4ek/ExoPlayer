@@ -24,7 +24,6 @@ import com.google.android.exoplayer2.ExoPlayerFactory;
 import com.google.android.exoplayer2.RenderersFactory;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.ext.cast.CastPlayer;
-import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.source.ExtractorMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.dash.DashMediaSource;
@@ -157,16 +156,21 @@ import com.google.android.gms.cast.framework.CastContext;
     Uri uri = Uri.parse(sample.uri);
     switch (sample.mimeType) {
       case DemoUtil.MIME_TYPE_SS:
-        return new SsMediaSource(uri, DATA_SOURCE_FACTORY,
-            new DefaultSsChunkSource.Factory(DATA_SOURCE_FACTORY), null, null);
+        return SsMediaSource.Builder
+            .forManifestUri(uri, DATA_SOURCE_FACTORY,
+                new DefaultSsChunkSource.Factory(DATA_SOURCE_FACTORY))
+            .build();
       case DemoUtil.MIME_TYPE_DASH:
-        return new DashMediaSource(uri, DATA_SOURCE_FACTORY,
-            new DefaultDashChunkSource.Factory(DATA_SOURCE_FACTORY), null, null);
+        return DashMediaSource.Builder
+            .forManifestUri(uri, DATA_SOURCE_FACTORY,
+                new DefaultDashChunkSource.Factory(DATA_SOURCE_FACTORY))
+            .build();
       case DemoUtil.MIME_TYPE_HLS:
-        return new HlsMediaSource(uri, DATA_SOURCE_FACTORY, null, null);
+        return HlsMediaSource.Builder
+            .forDataSource(uri, DATA_SOURCE_FACTORY)
+            .build();
       case DemoUtil.MIME_TYPE_VIDEO_MP4:
-        return new ExtractorMediaSource(uri, DATA_SOURCE_FACTORY, new DefaultExtractorsFactory(),
-            null, null);
+        return new ExtractorMediaSource.Builder(uri, DATA_SOURCE_FACTORY).build();
       default: {
         throw new IllegalStateException("Unsupported type: " + sample.mimeType);
       }

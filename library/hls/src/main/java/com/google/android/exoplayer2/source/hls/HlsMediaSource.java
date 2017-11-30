@@ -23,8 +23,11 @@ import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener.EventDispatcher;
+import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
+import com.google.android.exoplayer2.source.DefaultCompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.SinglePeriodTimeline;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMediaPlaylist;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylist;
@@ -48,6 +51,154 @@ public final class HlsMediaSource implements MediaSource,
   }
 
   /**
+   * Builder for {@link HlsMediaSource}. Each builder instance can only be used once.
+   */
+  public static final class Builder {
+
+    private final Uri manifestUri;
+    private final HlsDataSourceFactory hlsDataSourceFactory;
+
+    private HlsExtractorFactory extractorFactory;
+    private ParsingLoadable.Parser<HlsPlaylist> playlistParser;
+    private AdaptiveMediaSourceEventListener eventListener;
+    private Handler eventHandler;
+    private CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
+
+    private int minLoadableRetryCount;
+    private boolean isBuildCalled;
+
+    /**
+     * Creates a {@link Builder} for a {@link HlsMediaSource} with a loadable manifest Uri and
+     * a {@link DataSource.Factory}.
+     *
+     * @param manifestUri The {@link Uri} of the HLS manifest.
+     * @param dataSourceFactory A data source factory that will be wrapped by a
+     *     {@link DefaultHlsDataSourceFactory} to build {@link DataSource}s for manifests,
+     *     segments and keys.
+     * @return A new builder.
+     */
+    public static Builder forDataSource(Uri manifestUri, DataSource.Factory dataSourceFactory) {
+      return new Builder(manifestUri, new DefaultHlsDataSourceFactory(dataSourceFactory));
+    }
+
+    /**
+     * Creates a {@link Builder} for a {@link HlsMediaSource} with a loadable manifest Uri and
+     * a {@link HlsDataSourceFactory}.
+     *
+     * @param manifestUri The {@link Uri} of the HLS manifest.
+     * @param dataSourceFactory An {@link HlsDataSourceFactory} for {@link DataSource}s for
+     *     manifests, segments and keys.
+     * @return A new builder.
+     */
+    public static Builder forHlsDataSource(Uri manifestUri,
+        HlsDataSourceFactory dataSourceFactory) {
+      return new Builder(manifestUri, dataSourceFactory);
+    }
+
+    private Builder(Uri manifestUri, HlsDataSourceFactory hlsDataSourceFactory) {
+      this.manifestUri = manifestUri;
+      this.hlsDataSourceFactory = hlsDataSourceFactory;
+
+      minLoadableRetryCount = DEFAULT_MIN_LOADABLE_RETRY_COUNT;
+    }
+
+    /**
+     * Sets the factory for {@link Extractor}s for the segments. Default value is
+     * {@link HlsExtractorFactory#DEFAULT}.
+     *
+     * @param extractorFactory An {@link HlsExtractorFactory} for {@link Extractor}s for the
+     * segments.
+     * @return This builder.
+     */
+    public Builder setExtractorFactory(HlsExtractorFactory extractorFactory) {
+      this.extractorFactory = extractorFactory;
+      return this;
+    }
+
+    /**
+     * Sets the minimum number of times to retry if a loading error occurs. The default value is
+     * {@link #DEFAULT_MIN_LOADABLE_RETRY_COUNT}.
+     *
+     * @param minLoadableRetryCount The minimum number of times loads must be retried before
+     *     errors are propagated.
+     * @return This builder.
+     */
+    public Builder setMinLoadableRetryCount(int minLoadableRetryCount) {
+      this.minLoadableRetryCount = minLoadableRetryCount;
+      return this;
+    }
+
+    /**
+     * Sets the listener to respond to adaptive {@link MediaSource} events and the handler to
+     * deliver these events.
+     *
+     * @param eventHandler A handler for events.
+     * @param eventListener A listener of events.
+     * @return This builder.
+     */
+    public Builder setEventListener(Handler eventHandler,
+        AdaptiveMediaSourceEventListener eventListener) {
+      this.eventHandler = eventHandler;
+      this.eventListener = eventListener;
+      return this;
+    }
+
+    /**
+     * Sets the parser to parse HLS playlists. The default is an instance of
+     * {@link HlsPlaylistParser}.
+     *
+     * @param playlistParser A {@link ParsingLoadable.Parser} for HLS playlists.
+     * @return This builder.
+     */
+    public Builder setPlaylistParser(ParsingLoadable.Parser<HlsPlaylist> playlistParser) {
+      this.playlistParser = playlistParser;
+      return this;
+    }
+
+    /**
+     * Sets the factory to create composite {@link SequenceableLoader}s for when this media source
+     * loads data from multiple streams (video, audio etc...). The default is an instance of
+     * {@link DefaultCompositeSequenceableLoaderFactory}.
+     *
+     * @param compositeSequenceableLoaderFactory A factory to create composite
+     *     {@link SequenceableLoader}s for when this media source loads data from multiple streams
+     *     (video, audio etc...).
+     * @return This builder.
+     */
+    public Builder setCompositeSequenceableLoaderFactory(
+        CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory) {
+      this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
+      return this;
+    }
+
+    /**
+     * Builds a new {@link HlsMediaSource} using the current parameters.
+     * <p>
+     * After this call, the builder should not be re-used.
+     *
+     * @return The newly built {@link HlsMediaSource}.
+     */
+    public HlsMediaSource build() {
+      Assertions.checkArgument((eventListener == null) == (eventHandler == null));
+      Assertions.checkState(!isBuildCalled);
+      isBuildCalled = true;
+      if (extractorFactory == null) {
+        extractorFactory = HlsExtractorFactory.DEFAULT;
+      }
+      if (playlistParser == null) {
+        playlistParser = new HlsPlaylistParser();
+      }
+      if (compositeSequenceableLoaderFactory == null) {
+        compositeSequenceableLoaderFactory = new DefaultCompositeSequenceableLoaderFactory();
+      }
+      return new HlsMediaSource(manifestUri, hlsDataSourceFactory, extractorFactory,
+          compositeSequenceableLoaderFactory, minLoadableRetryCount, eventHandler, eventListener,
+          playlistParser);
+    }
+
+  }
+
+  /**
    * The default minimum number of times to retry loading data prior to failing.
    */
   public static final int DEFAULT_MIN_LOADABLE_RETRY_COUNT = 3;
@@ -55,6 +206,7 @@ public final class HlsMediaSource implements MediaSource,
   private final HlsExtractorFactory extractorFactory;
   private final Uri manifestUri;
   private final HlsDataSourceFactory dataSourceFactory;
+  private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
   private final int minLoadableRetryCount;
   private final EventDispatcher eventDispatcher;
   private final ParsingLoadable.Parser<HlsPlaylist> playlistParser;
@@ -69,7 +221,9 @@ public final class HlsMediaSource implements MediaSource,
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener An {@link AdaptiveMediaSourceEventListener}. May be null if delivery of
    *     events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public HlsMediaSource(Uri manifestUri, DataSource.Factory dataSourceFactory, Handler eventHandler,
       AdaptiveMediaSourceEventListener eventListener) {
     this(manifestUri, dataSourceFactory, DEFAULT_MIN_LOADABLE_RETRY_COUNT, eventHandler,
@@ -85,7 +239,9 @@ public final class HlsMediaSource implements MediaSource,
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener An {@link AdaptiveMediaSourceEventListener}. May be null if delivery of
    *     events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public HlsMediaSource(Uri manifestUri, DataSource.Factory dataSourceFactory,
       int minLoadableRetryCount, Handler eventHandler,
       AdaptiveMediaSourceEventListener eventListener) {
@@ -105,16 +261,30 @@ public final class HlsMediaSource implements MediaSource,
    * @param eventListener An {@link AdaptiveMediaSourceEventListener}. May be null if delivery of
    *     events is not required.
    * @param playlistParser A {@link ParsingLoadable.Parser} for HLS playlists.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public HlsMediaSource(Uri manifestUri, HlsDataSourceFactory dataSourceFactory,
-     HlsExtractorFactory extractorFactory, int minLoadableRetryCount, Handler eventHandler,
-     AdaptiveMediaSourceEventListener eventListener,
+      HlsExtractorFactory extractorFactory, int minLoadableRetryCount, Handler eventHandler,
+      AdaptiveMediaSourceEventListener eventListener,
+      ParsingLoadable.Parser<HlsPlaylist> playlistParser) {
+    this(manifestUri, dataSourceFactory, extractorFactory,
+        new DefaultCompositeSequenceableLoaderFactory(), minLoadableRetryCount, eventHandler,
+        eventListener, playlistParser);
+  }
+
+  private HlsMediaSource(Uri manifestUri, HlsDataSourceFactory dataSourceFactory,
+      HlsExtractorFactory extractorFactory,
+      CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
+      int minLoadableRetryCount, Handler eventHandler,
+      AdaptiveMediaSourceEventListener eventListener,
       ParsingLoadable.Parser<HlsPlaylist> playlistParser) {
     this.manifestUri = manifestUri;
     this.dataSourceFactory = dataSourceFactory;
     this.extractorFactory = extractorFactory;
     this.minLoadableRetryCount = minLoadableRetryCount;
     this.playlistParser = playlistParser;
+    this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
     eventDispatcher = new EventDispatcher(eventHandler, eventListener);
   }
 
@@ -136,7 +306,7 @@ public final class HlsMediaSource implements MediaSource,
   public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator) {
     Assertions.checkArgument(id.periodIndex == 0);
     return new HlsMediaPeriod(extractorFactory, playlistTracker, dataSourceFactory,
-        minLoadableRetryCount, eventDispatcher, allocator);
+        minLoadableRetryCount, eventDispatcher, allocator, compositeSequenceableLoaderFactory);
   }
 
   @Override

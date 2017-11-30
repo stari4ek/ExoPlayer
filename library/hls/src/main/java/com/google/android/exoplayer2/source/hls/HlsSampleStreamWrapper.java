@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.source.hls;
 
 import android.os.Handler;
-import android.text.TextUtils;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
@@ -40,8 +39,8 @@ import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedList;
 
 /**
  * Loads {@link HlsMediaChunk}s obtained from a {@link HlsChunkSource}, and provides
@@ -82,7 +81,7 @@ import java.util.LinkedList;
   private final Loader loader;
   private final EventDispatcher eventDispatcher;
   private final HlsChunkSource.HlsChunkHolder nextChunkHolder;
-  private final LinkedList<HlsMediaChunk> mediaChunks;
+  private final ArrayList<HlsMediaChunk> mediaChunks;
   private final Runnable maybeFinishPrepareRunnable;
   private final Handler handler;
 
@@ -90,18 +89,19 @@ import java.util.LinkedList;
   private int[] sampleQueueTrackIds;
   private boolean sampleQueuesBuilt;
   private boolean prepared;
-  private int enabledTrackCount;
+  private int enabledSampleQueueCount;
   private Format downstreamTrackFormat;
   private boolean released;
 
   // Tracks are complicated in HLS. See documentation of buildTracks for details.
   // Indexed by track (as exposed by this source).
   private TrackGroupArray trackGroups;
-  private int primaryTrackGroupIndex;
-  private boolean haveAudioVideoTrackGroups;
   // Indexed by track group.
-  private boolean[] trackGroupEnabledStates;
-  private boolean[] trackGroupIsAudioVideoFlags;
+  private int[] trackGroupToSampleQueueIndex;
+  private int primaryTrackGroupIndex;
+  private boolean haveAudioVideoSampleQueues;
+  private boolean[] sampleQueuesEnabledStates;
+  private boolean[] sampleQueueIsAudioVideoFlags;
 
   private long sampleOffsetUs;
   private long lastSeekPositionUs;
@@ -135,7 +135,9 @@ import java.util.LinkedList;
     nextChunkHolder = new HlsChunkSource.HlsChunkHolder();
     sampleQueueTrackIds = new int[0];
     sampleQueues = new SampleQueue[0];
-    mediaChunks = new LinkedList<>();
+    sampleQueueIsAudioVideoFlags = new boolean[0];
+    sampleQueuesEnabledStates = new boolean[0];
+    mediaChunks = new ArrayList<>();
     maybeFinishPrepareRunnable = new Runnable() {
       @Override
       public void run() {
@@ -191,12 +193,11 @@ import java.util.LinkedList;
   public boolean selectTracks(TrackSelection[] selections, boolean[] mayRetainStreamFlags,
       SampleStream[] streams, boolean[] streamResetFlags, long positionUs, boolean forceReset) {
     Assertions.checkState(prepared);
-    int oldEnabledTrackCount = enabledTrackCount;
+    int oldEnabledSampleQueueCount = enabledSampleQueueCount;
     // Deselect old tracks.
     for (int i = 0; i < selections.length; i++) {
       if (streams[i] != null && (selections[i] == null || !mayRetainStreamFlags[i])) {
-        int group = ((HlsSampleStream) streams[i]).group;
-        setTrackGroupEnabledState(group, false);
+        setSampleQueueEnabledState(((HlsSampleStream) streams[i]).sampleQueueIndex, false);
         streams[i] = null;
       }
     }
@@ -204,7 +205,8 @@ import java.util.LinkedList;
     // a position other than the one we started preparing with, or if we're making a selection
     // having previously disabled all tracks.
     boolean seekRequired = forceReset
-        || (seenFirstTrackSelection ? oldEnabledTrackCount == 0 : positionUs != lastSeekPositionUs);
+        || (seenFirstTrackSelection ? oldEnabledSampleQueueCount == 0
+            : positionUs != lastSeekPositionUs);
     // Get the old (i.e. current before the loop below executes) primary track selection. The new
     // primary selection will equal the old one unless it's changed in the loop.
     TrackSelection oldPrimaryTrackSelection = chunkSource.getTrackSelection();
@@ -214,16 +216,17 @@ import java.util.LinkedList;
       if (streams[i] == null && selections[i] != null) {
         TrackSelection selection = selections[i];
         int trackGroupIndex = trackGroups.indexOf(selection.getTrackGroup());
-        setTrackGroupEnabledState(trackGroupIndex, true);
+        int sampleQueueIndex = trackGroupToSampleQueueIndex[trackGroupIndex];
+        setSampleQueueEnabledState(sampleQueueIndex, true);
         if (trackGroupIndex == primaryTrackGroupIndex) {
           primaryTrackSelection = selection;
           chunkSource.selectTracks(selection);
         }
-        streams[i] = new HlsSampleStream(this, trackGroupIndex);
+        streams[i] = new HlsSampleStream(this, sampleQueueIndex);
         streamResetFlags[i] = true;
         // If there's still a chance of avoiding a seek, try and seek within the sample queue.
         if (!seekRequired) {
-          SampleQueue sampleQueue = sampleQueues[trackGroupIndex];
+          SampleQueue sampleQueue = sampleQueues[sampleQueueIndex];
           sampleQueue.rewind();
           // A seek can be avoided if we're able to advance to the current playback position in the
           // sample queue, or if we haven't read anything from the queue since the previous seek
@@ -235,7 +238,7 @@ import java.util.LinkedList;
       }
     }
 
-    if (enabledTrackCount == 0) {
+    if (enabledSampleQueueCount == 0) {
       chunkSource.reset();
       downstreamTrackFormat = null;
       mediaChunks.clear();
@@ -257,7 +260,7 @@ import java.util.LinkedList;
         if (!seenFirstTrackSelection) {
           long bufferedDurationUs = positionUs < 0 ? -positionUs : 0;
           primaryTrackSelection.updateSelectedTrack(positionUs, bufferedDurationUs, C.TIME_UNSET);
-          int chunkIndex = chunkSource.getTrackGroup().indexOf(mediaChunks.getLast().trackFormat);
+          int chunkIndex = chunkSource.getTrackGroup().indexOf(getLastMediaChunk().trackFormat);
           if (primaryTrackSelection.getSelectedIndexInTrackGroup() != chunkIndex) {
             // This is the first selection and the chunk loaded during preparation does not match
             // the initially selected format.
@@ -288,10 +291,10 @@ import java.util.LinkedList;
     return seekRequired;
   }
 
-  public void discardBuffer(long positionUs) {
+  public void discardBuffer(long positionUs, boolean toKeyframe) {
     int sampleQueueCount = sampleQueues.length;
     for (int i = 0; i < sampleQueueCount; i++) {
-      sampleQueues[i].discardTo(positionUs, false, trackGroupEnabledStates[i]);
+      sampleQueues[i].discardTo(positionUs, toKeyframe, sampleQueuesEnabledStates[i]);
     }
   }
 
@@ -329,7 +332,7 @@ import java.util.LinkedList;
       return pendingResetPositionUs;
     } else {
       long bufferedPositionUs = lastSeekPositionUs;
-      HlsMediaChunk lastMediaChunk = mediaChunks.getLast();
+      HlsMediaChunk lastMediaChunk = getLastMediaChunk();
       HlsMediaChunk lastCompletedMediaChunk = lastMediaChunk.isLoadCompleted() ? lastMediaChunk
           : mediaChunks.size() > 1 ? mediaChunks.get(mediaChunks.size() - 2) : null;
       if (lastCompletedMediaChunk != null) {
@@ -371,8 +374,8 @@ import java.util.LinkedList;
 
   // SampleStream implementation.
 
-  public boolean isReady(int trackGroupIndex) {
-    return loadingFinished || (!isPendingReset() && sampleQueues[trackGroupIndex].hasNextSample());
+  public boolean isReady(int sampleQueueIndex) {
+    return loadingFinished || (!isPendingReset() && sampleQueues[sampleQueueIndex].hasNextSample());
   }
 
   public void maybeThrowError() throws IOException {
@@ -380,17 +383,23 @@ import java.util.LinkedList;
     chunkSource.maybeThrowError();
   }
 
-  public int readData(int trackGroupIndex, FormatHolder formatHolder,
-      DecoderInputBuffer buffer, boolean requireFormat) {
+  public int readData(int sampleQueueIndex, FormatHolder formatHolder, DecoderInputBuffer buffer,
+      boolean requireFormat) {
     if (isPendingReset()) {
       return C.RESULT_NOTHING_READ;
     }
 
+    // TODO: Split into discard (in discardBuffer) and format change (here and in skipData) steps.
     if (!mediaChunks.isEmpty()) {
-      while (mediaChunks.size() > 1 && finishedReadingChunk(mediaChunks.getFirst())) {
-        mediaChunks.removeFirst();
+      int discardToMediaChunkIndex = 0;
+      while (discardToMediaChunkIndex < mediaChunks.size() - 1
+          && finishedReadingChunk(mediaChunks.get(discardToMediaChunkIndex))) {
+        discardToMediaChunkIndex++;
       }
-      HlsMediaChunk currentChunk = mediaChunks.getFirst();
+      if (discardToMediaChunkIndex > 0) {
+        Util.removeRange(mediaChunks, 0, discardToMediaChunkIndex);
+      }
+      HlsMediaChunk currentChunk = mediaChunks.get(0);
       Format trackFormat = currentChunk.trackFormat;
       if (!trackFormat.equals(downstreamTrackFormat)) {
         eventDispatcher.downstreamFormatChanged(trackType, trackFormat,
@@ -400,12 +409,16 @@ import java.util.LinkedList;
       downstreamTrackFormat = trackFormat;
     }
 
-    return sampleQueues[trackGroupIndex].read(formatHolder, buffer, requireFormat, loadingFinished,
+    return sampleQueues[sampleQueueIndex].read(formatHolder, buffer, requireFormat, loadingFinished,
         lastSeekPositionUs);
   }
 
-  public int skipData(int trackGroupIndex, long positionUs) {
-    SampleQueue sampleQueue = sampleQueues[trackGroupIndex];
+  public int skipData(int sampleQueueIndex, long positionUs) {
+    if (isPendingReset()) {
+      return 0;
+    }
+
+    SampleQueue sampleQueue = sampleQueues[sampleQueueIndex];
     if (loadingFinished && positionUs > sampleQueue.getLargestQueuedTimestampUs()) {
       return sampleQueue.advanceToEnd();
     } else {
@@ -416,8 +429,9 @@ import java.util.LinkedList;
 
   private boolean finishedReadingChunk(HlsMediaChunk chunk) {
     int chunkUid = chunk.uid;
-    for (int i = 0; i < sampleQueues.length; i++) {
-      if (trackGroupEnabledStates[i] && sampleQueues[i].peekSourceId() == chunkUid) {
+    int sampleQueueCount = sampleQueues.length;
+    for (int i = 0; i < sampleQueueCount; i++) {
+      if (sampleQueuesEnabledStates[i] && sampleQueues[i].peekSourceId() == chunkUid) {
         return false;
       }
     }
@@ -445,7 +459,7 @@ import java.util.LinkedList;
       previousChunk = null;
       loadPositionUs = pendingResetPositionUs;
     } else {
-      previousChunk = mediaChunks.getLast();
+      previousChunk = getLastMediaChunk();
       loadPositionUs = previousChunk.endTimeUs;
     }
     chunkSource.getNextChunk(previousChunk, positionUs, loadPositionUs, nextChunkHolder);
@@ -485,7 +499,7 @@ import java.util.LinkedList;
     if (isPendingReset()) {
       return pendingResetPositionUs;
     } else {
-      return loadingFinished ? C.TIME_END_OF_SOURCE : mediaChunks.getLast().endTimeUs;
+      return loadingFinished ? C.TIME_END_OF_SOURCE : getLastMediaChunk().endTimeUs;
     }
   }
 
@@ -512,7 +526,7 @@ import java.util.LinkedList;
         loadable.endTimeUs, elapsedRealtimeMs, loadDurationMs, loadable.bytesLoaded());
     if (!released) {
       resetSampleQueues();
-      if (enabledTrackCount > 0) {
+      if (enabledSampleQueueCount > 0) {
         callback.onContinueLoadingRequested(this);
       }
     }
@@ -527,7 +541,7 @@ import java.util.LinkedList;
     boolean canceled = false;
     if (chunkSource.onChunkLoadError(loadable, cancelable, error)) {
       if (isMediaChunk) {
-        HlsMediaChunk removed = mediaChunks.removeLast();
+        HlsMediaChunk removed = mediaChunks.remove(mediaChunks.size() - 1);
         Assertions.checkState(removed == loadable);
         if (mediaChunks.isEmpty()) {
           pendingResetPositionUs = lastSeekPositionUs;
@@ -588,6 +602,11 @@ import java.util.LinkedList;
     sampleQueueTrackIds[trackCount] = id;
     sampleQueues = Arrays.copyOf(sampleQueues, trackCount + 1);
     sampleQueues[trackCount] = trackOutput;
+    sampleQueueIsAudioVideoFlags = Arrays.copyOf(sampleQueueIsAudioVideoFlags, trackCount + 1);
+    sampleQueueIsAudioVideoFlags[trackCount] = type == C.TRACK_TYPE_AUDIO
+        || type == C.TRACK_TYPE_VIDEO;
+    haveAudioVideoSampleQueues |= sampleQueueIsAudioVideoFlags[trackCount];
+    sampleQueuesEnabledStates = Arrays.copyOf(sampleQueuesEnabledStates, trackCount + 1);
     return trackOutput;
   }
 
@@ -606,7 +625,9 @@ import java.util.LinkedList;
 
   @Override
   public void onUpstreamFormatChanged(Format format) {
-    handler.post(maybeFinishPrepareRunnable);
+    if (!prepared) {
+      handler.post(maybeFinishPrepareRunnable);
+    }
   }
 
   // Called by the loading thread.
@@ -697,17 +718,15 @@ import java.util.LinkedList;
 
     // Instantiate the necessary internal data-structures.
     primaryTrackGroupIndex = C.INDEX_UNSET;
-    trackGroupEnabledStates = new boolean[extractorTrackCount];
-    trackGroupIsAudioVideoFlags = new boolean[extractorTrackCount];
+    trackGroupToSampleQueueIndex = new int[extractorTrackCount];
+    for (int i = 0; i < extractorTrackCount; i++) {
+      trackGroupToSampleQueueIndex[i] = i;
+    }
 
     // Construct the set of exposed track groups.
     TrackGroup[] trackGroups = new TrackGroup[extractorTrackCount];
     for (int i = 0; i < extractorTrackCount; i++) {
       Format sampleFormat = sampleQueues[i].getUpstreamFormat();
-      String mimeType = sampleFormat.sampleMimeType;
-      boolean isAudioVideo = MimeTypes.isVideo(mimeType) || MimeTypes.isAudio(mimeType);
-      trackGroupIsAudioVideoFlags[i] = isAudioVideo;
-      haveAudioVideoTrackGroups |= isAudioVideo;
       if (i == primaryExtractorTrackIndex) {
         Format[] formats = new Format[chunkSourceTrackCount];
         for (int j = 0; j < chunkSourceTrackCount; j++) {
@@ -725,15 +744,15 @@ import java.util.LinkedList;
   }
 
   /**
-   * Enables or disables a specified track group.
+   * Enables or disables a specified sample queue.
    *
-   * @param trackGroupIndex The index of the track group.
-   * @param enabledState True if the group is being enabled, or false if it's being disabled.
+   * @param sampleQueueIndex The index of the sample queue.
+   * @param enabledState True if the sample queue is being enabled, or false if it's being disabled.
    */
-  private void setTrackGroupEnabledState(int trackGroupIndex, boolean enabledState) {
-    Assertions.checkState(trackGroupEnabledStates[trackGroupIndex] != enabledState);
-    trackGroupEnabledStates[trackGroupIndex] = enabledState;
-    enabledTrackCount = enabledTrackCount + (enabledState ? 1 : -1);
+  private void setSampleQueueEnabledState(int sampleQueueIndex, boolean enabledState) {
+    Assertions.checkState(sampleQueuesEnabledStates[sampleQueueIndex] != enabledState);
+    sampleQueuesEnabledStates[sampleQueueIndex] = enabledState;
+    enabledSampleQueueCount = enabledSampleQueueCount + (enabledState ? 1 : -1);
   }
 
   /**
@@ -748,16 +767,15 @@ import java.util.LinkedList;
     if (containerFormat == null) {
       return sampleFormat;
     }
-    String codecs = null;
     int sampleTrackType = MimeTypes.getTrackType(sampleFormat.sampleMimeType);
-    if (sampleTrackType == C.TRACK_TYPE_AUDIO) {
-      codecs = getAudioCodecs(containerFormat.codecs);
-    } else if (sampleTrackType == C.TRACK_TYPE_VIDEO) {
-      codecs = getVideoCodecs(containerFormat.codecs);
-    }
+    String codecs = Util.getCodecsOfType(containerFormat.codecs, sampleTrackType);
     return sampleFormat.copyWithContainerInfo(containerFormat.id, codecs, containerFormat.bitrate,
         containerFormat.width, containerFormat.height, containerFormat.selectionFlags,
         containerFormat.language);
+  }
+
+  private HlsMediaChunk getLastMediaChunk() {
+    return mediaChunks.get(mediaChunks.size() - 1);
   }
 
   private boolean isMediaChunk(Chunk chunk) {
@@ -775,8 +793,8 @@ import java.util.LinkedList;
    * @return Whether the in-buffer seek was successful.
    */
   private boolean seekInsideBufferUs(long positionUs) {
-    int trackCount = sampleQueues.length;
-    for (int i = 0; i < trackCount; i++) {
+    int sampleQueueCount = sampleQueues.length;
+    for (int i = 0; i < sampleQueueCount; i++) {
       SampleQueue sampleQueue = sampleQueues[i];
       sampleQueue.rewind();
       boolean seekInsideQueue = sampleQueue.advanceTo(positionUs, true, false)
@@ -785,37 +803,11 @@ import java.util.LinkedList;
       // is successful. We ignore whether seeks within non-AV queues are successful in this case, as
       // they may be sparse or poorly interleaved. If we only have non-AV tracks then a seek is
       // successful only if the seek into every queue succeeds.
-      if (!seekInsideQueue && (trackGroupIsAudioVideoFlags[i] || !haveAudioVideoTrackGroups)) {
+      if (!seekInsideQueue && (sampleQueueIsAudioVideoFlags[i] || !haveAudioVideoSampleQueues)) {
         return false;
       }
-      sampleQueue.discardToRead();
     }
     return true;
-  }
-
-  private static String getAudioCodecs(String codecs) {
-    return getCodecsOfType(codecs, C.TRACK_TYPE_AUDIO);
-  }
-
-  private static String getVideoCodecs(String codecs) {
-    return getCodecsOfType(codecs, C.TRACK_TYPE_VIDEO);
-  }
-
-  private static String getCodecsOfType(String codecs, int trackType) {
-    if (TextUtils.isEmpty(codecs)) {
-      return null;
-    }
-    String[] codecArray = codecs.split("(\\s*,\\s*)|(\\s*$)");
-    StringBuilder builder = new StringBuilder();
-    for (String codec : codecArray) {
-      if (trackType == MimeTypes.getTrackTypeOfCodec(codec)) {
-        if (builder.length() > 0) {
-          builder.append(",");
-        }
-        builder.append(codec);
-      }
-    }
-    return builder.length() > 0 ? builder.toString() : null;
   }
 
 }

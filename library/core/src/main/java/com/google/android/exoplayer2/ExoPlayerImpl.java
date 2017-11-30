@@ -21,6 +21,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.support.annotation.Nullable;
 import android.util.Log;
+import android.util.Pair;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.TrackGroupArray;
@@ -55,6 +56,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   private int playbackState;
   private int pendingSeekAcks;
   private int pendingPrepareAcks;
+  private boolean waitingForInitialTimeline;
   private boolean isLoading;
   private TrackGroupArray trackGroups;
   private TrackSelectionArray trackSelections;
@@ -145,7 +147,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
       if (!playbackInfo.timeline.isEmpty() || playbackInfo.manifest != null) {
         playbackInfo = playbackInfo.copyWithTimeline(Timeline.EMPTY, null);
         for (Player.EventListener listener : listeners) {
-          listener.onTimelineChanged(playbackInfo.timeline, playbackInfo.manifest);
+          listener.onTimelineChanged(playbackInfo.timeline, playbackInfo.manifest,
+              Player.TIMELINE_CHANGE_REASON_RESET);
         }
       }
       if (tracksSelected) {
@@ -158,6 +161,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
         }
       }
     }
+    waitingForInitialTimeline = true;
     pendingPrepareAcks++;
     internalPlayer.prepare(mediaSource, resetPosition);
   }
@@ -254,19 +258,12 @@ import java.util.concurrent.CopyOnWriteArraySet;
       maskingWindowPositionMs = positionMs == C.TIME_UNSET ? 0 : positionMs;
       maskingPeriodIndex = 0;
     } else {
-      timeline.getWindow(windowIndex, window);
-      long windowPositionUs = positionMs == C.TIME_UNSET ? window.getDefaultPositionUs()
-          : C.msToUs(positionMs);
-      int periodIndex = window.firstPeriodIndex;
-      long periodPositionUs = window.getPositionInFirstPeriodUs() + windowPositionUs;
-      long periodDurationUs = timeline.getPeriod(periodIndex, period).getDurationUs();
-      while (periodDurationUs != C.TIME_UNSET && periodPositionUs >= periodDurationUs
-          && periodIndex < window.lastPeriodIndex) {
-        periodPositionUs -= periodDurationUs;
-        periodDurationUs = timeline.getPeriod(++periodIndex, period).getDurationUs();
-      }
+      long windowPositionUs = positionMs == C.TIME_UNSET
+          ? timeline.getWindow(windowIndex, window).getDefaultPositionUs() : C.msToUs(positionMs);
+      Pair<Integer, Long> periodIndexAndPositon =
+          timeline.getPeriodPosition(window, period, windowIndex, windowPositionUs);
       maskingWindowPositionMs = C.usToMs(windowPositionUs);
-      maskingPeriodIndex = periodIndex;
+      maskingPeriodIndex = periodIndexAndPositon.first;
     }
     internalPlayer.seekTo(timeline, windowIndex, C.msToUs(positionMs));
     for (Player.EventListener listener : listeners) {
@@ -473,7 +470,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
       case ExoPlayerImplInternal.MSG_SOURCE_INFO_REFRESHED: {
         int prepareAcks = msg.arg1;
         int seekAcks = msg.arg2;
-        handlePlaybackInfo((PlaybackInfo) msg.obj, prepareAcks, seekAcks, false);
+        handlePlaybackInfo((PlaybackInfo) msg.obj, prepareAcks, seekAcks, false,
+            /* ignored */ DISCONTINUITY_REASON_INTERNAL);
         break;
       }
       case ExoPlayerImplInternal.MSG_TRACKS_CHANGED: {
@@ -491,11 +489,13 @@ import java.util.concurrent.CopyOnWriteArraySet;
       }
       case ExoPlayerImplInternal.MSG_SEEK_ACK: {
         boolean seekPositionAdjusted = msg.arg1 != 0;
-        handlePlaybackInfo((PlaybackInfo) msg.obj, 0, 1, seekPositionAdjusted);
+        handlePlaybackInfo((PlaybackInfo) msg.obj, 0, 1, seekPositionAdjusted,
+            DISCONTINUITY_REASON_SEEK_ADJUSTMENT);
         break;
       }
       case ExoPlayerImplInternal.MSG_POSITION_DISCONTINUITY: {
-        handlePlaybackInfo((PlaybackInfo) msg.obj, 0, 0, true);
+        @DiscontinuityReason int discontinuityReason = msg.arg1;
+        handlePlaybackInfo((PlaybackInfo) msg.obj, 0, 0, true, discontinuityReason);
         break;
       }
       case ExoPlayerImplInternal.MSG_PLAYBACK_PARAMETERS_CHANGED: {
@@ -521,7 +521,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   private void handlePlaybackInfo(PlaybackInfo playbackInfo, int prepareAcks, int seekAcks,
-      boolean positionDiscontinuity) {
+      boolean positionDiscontinuity, @DiscontinuityReason int positionDiscontinuityReason) {
     Assertions.checkNotNull(playbackInfo.timeline);
     pendingPrepareAcks -= prepareAcks;
     pendingSeekAcks -= seekAcks;
@@ -535,16 +535,17 @@ import java.util.concurrent.CopyOnWriteArraySet;
         maskingWindowIndex = 0;
         maskingWindowPositionMs = 0;
       }
-      if (timelineOrManifestChanged) {
+      if (timelineOrManifestChanged || waitingForInitialTimeline) {
+        @Player.TimelineChangeReason int reason = waitingForInitialTimeline
+            ? Player.TIMELINE_CHANGE_REASON_PREPARED : Player.TIMELINE_CHANGE_REASON_DYNAMIC;
+        waitingForInitialTimeline = false;
         for (Player.EventListener listener : listeners) {
-          listener.onTimelineChanged(playbackInfo.timeline, playbackInfo.manifest);
+          listener.onTimelineChanged(playbackInfo.timeline, playbackInfo.manifest, reason);
         }
       }
       if (positionDiscontinuity) {
         for (Player.EventListener listener : listeners) {
-          listener.onPositionDiscontinuity(
-              seekAcks > 0 ? DISCONTINUITY_REASON_INTERNAL : DISCONTINUITY_REASON_PERIOD_TRANSITION
-          );
+          listener.onPositionDiscontinuity(positionDiscontinuityReason);
         }
       }
     }

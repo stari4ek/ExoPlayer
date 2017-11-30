@@ -32,6 +32,7 @@ import android.view.Display;
 import android.view.WindowManager;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.upstream.DataSource;
 import java.io.ByteArrayOutputStream;
@@ -49,6 +50,7 @@ import java.util.Formatter;
 import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Locale;
+import java.util.MissingResourceException;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -191,6 +193,17 @@ public final class Util {
   }
 
   /**
+   * Removes an indexed range from a List.
+   *
+   * @param list The List to remove the range from.
+   * @param fromIndex The first index to be removed (inclusive).
+   * @param toIndex The last index to be removed (exclusive).
+   */
+  public static <T> void removeRange(List<T> list, int fromIndex, int toIndex) {
+    list.subList(fromIndex, toIndex).clear();
+  }
+
+  /**
    * Instantiates a new single threaded executor whose thread has the specified name.
    *
    * @param threadName The name of the thread.
@@ -237,13 +250,28 @@ public final class Util {
   }
 
   /**
-   * Returns a normalized RFC 5646 language code.
+   * Returns a normalized RFC 639-2/T code for {@code language}.
    *
-   * @param language A possibly non-normalized RFC 5646 language code.
-   * @return The normalized code, or null if the input was null.
+   * @param language A case-insensitive ISO 639 alpha-2 or alpha-3 language code.
+   * @return The all-lowercase normalized code, or null if the input was null, or
+   *     {@code language.toLowerCase()} if the language could not be normalized.
    */
   public static String normalizeLanguageCode(String language) {
-    return language == null ? null : new Locale(language).getLanguage();
+    try {
+      return language == null ? null : new Locale(language).getISO3Language();
+    } catch (MissingResourceException e) {
+      return language.toLowerCase();
+    }
+  }
+
+  /**
+   * Returns a new {@link String} constructed by decoding UTF-8 encoded bytes.
+   *
+   * @param bytes The UTF-8 encoded bytes to decode.
+   * @return The string.
+   */
+  public static String fromUtf8Bytes(byte[] bytes) {
+    return new String(bytes, Charset.forName(C.UTF8_NAME));
   }
 
   /**
@@ -662,6 +690,33 @@ public final class Util {
   }
 
   /**
+   * Returns the duration of media that will elapse in {@code playoutDuration}.
+   *
+   * @param playoutDuration The duration to scale.
+   * @param speed The playback speed.
+   * @return The scaled duration, in the same units as {@code playoutDuration}.
+   */
+  public static long getMediaDurationForPlayoutDuration(long playoutDuration, float speed) {
+    if (speed == 1f) {
+      return playoutDuration;
+    }
+    return Math.round((double) playoutDuration * speed);
+  }
+
+  /**
+   * Returns the playout duration of {@code mediaDuration} of media.
+   *
+   * @param mediaDuration The duration to scale.
+   * @return The scaled duration, in the same units as {@code mediaDuration}.
+   */
+  public static long getPlayoutDurationForMediaDuration(long mediaDuration, float speed) {
+    if (speed == 1f) {
+      return mediaDuration;
+    }
+    return Math.round((double) mediaDuration / speed);
+  }
+
+  /**
    * Converts a list of integers to a primitive array.
    *
    * @param list A list of integers.
@@ -750,6 +805,32 @@ public final class Util {
   }
 
   /**
+   * Returns a copy of {@code codecs} without the codecs whose track type doesn't match
+   * {@code trackType}.
+   *
+   * @param codecs A codec sequence string, as defined in RFC 6381.
+   * @param trackType One of {@link C}{@code .TRACK_TYPE_*}.
+   * @return A copy of {@code codecs} without the codecs whose track type doesn't match
+   *     {@code trackType}.
+   */
+  public static String getCodecsOfType(String codecs, int trackType) {
+    if (TextUtils.isEmpty(codecs)) {
+      return null;
+    }
+    String[] codecArray = codecs.trim().split("(\\s*,\\s*)");
+    StringBuilder builder = new StringBuilder();
+    for (String codec : codecArray) {
+      if (trackType == MimeTypes.getTrackTypeOfCodec(codec)) {
+        if (builder.length() > 0) {
+          builder.append(",");
+        }
+        builder.append(codec);
+      }
+    }
+    return builder.length() > 0 ? builder.toString() : null;
+  }
+
+  /**
    * Converts a sample bit depth to a corresponding PCM encoding constant.
    *
    * @param bitDepth The bit depth. Supported values are 8, 16, 24 and 32.
@@ -792,6 +873,8 @@ public final class Util {
       case C.ENCODING_PCM_32BIT:
       case C.ENCODING_PCM_FLOAT:
         return channelCount * 4;
+      case C.ENCODING_INVALID:
+      case Format.NO_VALUE:
       default:
         throw new IllegalArgumentException();
     }

@@ -19,6 +19,7 @@ import android.os.Handler;
 import android.util.Log;
 import android.view.Surface;
 import com.google.android.exoplayer2.ExoPlayer;
+import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.Timeline;
@@ -304,7 +305,31 @@ public abstract class Action {
   }
 
   /**
-   * Waits for {@link Player.EventListener#onTimelineChanged(Timeline, Object)}.
+   * Calls {@link Player#setPlaybackParameters(PlaybackParameters)}.
+   */
+  public static final class SetPlaybackParameters extends Action {
+
+    private final PlaybackParameters playbackParameters;
+
+    /**
+     * @param tag A tag to use for logging.
+     * @param playbackParameters The playback parameters.
+     */
+    public SetPlaybackParameters(String tag, PlaybackParameters playbackParameters) {
+      super(tag, "SetPlaybackParameters:" + playbackParameters);
+      this.playbackParameters = playbackParameters;
+    }
+
+    @Override
+    protected void doActionImpl(SimpleExoPlayer player, MappingTrackSelector trackSelector,
+        Surface surface) {
+      player.setPlaybackParameters(playbackParameters);
+    }
+
+  }
+
+  /**
+   * Waits for {@link Player.EventListener#onTimelineChanged(Timeline, Object, int)}.
    */
   public static final class WaitForTimelineChanged extends Action {
 
@@ -327,7 +352,8 @@ public abstract class Action {
       }
       Player.EventListener listener = new Player.DefaultEventListener() {
         @Override
-        public void onTimelineChanged(Timeline timeline, Object manifest) {
+        public void onTimelineChanged(Timeline timeline, Object manifest,
+            @Player.TimelineChangeReason int reason) {
           if (timeline.equals(expectedTimeline)) {
             player.removeListener(this);
             nextAction.schedule(player, trackSelector, surface, handler);

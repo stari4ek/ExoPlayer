@@ -46,7 +46,6 @@ import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.drm.FrameworkMediaDrm;
 import com.google.android.exoplayer2.drm.HttpMediaDrmCallback;
 import com.google.android.exoplayer2.drm.UnsupportedDrmException;
-import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.mediacodec.MediaCodecRenderer.DecoderInitializationException;
 import com.google.android.exoplayer2.mediacodec.MediaCodecUtil.DecoderQueryException;
 import com.google.android.exoplayer2.source.BehindLiveWindowException;
@@ -84,7 +83,7 @@ import java.util.UUID;
 public class PlayerActivity extends Activity implements OnClickListener,
     PlaybackControlView.VisibilityListener {
 
-  public static final String DRM_SCHEME_UUID_EXTRA = "drm_scheme_uuid";
+  public static final String DRM_SCHEME_EXTRA = "drm_scheme";
   public static final String DRM_LICENSE_URL = "drm_license_url";
   public static final String DRM_KEY_REQUEST_PROPERTIES = "drm_key_request_properties";
   public static final String DRM_MULTI_SESSION = "drm_multi_session";
@@ -98,6 +97,9 @@ public class PlayerActivity extends Activity implements OnClickListener,
   public static final String URI_LIST_EXTRA = "uri_list";
   public static final String EXTENSION_LIST_EXTRA = "extension_list";
   public static final String AD_TAG_URI_EXTRA = "ad_tag_uri";
+
+  // For backwards compatibility.
+  private static final String DRM_SCHEME_UUID_EXTRA = "drm_scheme_uuid";
 
   private static final DefaultBandwidthMeter BANDWIDTH_METER = new DefaultBandwidthMeter();
   private static final CookieManager DEFAULT_COOKIE_MANAGER;
@@ -257,10 +259,8 @@ public class PlayerActivity extends Activity implements OnClickListener,
       lastSeenTrackGroupArray = null;
       eventLogger = new EventLogger(trackSelector);
 
-      UUID drmSchemeUuid = intent.hasExtra(DRM_SCHEME_UUID_EXTRA)
-          ? UUID.fromString(intent.getStringExtra(DRM_SCHEME_UUID_EXTRA)) : null;
       DrmSessionManager<FrameworkMediaCrypto> drmSessionManager = null;
-      if (drmSchemeUuid != null) {
+      if (intent.hasExtra(DRM_SCHEME_EXTRA) || intent.hasExtra(DRM_SCHEME_UUID_EXTRA)) {
         String drmLicenseUrl = intent.getStringExtra(DRM_LICENSE_URL);
         String[] keyRequestPropertiesArray = intent.getStringArrayExtra(DRM_KEY_REQUEST_PROPERTIES);
         boolean multiSession = intent.getBooleanExtra(DRM_MULTI_SESSION, false);
@@ -269,6 +269,9 @@ public class PlayerActivity extends Activity implements OnClickListener,
           errorStringId = R.string.error_drm_not_supported;
         } else {
           try {
+            String drmSchemeExtra = intent.hasExtra(DRM_SCHEME_EXTRA) ? DRM_SCHEME_EXTRA
+                : DRM_SCHEME_UUID_EXTRA;
+            UUID drmSchemeUuid = DemoUtil.getDrmUuid(intent.getStringExtra(drmSchemeExtra));
             drmSessionManager = buildDrmSessionManagerV18(drmSchemeUuid, drmLicenseUrl,
                 keyRequestPropertiesArray, multiSession);
           } catch (UnsupportedDrmException e) {
@@ -362,16 +365,26 @@ public class PlayerActivity extends Activity implements OnClickListener,
         : Util.inferContentType("." + overrideExtension);
     switch (type) {
       case C.TYPE_SS:
-        return new SsMediaSource(uri, buildDataSourceFactory(false),
-            new DefaultSsChunkSource.Factory(mediaDataSourceFactory), mainHandler, eventLogger);
+        return SsMediaSource.Builder
+            .forManifestUri(uri, buildDataSourceFactory(false),
+                new DefaultSsChunkSource.Factory(mediaDataSourceFactory))
+            .setEventListener(mainHandler, eventLogger)
+            .build();
       case C.TYPE_DASH:
-        return new DashMediaSource(uri, buildDataSourceFactory(false),
-            new DefaultDashChunkSource.Factory(mediaDataSourceFactory), mainHandler, eventLogger);
+        return DashMediaSource.Builder
+            .forManifestUri(uri, buildDataSourceFactory(false),
+                new DefaultDashChunkSource.Factory(mediaDataSourceFactory))
+            .setEventListener(mainHandler, eventLogger)
+            .build();
       case C.TYPE_HLS:
-        return new HlsMediaSource(uri, mediaDataSourceFactory, mainHandler, eventLogger);
+        return HlsMediaSource.Builder
+            .forDataSource(uri, mediaDataSourceFactory)
+            .setEventListener(mainHandler, eventLogger)
+            .build();
       case C.TYPE_OTHER:
-        return new ExtractorMediaSource(uri, mediaDataSourceFactory, new DefaultExtractorsFactory(),
-            mainHandler, eventLogger);
+        return new ExtractorMediaSource.Builder(uri, mediaDataSourceFactory)
+            .setEventListener(mainHandler, eventLogger)
+            .build();
       default: {
         throw new IllegalStateException("Unsupported type: " + type);
       }

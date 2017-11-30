@@ -35,8 +35,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedList;
 
 /**
  * Plays audio data. The implementation delegates to an {@link AudioTrack} and handles playback
@@ -173,7 +173,7 @@ public final class DefaultAudioSink implements AudioSink {
   private final ConditionVariable releasingConditionVariable;
   private final long[] playheadOffsets;
   private final AudioTrackUtil audioTrackUtil;
-  private final LinkedList<PlaybackParametersCheckpoint> playbackParametersCheckpoints;
+  private final ArrayDeque<PlaybackParametersCheckpoint> playbackParametersCheckpoints;
 
   @Nullable private Listener listener;
   /**
@@ -276,7 +276,7 @@ public final class DefaultAudioSink implements AudioSink {
     drainingAudioProcessorIndex = C.INDEX_UNSET;
     this.audioProcessors = new AudioProcessor[0];
     outputBuffers = new ByteBuffer[0];
-    playbackParametersCheckpoints = new LinkedList<>();
+    playbackParametersCheckpoints = new ArrayDeque<>();
   }
 
   @Override
@@ -285,8 +285,15 @@ public final class DefaultAudioSink implements AudioSink {
   }
 
   @Override
-  public boolean isPassthroughSupported(@C.Encoding int encoding) {
-    return audioCapabilities != null && audioCapabilities.supportsEncoding(encoding);
+  public boolean isEncodingSupported(@C.Encoding int encoding) {
+    if (isEncodingPcm(encoding)) {
+      // AudioTrack supports 16-bit integer PCM output in all platform API versions, and float
+      // output from platform API version 21 only. Other integer PCM encodings are resampled by this
+      // sink to 16-bit PCM.
+      return encoding != C.ENCODING_PCM_FLOAT || Util.SDK_INT >= 21;
+    } else {
+      return audioCapabilities != null && audioCapabilities.supportsEncoding(encoding);
+    }
   }
 
   @Override
@@ -451,9 +458,6 @@ public final class DefaultAudioSink implements AudioSink {
     }
     bufferSizeUs =
         isInputPcm ? framesToDurationUs(bufferSize / outputPcmFrameSize) : C.TIME_UNSET;
-
-    // The old playback parameters may no longer be applicable so try to reset them now.
-    setPlaybackParameters(playbackParameters);
   }
 
   private void resetAudioProcessors() {
@@ -484,6 +488,10 @@ public final class DefaultAudioSink implements AudioSink {
     releasingConditionVariable.block();
 
     audioTrack = initializeAudioTrack();
+
+    // The old playback parameters may no longer be applicable so try to reset them now.
+    setPlaybackParameters(playbackParameters);
+
     int audioSessionId = audioTrack.getAudioSessionId();
     if (enablePreV21AudioSessionWorkaround) {
       if (Util.SDK_INT < 21) {
@@ -792,7 +800,7 @@ public final class DefaultAudioSink implements AudioSink {
 
   @Override
   public PlaybackParameters setPlaybackParameters(PlaybackParameters playbackParameters) {
-    if (!processingEnabled) {
+    if (isInitialized() && !processingEnabled) {
       // The playback parameters are always the default if processing is disabled.
       this.playbackParameters = PlaybackParameters.DEFAULT;
       return this.playbackParameters;
@@ -1004,7 +1012,8 @@ public final class DefaultAudioSink implements AudioSink {
     }
     // We are playing data at a previous playback speed, so fall back to multiplying by the speed.
     return playbackParametersOffsetUs
-        + (long) ((double) playbackParameters.speed * (positionUs - playbackParametersPositionUs));
+        + Util.getMediaDurationForPlayoutDuration(
+            positionUs - playbackParametersPositionUs, playbackParameters.speed);
   }
 
   /**

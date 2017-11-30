@@ -30,15 +30,18 @@ import java.util.IdentityHashMap;
   public final MediaPeriod[] periods;
 
   private final IdentityHashMap<SampleStream, Integer> streamPeriodIndices;
+  private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
 
   private Callback callback;
   private int pendingChildPrepareCount;
   private TrackGroupArray trackGroups;
 
   private MediaPeriod[] enabledPeriods;
-  private SequenceableLoader sequenceableLoader;
+  private SequenceableLoader compositeSequenceableLoader;
 
-  public MergingMediaPeriod(MediaPeriod... periods) {
+  public MergingMediaPeriod(CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
+      MediaPeriod... periods) {
+    this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
     this.periods = periods;
     streamPeriodIndices = new IdentityHashMap<>();
   }
@@ -124,25 +127,26 @@ import java.util.IdentityHashMap;
     // Update the local state.
     enabledPeriods = new MediaPeriod[enabledPeriodsList.size()];
     enabledPeriodsList.toArray(enabledPeriods);
-    sequenceableLoader = new CompositeSequenceableLoader(enabledPeriods);
+    compositeSequenceableLoader =
+        compositeSequenceableLoaderFactory.createCompositeSequenceableLoader(enabledPeriods);
     return positionUs;
   }
 
   @Override
-  public void discardBuffer(long positionUs) {
+  public void discardBuffer(long positionUs, boolean toKeyframe) {
     for (MediaPeriod period : enabledPeriods) {
-      period.discardBuffer(positionUs);
+      period.discardBuffer(positionUs, toKeyframe);
     }
   }
 
   @Override
   public boolean continueLoading(long positionUs) {
-    return sequenceableLoader.continueLoading(positionUs);
+    return compositeSequenceableLoader.continueLoading(positionUs);
   }
 
   @Override
   public long getNextLoadPositionUs() {
-    return sequenceableLoader.getNextLoadPositionUs();
+    return compositeSequenceableLoader.getNextLoadPositionUs();
   }
 
   @Override
@@ -168,7 +172,7 @@ import java.util.IdentityHashMap;
 
   @Override
   public long getBufferedPositionUs() {
-    return sequenceableLoader.getBufferedPositionUs();
+    return compositeSequenceableLoader.getBufferedPositionUs();
   }
 
   @Override

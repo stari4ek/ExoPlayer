@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.source.dash;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 import android.util.Log;
 import android.util.SparseArray;
 import com.google.android.exoplayer2.C;
@@ -27,8 +28,11 @@ import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener;
 import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener.EventDispatcher;
+import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
+import com.google.android.exoplayer2.source.DefaultCompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifest;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifestParser;
 import com.google.android.exoplayer2.source.dash.manifest.UtcTimingElement;
@@ -58,12 +62,167 @@ public final class DashMediaSource implements MediaSource {
   }
 
   /**
+   * Builder for {@link DashMediaSource}. Each builder instance can only be used once.
+   */
+  public static final class Builder {
+
+    private final DashManifest manifest;
+    private final Uri manifestUri;
+    private final DataSource.Factory manifestDataSourceFactory;
+    private final DashChunkSource.Factory chunkSourceFactory;
+
+    private ParsingLoadable.Parser<? extends DashManifest> manifestParser;
+    private AdaptiveMediaSourceEventListener eventListener;
+    private Handler eventHandler;
+    private CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
+
+    private int minLoadableRetryCount;
+    private long livePresentationDelayMs;
+    private boolean isBuildCalled;
+
+    /**
+     * Creates a {@link Builder} for a {@link DashMediaSource} with a side-loaded manifest.
+     *
+     * @param manifest The manifest. {@link DashManifest#dynamic} must be false.
+     * @param chunkSourceFactory A factory for {@link DashChunkSource} instances.
+     * @return A new builder.
+     */
+    public static Builder forSideloadedManifest(DashManifest manifest,
+        DashChunkSource.Factory chunkSourceFactory) {
+      Assertions.checkArgument(!manifest.dynamic);
+      return new Builder(manifest, null, null, chunkSourceFactory);
+    }
+
+    /**
+     * Creates a {@link Builder} for a {@link DashMediaSource} with a loadable manifest Uri.
+     *
+     * @param manifestUri The manifest {@link Uri}.
+     * @param manifestDataSourceFactory A factory for {@link DataSource} instances that will be used
+     *     to load (and refresh) the manifest.
+     * @param chunkSourceFactory A factory for {@link DashChunkSource} instances.
+     * @return A new builder.
+     */
+    public static Builder forManifestUri(Uri manifestUri,
+        DataSource.Factory manifestDataSourceFactory, DashChunkSource.Factory chunkSourceFactory) {
+      return new Builder(null, manifestUri, manifestDataSourceFactory, chunkSourceFactory);
+    }
+
+    private Builder(@Nullable DashManifest manifest, @Nullable Uri manifestUri,
+        @Nullable DataSource.Factory manifestDataSourceFactory,
+        DashChunkSource.Factory chunkSourceFactory) {
+      this.manifest = manifest;
+      this.manifestUri = manifestUri;
+      this.manifestDataSourceFactory = manifestDataSourceFactory;
+      this.chunkSourceFactory = chunkSourceFactory;
+
+      minLoadableRetryCount = DEFAULT_MIN_LOADABLE_RETRY_COUNT;
+      livePresentationDelayMs = DEFAULT_LIVE_PRESENTATION_DELAY_PREFER_MANIFEST_MS;
+    }
+
+    /**
+     * Sets the minimum number of times to retry if a loading error occurs. The default value is
+     * {@link #DEFAULT_MIN_LOADABLE_RETRY_COUNT}.
+     *
+     * @param minLoadableRetryCount The minimum number of times to retry if a loading error occurs.
+     * @return This builder.
+     */
+    public Builder setMinLoadableRetryCount(int minLoadableRetryCount) {
+      this.minLoadableRetryCount = minLoadableRetryCount;
+      return this;
+    }
+
+    /**
+     * Sets the duration in milliseconds by which the default start position should precede the end
+     * of the live window for live playbacks. The default value is
+     * {@link #DEFAULT_LIVE_PRESENTATION_DELAY_PREFER_MANIFEST_MS}.
+     *
+     * @param livePresentationDelayMs For live playbacks, the duration in milliseconds by which the
+     *     default start position should precede the end of the live window. Use
+     *     {@link #DEFAULT_LIVE_PRESENTATION_DELAY_PREFER_MANIFEST_MS} to use the value specified by
+     *     the manifest, if present.
+     * @return This builder.
+     */
+    public Builder setLivePresentationDelayMs(long livePresentationDelayMs) {
+      this.livePresentationDelayMs = livePresentationDelayMs;
+      return this;
+    }
+
+    /**
+     * Sets the listener to respond to adaptive {@link MediaSource} events and the handler to
+     * deliver these events.
+     *
+     * @param eventHandler A handler for events.
+     * @param eventListener A listener of events.
+     * @return This builder.
+     */
+    public Builder setEventListener(Handler eventHandler,
+        AdaptiveMediaSourceEventListener eventListener) {
+      this.eventHandler = eventHandler;
+      this.eventListener = eventListener;
+      return this;
+    }
+
+    /**
+     * Sets the manifest parser to parse loaded manifest data. The default is
+     * {@link DashManifestParser}, or {@code null} if the manifest is sideloaded.
+     *
+     * @param manifestParser A parser for loaded manifest data.
+     * @return This builder.
+     */
+    public Builder setManifestParser(
+        ParsingLoadable.Parser<? extends DashManifest> manifestParser) {
+      this.manifestParser = manifestParser;
+      return this;
+    }
+
+    /**
+     * Sets the factory to create composite {@link SequenceableLoader}s for when this media source
+     * loads data from multiple streams (video, audio etc...). The default is an instance of
+     * {@link DefaultCompositeSequenceableLoaderFactory}.
+     *
+     * @param compositeSequenceableLoaderFactory A factory to create composite
+     *     {@link SequenceableLoader}s for when this media source loads data from multiple streams
+     *     (video, audio etc...).
+     * @return This builder.
+     */
+    public Builder setCompositeSequenceableLoaderFactory(
+        CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory) {
+      this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
+      return this;
+    }
+
+    /**
+     * Builds a new {@link DashMediaSource} using the current parameters.
+     * <p>
+     * After this call, the builder should not be re-used.
+     *
+     * @return The newly built {@link DashMediaSource}.
+     */
+    public DashMediaSource build() {
+      Assertions.checkArgument((eventListener == null) == (eventHandler == null));
+      Assertions.checkState(!isBuildCalled);
+      isBuildCalled = true;
+      boolean loadableManifestUri = manifestUri != null;
+      if (loadableManifestUri && manifestParser == null) {
+        manifestParser = new DashManifestParser();
+      }
+      if (compositeSequenceableLoaderFactory == null) {
+        compositeSequenceableLoaderFactory = new DefaultCompositeSequenceableLoaderFactory();
+      }
+      return new DashMediaSource(manifest, manifestUri, manifestDataSourceFactory, manifestParser,
+          chunkSourceFactory, compositeSequenceableLoaderFactory, minLoadableRetryCount,
+          livePresentationDelayMs, eventHandler, eventListener);
+    }
+
+  }
+
+  /**
    * The default minimum number of times to retry loading data prior to failing.
    */
   public static final int DEFAULT_MIN_LOADABLE_RETRY_COUNT = 3;
   /**
    * A constant indicating that the presentation delay for live streams should be set to
-   * {@link DashManifest#suggestedPresentationDelay} if specified by the manifest, or
+   * {@link DashManifest#suggestedPresentationDelayMs} if specified by the manifest, or
    * {@link #DEFAULT_LIVE_PRESENTATION_DELAY_FIXED_MS} otherwise. The presentation delay is the
    * duration by which the default start position precedes the end of the live window.
    */
@@ -90,6 +249,7 @@ public final class DashMediaSource implements MediaSource {
   private final boolean sideloadedManifest;
   private final DataSource.Factory manifestDataSourceFactory;
   private final DashChunkSource.Factory chunkSourceFactory;
+  private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
   private final int minLoadableRetryCount;
   private final long livePresentationDelayMs;
   private final EventDispatcher eventDispatcher;
@@ -121,7 +281,9 @@ public final class DashMediaSource implements MediaSource {
    * @param chunkSourceFactory A factory for {@link DashChunkSource} instances.
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public DashMediaSource(DashManifest manifest, DashChunkSource.Factory chunkSourceFactory,
       Handler eventHandler, AdaptiveMediaSourceEventListener eventListener) {
     this(manifest, chunkSourceFactory, DEFAULT_MIN_LOADABLE_RETRY_COUNT, eventHandler,
@@ -136,11 +298,14 @@ public final class DashMediaSource implements MediaSource {
    * @param minLoadableRetryCount The minimum number of times to retry if a loading error occurs.
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public DashMediaSource(DashManifest manifest, DashChunkSource.Factory chunkSourceFactory,
       int minLoadableRetryCount, Handler eventHandler, AdaptiveMediaSourceEventListener
       eventListener) {
-    this(manifest, null, null, null, chunkSourceFactory, minLoadableRetryCount,
+    this(manifest, null, null, null, chunkSourceFactory,
+        new DefaultCompositeSequenceableLoaderFactory(), minLoadableRetryCount,
         DEFAULT_LIVE_PRESENTATION_DELAY_PREFER_MANIFEST_MS, eventHandler, eventListener);
   }
 
@@ -154,7 +319,9 @@ public final class DashMediaSource implements MediaSource {
    * @param chunkSourceFactory A factory for {@link DashChunkSource} instances.
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public DashMediaSource(Uri manifestUri, DataSource.Factory manifestDataSourceFactory,
       DashChunkSource.Factory chunkSourceFactory, Handler eventHandler,
       AdaptiveMediaSourceEventListener eventListener) {
@@ -178,7 +345,9 @@ public final class DashMediaSource implements MediaSource {
    *     the manifest, if present.
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public DashMediaSource(Uri manifestUri, DataSource.Factory manifestDataSourceFactory,
       DashChunkSource.Factory chunkSourceFactory, int minLoadableRetryCount,
       long livePresentationDelayMs, Handler eventHandler,
@@ -203,21 +372,25 @@ public final class DashMediaSource implements MediaSource {
    *     the manifest, if present.
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @deprecated Use {@link Builder} instead.
    */
+  @Deprecated
   public DashMediaSource(Uri manifestUri, DataSource.Factory manifestDataSourceFactory,
       ParsingLoadable.Parser<? extends DashManifest> manifestParser,
       DashChunkSource.Factory chunkSourceFactory, int minLoadableRetryCount,
       long livePresentationDelayMs, Handler eventHandler,
       AdaptiveMediaSourceEventListener eventListener) {
     this(null, manifestUri, manifestDataSourceFactory, manifestParser, chunkSourceFactory,
-        minLoadableRetryCount, livePresentationDelayMs, eventHandler, eventListener);
+        new DefaultCompositeSequenceableLoaderFactory(), minLoadableRetryCount,
+        livePresentationDelayMs, eventHandler, eventListener);
   }
 
   private DashMediaSource(DashManifest manifest, Uri manifestUri,
       DataSource.Factory manifestDataSourceFactory,
       ParsingLoadable.Parser<? extends DashManifest> manifestParser,
-      DashChunkSource.Factory chunkSourceFactory, int minLoadableRetryCount,
-      long livePresentationDelayMs, Handler eventHandler,
+      DashChunkSource.Factory chunkSourceFactory,
+      CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
+      int minLoadableRetryCount, long livePresentationDelayMs, Handler eventHandler,
       AdaptiveMediaSourceEventListener eventListener) {
     this.manifest = manifest;
     this.manifestUri = manifestUri;
@@ -226,6 +399,7 @@ public final class DashMediaSource implements MediaSource {
     this.chunkSourceFactory = chunkSourceFactory;
     this.minLoadableRetryCount = minLoadableRetryCount;
     this.livePresentationDelayMs = livePresentationDelayMs;
+    this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
     sideloadedManifest = manifest != null;
     eventDispatcher = new EventDispatcher(eventHandler, eventListener);
     manifestUriLock = new Object();
@@ -292,7 +466,7 @@ public final class DashMediaSource implements MediaSource {
         manifest.getPeriod(periodIndex).startMs);
     DashMediaPeriod mediaPeriod = new DashMediaPeriod(firstPeriodId + periodIndex, manifest,
         periodIndex, chunkSourceFactory, minLoadableRetryCount, periodEventDispatcher,
-        elapsedRealtimeOffsetMs, loaderErrorThrower, allocator);
+        elapsedRealtimeOffsetMs, loaderErrorThrower, allocator, compositeSequenceableLoaderFactory);
     periodsById.put(mediaPeriod.id, mediaPeriod);
     return mediaPeriod;
   }
@@ -480,12 +654,12 @@ public final class DashMediaSource implements MediaSource {
     if (manifest.dynamic && !lastPeriodSeekInfo.isIndexExplicit) {
       // The manifest describes an incomplete live stream. Update the start/end times to reflect the
       // live stream duration and the manifest's time shift buffer depth.
-      long liveStreamDurationUs = getNowUnixTimeUs() - C.msToUs(manifest.availabilityStartTime);
+      long liveStreamDurationUs = getNowUnixTimeUs() - C.msToUs(manifest.availabilityStartTimeMs);
       long liveStreamEndPositionInLastPeriodUs = liveStreamDurationUs
           - C.msToUs(manifest.getPeriod(lastPeriodIndex).startMs);
       currentEndTimeUs = Math.min(liveStreamEndPositionInLastPeriodUs, currentEndTimeUs);
-      if (manifest.timeShiftBufferDepth != C.TIME_UNSET) {
-        long timeShiftBufferDepthUs = C.msToUs(manifest.timeShiftBufferDepth);
+      if (manifest.timeShiftBufferDepthMs != C.TIME_UNSET) {
+        long timeShiftBufferDepthUs = C.msToUs(manifest.timeShiftBufferDepthMs);
         long offsetInPeriodUs = currentEndTimeUs - timeShiftBufferDepthUs;
         int periodIndex = lastPeriodIndex;
         while (offsetInPeriodUs < 0 && periodIndex > 0) {
@@ -509,8 +683,8 @@ public final class DashMediaSource implements MediaSource {
     if (manifest.dynamic) {
       long presentationDelayForManifestMs = livePresentationDelayMs;
       if (presentationDelayForManifestMs == DEFAULT_LIVE_PRESENTATION_DELAY_PREFER_MANIFEST_MS) {
-        presentationDelayForManifestMs = manifest.suggestedPresentationDelay != C.TIME_UNSET
-            ? manifest.suggestedPresentationDelay : DEFAULT_LIVE_PRESENTATION_DELAY_FIXED_MS;
+        presentationDelayForManifestMs = manifest.suggestedPresentationDelayMs != C.TIME_UNSET
+            ? manifest.suggestedPresentationDelayMs : DEFAULT_LIVE_PRESENTATION_DELAY_FIXED_MS;
       }
       // Snap the default position to the start of the segment containing it.
       windowDefaultStartPositionUs = windowDurationUs - C.msToUs(presentationDelayForManifestMs);
@@ -522,9 +696,9 @@ public final class DashMediaSource implements MediaSource {
             windowDurationUs / 2);
       }
     }
-    long windowStartTimeMs = manifest.availabilityStartTime
+    long windowStartTimeMs = manifest.availabilityStartTimeMs
         + manifest.getPeriod(0).startMs + C.usToMs(currentStartTimeUs);
-    DashTimeline timeline = new DashTimeline(manifest.availabilityStartTime, windowStartTimeMs,
+    DashTimeline timeline = new DashTimeline(manifest.availabilityStartTimeMs, windowStartTimeMs,
         firstPeriodId, currentStartTimeUs, windowDurationUs, windowDefaultStartPositionUs,
         manifest);
     sourceListener.onSourceInfoRefreshed(this, timeline, manifest);
@@ -547,15 +721,15 @@ public final class DashMediaSource implements MediaSource {
     if (!manifest.dynamic) {
       return;
     }
-    long minUpdatePeriod = manifest.minUpdatePeriod;
-    if (minUpdatePeriod == 0) {
+    long minUpdatePeriodMs = manifest.minUpdatePeriodMs;
+    if (minUpdatePeriodMs == 0) {
       // TODO: This is a temporary hack to avoid constantly refreshing the MPD in cases where
-      // minUpdatePeriod is set to 0. In such cases we shouldn't refresh unless there is explicit
-      // signaling in the stream, according to:
+      // minimumUpdatePeriod is set to 0. In such cases we shouldn't refresh unless there is
+      // explicit signaling in the stream, according to:
       // http://azure.microsoft.com/blog/2014/09/13/dash-live-streaming-with-azure-media-service/
-      minUpdatePeriod = 5000;
+      minUpdatePeriodMs = 5000;
     }
-    long nextLoadTimestamp = manifestLoadStartTimestamp + minUpdatePeriod;
+    long nextLoadTimestamp = manifestLoadStartTimestamp + minUpdatePeriodMs;
     long delayUntilNextLoad = Math.max(0, nextLoadTimestamp - SystemClock.elapsedRealtime());
     handler.postDelayed(refreshManifestRunnable, delayUntilNextLoad);
   }

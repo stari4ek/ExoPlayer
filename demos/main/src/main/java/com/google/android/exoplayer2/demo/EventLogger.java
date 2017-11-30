@@ -116,10 +116,12 @@ import java.util.Locale;
   }
 
   @Override
-  public void onTimelineChanged(Timeline timeline, Object manifest) {
+  public void onTimelineChanged(Timeline timeline, Object manifest,
+      @Player.TimelineChangeReason int reason) {
     int periodCount = timeline.getPeriodCount();
     int windowCount = timeline.getWindowCount();
-    Log.d(TAG, "sourceInfo [periodCount=" + periodCount + ", windowCount=" + windowCount);
+    Log.d(TAG, "timelineChanged [periodCount=" + periodCount + ", windowCount=" + windowCount
+        + ", reason=" + getTimelineChangeReasonString(reason));
     for (int i = 0; i < Math.min(periodCount, MAX_TIMELINE_ITEM_LINES); i++) {
       timeline.getPeriod(i, period);
       Log.d(TAG, "  " +  "period [" + getTimeString(period.getDurationMs()) + "]");
@@ -467,6 +469,9 @@ import java.util.Locale;
     }
   }
 
+  // Suppressing reference equality warning because the track group stored in the track selection
+  // must point to the exact track group object to be considered part of it.
+  @SuppressWarnings("ReferenceEquality")
   private static String getTrackStatusString(TrackSelection selection, TrackGroup group,
       int trackIndex) {
     return getTrackStatusString(selection != null && selection.getTrackGroup() == group
@@ -496,10 +501,26 @@ import java.util.Locale;
         return "PERIOD_TRANSITION";
       case Player.DISCONTINUITY_REASON_SEEK:
         return "SEEK";
+      case Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT:
+        return "SEEK_ADJUSTMENT";
       case Player.DISCONTINUITY_REASON_INTERNAL:
         return "INTERNAL";
       default:
         return "?";
     }
   }
+
+  private static String getTimelineChangeReasonString(@Player.TimelineChangeReason int reason) {
+    switch (reason) {
+      case Player.TIMELINE_CHANGE_REASON_PREPARED:
+        return "PREPARED";
+      case Player.TIMELINE_CHANGE_REASON_RESET:
+        return "RESET";
+      case Player.TIMELINE_CHANGE_REASON_DYNAMIC:
+        return "DYNAMIC";
+      default:
+        return "?";
+    }
+  }
+
 }

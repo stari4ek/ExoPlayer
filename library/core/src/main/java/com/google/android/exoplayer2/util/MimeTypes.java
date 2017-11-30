@@ -51,6 +51,7 @@ public final class MimeTypes {
   public static final String AUDIO_MLAW = BASE_TYPE_AUDIO + "/g711-mlaw";
   public static final String AUDIO_AC3 = BASE_TYPE_AUDIO + "/ac3";
   public static final String AUDIO_E_AC3 = BASE_TYPE_AUDIO + "/eac3";
+  public static final String AUDIO_ATMOS = BASE_TYPE_AUDIO + "/eac3-joc";
   public static final String AUDIO_TRUEHD = BASE_TYPE_AUDIO + "/true-hd";
   public static final String AUDIO_DTS = BASE_TYPE_AUDIO + "/vnd.dts";
   public static final String AUDIO_DTS_HD = BASE_TYPE_AUDIO + "/vnd.dts.hd";
@@ -195,6 +196,8 @@ public final class MimeTypes {
       return MimeTypes.AUDIO_AC3;
     } else if (codec.startsWith("ec-3") || codec.startsWith("dec3")) {
       return MimeTypes.AUDIO_E_AC3;
+    } else if (codec.startsWith("ec+3")) {
+      return MimeTypes.AUDIO_ATMOS;
     } else if (codec.startsWith("dtsc") || codec.startsWith("dtse")) {
       return MimeTypes.AUDIO_DTS;
     } else if (codec.startsWith("dtsh") || codec.startsWith("dtsl")) {
@@ -240,17 +243,19 @@ public final class MimeTypes {
   }
 
   /**
-   * Returns the {@link C}{@code .ENCODING_*} constant that corresponds to a specified MIME type, or
-   * {@link C#ENCODING_INVALID} if the mapping cannot be established.
+   * Returns the {@link C}{@code .ENCODING_*} constant that corresponds to specified MIME type, if
+   * it is an encoded (non-PCM) audio format, or {@link C#ENCODING_INVALID} otherwise.
    *
    * @param mimeType The MIME type.
-   * @return The {@link C}{@code .ENCODING_*} constant that corresponds to a specified MIME type.
+   * @return The {@link C}{@code .ENCODING_*} constant that corresponds to a specified MIME type, or
+   *     {@link C#ENCODING_INVALID}.
    */
   public static @C.Encoding int getEncoding(String mimeType) {
     switch (mimeType) {
       case MimeTypes.AUDIO_AC3:
         return C.ENCODING_AC3;
       case MimeTypes.AUDIO_E_AC3:
+      case MimeTypes.AUDIO_ATMOS:
         return C.ENCODING_E_AC3;
       case MimeTypes.AUDIO_DTS:
         return C.ENCODING_DTS;
