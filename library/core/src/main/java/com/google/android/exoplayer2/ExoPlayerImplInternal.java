@@ -66,15 +66,16 @@ import java.io.IOException;
   private static final int MSG_DO_SOME_WORK = 2;
   private static final int MSG_SEEK_TO = 3;
   private static final int MSG_SET_PLAYBACK_PARAMETERS = 4;
-  private static final int MSG_STOP = 5;
-  private static final int MSG_RELEASE = 6;
-  private static final int MSG_REFRESH_SOURCE_INFO = 7;
-  private static final int MSG_PERIOD_PREPARED = 8;
-  private static final int MSG_SOURCE_CONTINUE_LOADING_REQUESTED = 9;
-  private static final int MSG_TRACK_SELECTION_INVALIDATED = 10;
-  private static final int MSG_CUSTOM = 11;
-  private static final int MSG_SET_REPEAT_MODE = 12;
-  private static final int MSG_SET_SHUFFLE_ENABLED = 13;
+  private static final int MSG_SET_SEEK_PARAMETERS = 5;
+  private static final int MSG_STOP = 6;
+  private static final int MSG_RELEASE = 7;
+  private static final int MSG_REFRESH_SOURCE_INFO = 8;
+  private static final int MSG_PERIOD_PREPARED = 9;
+  private static final int MSG_SOURCE_CONTINUE_LOADING_REQUESTED = 10;
+  private static final int MSG_TRACK_SELECTION_INVALIDATED = 11;
+  private static final int MSG_CUSTOM = 12;
+  private static final int MSG_SET_REPEAT_MODE = 13;
+  private static final int MSG_SET_SHUFFLE_ENABLED = 14;
 
   private static final int PREPARING_SOURCE_INTERVAL_MS = 10;
   private static final int RENDERING_INTERVAL_MS = 10;
@@ -110,6 +111,9 @@ import java.io.IOException;
   private final boolean retainBackBufferFromKeyframe;
   private final DefaultMediaClock mediaClock;
 
+  @SuppressWarnings("unused")
+  private SeekParameters seekParameters;
+
   private PlaybackInfo playbackInfo;
   private MediaSource mediaSource;
   private Renderer[] enabledRenderers;
@@ -125,8 +129,7 @@ import java.io.IOException;
   private long elapsedRealtimeUs;
 
   private int pendingPrepareCount;
-  private int pendingInitialSeekCount;
-  private SeekPosition pendingSeekPosition;
+  private SeekPosition pendingInitialSeekPosition;
   private long rendererPositionUs;
 
   private MediaPeriodHolder loadingPeriodHolder;
@@ -149,6 +152,7 @@ import java.io.IOException;
     backBufferDurationUs = loadControl.getBackBufferDurationUs();
     retainBackBufferFromKeyframe = loadControl.retainBackBufferFromKeyframe();
 
+    seekParameters = SeekParameters.DEFAULT;
     playbackInfo = new PlaybackInfo(null, null, 0, C.TIME_UNSET);
     rendererCapabilities = new RendererCapabilities[renderers.length];
     for (int i = 0; i < renderers.length; i++) {
@@ -196,8 +200,12 @@ import java.io.IOException;
     handler.obtainMessage(MSG_SET_PLAYBACK_PARAMETERS, playbackParameters).sendToTarget();
   }
 
-  public void stop() {
-    handler.sendEmptyMessage(MSG_STOP);
+  public void setSeekParameters(SeekParameters seekParameters) {
+    handler.obtainMessage(MSG_SET_SEEK_PARAMETERS, seekParameters).sendToTarget();
+  }
+
+  public void stop(boolean reset) {
+    handler.obtainMessage(MSG_STOP, reset ? 1 : 0, 0).sendToTarget();
   }
 
   public void sendMessages(ExoPlayerMessage... messages) {
@@ -295,80 +303,69 @@ import java.io.IOException;
   public boolean handleMessage(Message msg) {
     try {
       switch (msg.what) {
-        case MSG_PREPARE: {
+        case MSG_PREPARE:
           prepareInternal((MediaSource) msg.obj, msg.arg1 != 0);
           return true;
-        }
-        case MSG_SET_PLAY_WHEN_READY: {
+        case MSG_SET_PLAY_WHEN_READY:
           setPlayWhenReadyInternal(msg.arg1 != 0);
           return true;
-        }
-        case MSG_SET_REPEAT_MODE: {
+        case MSG_SET_REPEAT_MODE:
           setRepeatModeInternal(msg.arg1);
           return true;
-        }
-        case MSG_SET_SHUFFLE_ENABLED: {
+        case MSG_SET_SHUFFLE_ENABLED:
           setShuffleModeEnabledInternal(msg.arg1 != 0);
           return true;
-        }
-        case MSG_DO_SOME_WORK: {
+        case MSG_DO_SOME_WORK:
           doSomeWork();
           return true;
-        }
-        case MSG_SEEK_TO: {
+        case MSG_SEEK_TO:
           seekToInternal((SeekPosition) msg.obj);
           return true;
-        }
-        case MSG_SET_PLAYBACK_PARAMETERS: {
+        case MSG_SET_PLAYBACK_PARAMETERS:
           setPlaybackParametersInternal((PlaybackParameters) msg.obj);
           return true;
-        }
-        case MSG_STOP: {
-          stopInternal();
+        case MSG_SET_SEEK_PARAMETERS:
+          setSeekParametersInternal((SeekParameters) msg.obj);
           return true;
-        }
-        case MSG_RELEASE: {
+        case MSG_STOP:
+          stopInternal(/* reset= */ msg.arg1 != 0, /* acknowledgeStop= */ true);
+          return true;
+        case MSG_RELEASE:
           releaseInternal();
           return true;
-        }
-        case MSG_PERIOD_PREPARED: {
+        case MSG_PERIOD_PREPARED:
           handlePeriodPrepared((MediaPeriod) msg.obj);
           return true;
-        }
-        case MSG_REFRESH_SOURCE_INFO: {
+        case MSG_REFRESH_SOURCE_INFO:
           handleSourceInfoRefreshed((MediaSourceRefreshInfo) msg.obj);
           return true;
-        }
-        case MSG_SOURCE_CONTINUE_LOADING_REQUESTED: {
+        case MSG_SOURCE_CONTINUE_LOADING_REQUESTED:
           handleContinueLoadingRequested((MediaPeriod) msg.obj);
           return true;
-        }
-        case MSG_TRACK_SELECTION_INVALIDATED: {
+        case MSG_TRACK_SELECTION_INVALIDATED:
           reselectTracksInternal();
           return true;
-        }
-        case MSG_CUSTOM: {
+        case MSG_CUSTOM:
           sendMessagesInternal((ExoPlayerMessage[]) msg.obj);
           return true;
-        }
         default:
           return false;
       }
     } catch (ExoPlaybackException e) {
       Log.e(TAG, "Renderer error.", e);
+      stopInternal(/* reset= */ false, /* acknowledgeStop= */ false);
       eventHandler.obtainMessage(MSG_ERROR, e).sendToTarget();
-      stopInternal();
       return true;
     } catch (IOException e) {
       Log.e(TAG, "Source error.", e);
+      stopInternal(/* reset= */ false, /* acknowledgeStop= */ false);
       eventHandler.obtainMessage(MSG_ERROR, ExoPlaybackException.createForSource(e)).sendToTarget();
-      stopInternal();
       return true;
     } catch (RuntimeException e) {
       Log.e(TAG, "Internal runtime error.", e);
+      stopInternal(/* reset= */ false, /* acknowledgeStop= */ false);
       eventHandler.obtainMessage(MSG_ERROR, ExoPlaybackException.createForUnexpected(e))
           .sendToTarget();
-      stopInternal();
       return true;
     }
   }
@@ -391,11 +388,11 @@ import java.io.IOException;
 
   private void prepareInternal(MediaSource mediaSource, boolean resetPosition) {
     pendingPrepareCount++;
-    resetInternal(/* releaseMediaSource= */ true, resetPosition);
+    resetInternal(/* releaseMediaSource= */ true, resetPosition, /* resetState= */ true);
     loadControl.onPrepared();
     this.mediaSource = mediaSource;
-    mediaSource.prepareSource(player, /* isTopLevelSource= */ true, /* listener = */ this);
     setState(Player.STATE_BUFFERING);
+    mediaSource.prepareSource(player, /* isTopLevelSource= */ true, /* listener= */ this);
     handler.sendEmptyMessage(MSG_DO_SOME_WORK);
   }
 
@@ -630,48 +627,58 @@ import java.io.IOException;
 
   private void seekToInternal(SeekPosition seekPosition) throws ExoPlaybackException {
     Timeline timeline = playbackInfo.timeline;
-    if (timeline == null) {
-      pendingInitialSeekCount++;
-      pendingSeekPosition = seekPosition;
-      return;
-    }
-
-    Pair<Integer, Long> periodPosition = resolveSeekPosition(seekPosition);
-    if (periodPosition == null) {
-      // The seek position was valid for the timeline that it was performed into, but the
-      // timeline has changed and a suitable seek position could not be resolved in the new one.
-      setState(Player.STATE_ENDED);
-      // Reset, but retain the source so that it can still be used should a seek occur.
-      resetInternal(false, true);
-      // Set the playback position to 0 for notifying the eventHandler (instead of C.TIME_UNSET).
-      eventHandler.obtainMessage(MSG_SEEK_ACK, /* seekAdjusted = */ 1, 0,
-          playbackInfo.fromNewPosition(playbackInfo.periodId.periodIndex, /* startPositionUs = */ 0,
-              /* contentPositionUs= */ C.TIME_UNSET))
+    if (mediaSource == null || timeline == null) {
+      pendingInitialSeekPosition = seekPosition;
+      eventHandler
+          .obtainMessage(MSG_SEEK_ACK, /* seekAdjusted */ 0, 0, playbackInfo)
           .sendToTarget();
       return;
     }
 
     boolean seekPositionAdjusted = seekPosition.windowPositionUs == C.TIME_UNSET;
-    int periodIndex = periodPosition.first;
-    long periodPositionUs = periodPosition.second;
-    long contentPositionUs = periodPositionUs;
-    MediaPeriodId periodId =
-        mediaPeriodInfoSequence.resolvePeriodPositionForAds(periodIndex, periodPositionUs);
-    if (periodId.isAd()) {
-      seekPositionAdjusted = true;
-      periodPositionUs = 0;
-    }
     try {
-      if (periodId.equals(playbackInfo.periodId)
-          && ((periodPositionUs / 1000) == (playbackInfo.positionUs / 1000))) {
-        // Seek position equals the current position. Do nothing.
+      Pair<Integer, Long> periodPosition = resolveSeekPosition(seekPosition);
+      if (periodPosition == null) {
+        // The seek position was valid for the timeline that it was performed into, but the
+        // timeline has changed and a suitable seek position could not be resolved in the new one.
+        setState(Player.STATE_ENDED);
+        // Reset, but retain the source so that it can still be used should a seek occur.
+        resetInternal(
+            /* releaseMediaSource= */ false, /* resetPosition= */ true, /* resetState= */ false);
+        seekPositionAdjusted = true;
         return;
       }
-      long newPeriodPositionUs = seekToPeriodPosition(periodId, periodPositionUs);
-      seekPositionAdjusted |= periodPositionUs != newPeriodPositionUs;
-      periodPositionUs = newPeriodPositionUs;
+
+      int periodIndex = periodPosition.first;
+      long periodPositionUs = periodPosition.second;
+      long contentPositionUs = periodPositionUs;
+      MediaPeriodId periodId =
+          mediaPeriodInfoSequence.resolvePeriodPositionForAds(periodIndex, periodPositionUs);
+      if (periodId.isAd()) {
+        seekPositionAdjusted = true;
+        periodPositionUs = 0;
+      }
+      try {
+        if (periodId.equals(playbackInfo.periodId)) {
+          long adjustedPeriodPositionUs = periodPositionUs;
+          if (playingPeriodHolder != null) {
+            adjustedPeriodPositionUs =
+                playingPeriodHolder.mediaPeriod.getAdjustedSeekPositionUs(
+                    adjustedPeriodPositionUs, SeekParameters.DEFAULT);
+          }
+          if ((adjustedPeriodPositionUs / 1000) == (playbackInfo.positionUs / 1000)) {
+            // Seek will be performed to the current position. Do nothing.
+            periodPositionUs = playbackInfo.positionUs;
+            return;
+          }
+        }
+        long newPeriodPositionUs = seekToPeriodPosition(periodId, periodPositionUs);
+        seekPositionAdjusted |= periodPositionUs != newPeriodPositionUs;
+        periodPositionUs = newPeriodPositionUs;
+      } finally {
+        playbackInfo = playbackInfo.fromNewPosition(periodId, periodPositionUs, contentPositionUs);
+      }
     } finally {
-      playbackInfo = playbackInfo.fromNewPosition(periodId, periodPositionUs, contentPositionUs);
       eventHandler.obtainMessage(MSG_SEEK_ACK, seekPositionAdjusted ? 1 : 0, 0, playbackInfo)
           .sendToTarget();
     }
@@ -765,14 +772,21 @@ import java.io.IOException;
     mediaClock.setPlaybackParameters(playbackParameters);
   }
 
-  private void stopInternal() {
-    resetInternal(/* releaseMediaSource= */ true, /* resetPosition= */ false);
+  private void setSeekParametersInternal(SeekParameters seekParameters) {
+    this.seekParameters = seekParameters;
+  }
+
+  private void stopInternal(boolean reset, boolean acknowledgeStop) {
+    resetInternal(
+        /* releaseMediaSource= */ true, /* resetPosition= */ reset, /* resetState= */ reset);
+    notifySourceInfoRefresh(acknowledgeStop);
     loadControl.onStopped();
     setState(Player.STATE_IDLE);
   }
 
   private void releaseInternal() {
-    resetInternal(/* releaseMediaSource= */ true, /* resetPosition= */ true);
+    resetInternal(
+        /* releaseMediaSource= */ true, /* resetPosition= */ true, /* resetState= */ true);
     loadControl.onReleased();
     setState(Player.STATE_IDLE);
     internalPlaybackThread.quit();
@@ -782,7 +796,8 @@ import java.io.IOException;
     }
   }
 
-  private void resetInternal(boolean releaseMediaSource, boolean resetPosition) {
+  private void resetInternal(
+      boolean releaseMediaSource, boolean resetPosition, boolean resetState) {
     handler.removeMessages(MSG_DO_SOME_WORK);
     rebuffering = false;
     mediaClock.stop();
@@ -810,19 +825,22 @@ import java.io.IOException;
           ? 0
           : timeline.getWindow(timeline.getFirstWindowIndex(shuffleModeEnabled), window)
               .firstPeriodIndex;
+      pendingInitialSeekPosition = null;
       playbackInfo = playbackInfo.fromNewPosition(firstPeriodIndex, C.TIME_UNSET, C.TIME_UNSET);
     } else {
       // The new start position is the current playback position.
       playbackInfo = playbackInfo.fromNewPosition(playbackInfo.periodId, playbackInfo.positionUs,
           playbackInfo.contentPositionUs);
     }
+    if (resetState) {
+      mediaPeriodInfoSequence.setTimeline(null);
+      playbackInfo = playbackInfo.copyWithTimeline(null, null);
+    }
     if (releaseMediaSource) {
       if (mediaSource != null) {
         mediaSource.releaseSource();
         mediaSource = null;
       }
-      mediaPeriodInfoSequence.setTimeline(null);
-      playbackInfo = playbackInfo.copyWithTimeline(null, null);
     }
   }
 
@@ -992,17 +1010,13 @@ import java.io.IOException;
     playbackInfo = playbackInfo.copyWithTimeline(timeline, manifest);
 
     if (oldTimeline == null) {
-      int processedPrepareAcks = pendingPrepareCount;
-      pendingPrepareCount = 0;
-      if (pendingInitialSeekCount > 0) {
-        Pair<Integer, Long> periodPosition = resolveSeekPosition(pendingSeekPosition);
-        int processedInitialSeekCount = pendingInitialSeekCount;
-        pendingInitialSeekCount = 0;
-        pendingSeekPosition = null;
+      if (pendingInitialSeekPosition != null) {
+        Pair<Integer, Long> periodPosition = resolveSeekPosition(pendingInitialSeekPosition);
+        pendingInitialSeekPosition = null;
         if (periodPosition == null) {
           // The seek position was valid for the timeline that it was performed into, but the
           // timeline has changed and a suitable seek position could not be resolved in the new one.
-          handleSourceInfoRefreshEndedPlayback(processedPrepareAcks, processedInitialSeekCount);
+          handleSourceInfoRefreshEndedPlayback();
         } else {
           int periodIndex = periodPosition.first;
           long positionUs = periodPosition.second;
@@ -1010,11 +1024,11 @@ import java.io.IOException;
               mediaPeriodInfoSequence.resolvePeriodPositionForAds(periodIndex, positionUs);
           playbackInfo = playbackInfo.fromNewPosition(periodId, periodId.isAd() ? 0 : positionUs,
               positionUs);
-          notifySourceInfoRefresh(processedPrepareAcks, processedInitialSeekCount);
+          notifySourceInfoRefresh();
         }
       } else if (playbackInfo.startPositionUs == C.TIME_UNSET) {
         if (timeline.isEmpty()) {
-          handleSourceInfoRefreshEndedPlayback(processedPrepareAcks, 0);
+          handleSourceInfoRefreshEndedPlayback();
         } else {
           Pair<Integer, Long> defaultPosition = getPeriodPosition(timeline,
               timeline.getFirstWindowIndex(shuffleModeEnabled), C.TIME_UNSET);
@@ -1024,10 +1038,10 @@ import java.io.IOException;
               startPositionUs);
           playbackInfo = playbackInfo.fromNewPosition(periodId,
               periodId.isAd() ? 0 : startPositionUs, startPositionUs);
-          notifySourceInfoRefresh(processedPrepareAcks, 0);
+          notifySourceInfoRefresh();
         }
       } else {
-        notifySourceInfoRefresh(processedPrepareAcks, 0);
+        notifySourceInfoRefresh();
       }
       return;
     }
@@ -1154,28 +1168,21 @@ import java.io.IOException;
   }
 
   private void handleSourceInfoRefreshEndedPlayback() {
-    handleSourceInfoRefreshEndedPlayback(0, 0);
-  }
-
-  private void handleSourceInfoRefreshEndedPlayback(int prepareAcks, int seekAcks) {
     setState(Player.STATE_ENDED);
     // Reset, but retain the source so that it can still be used should a seek occur.
-    resetInternal(false, true);
-    // Set the playback position to 0 for notifying the eventHandler (instead of C.TIME_UNSET).
-    notifySourceInfoRefresh(prepareAcks, seekAcks,
-        playbackInfo.fromNewPosition(playbackInfo.periodId.periodIndex, 0, C.TIME_UNSET));
+    resetInternal(
+        /* releaseMediaSource= */ false, /* resetPosition= */ true, /* resetState= */ false);
+    notifySourceInfoRefresh();
   }
 
   private void notifySourceInfoRefresh() {
-    notifySourceInfoRefresh(0, 0);
+    notifySourceInfoRefresh(/* acknowledgeStop= */ false);
   }
 
-  private void notifySourceInfoRefresh(int prepareAcks, int seekAcks) {
-    notifySourceInfoRefresh(prepareAcks, seekAcks, playbackInfo);
-  }
-
-  private void notifySourceInfoRefresh(int prepareAcks, int seekAcks, PlaybackInfo playbackInfo) {
-    eventHandler.obtainMessage(MSG_SOURCE_INFO_REFRESHED, prepareAcks, seekAcks, playbackInfo)
+  private void notifySourceInfoRefresh(boolean acknowledgeStop) {
+    int prepareOrStopAcks = pendingPrepareCount + (acknowledgeStop ? 1 : 0);
+    pendingPrepareCount = 0;
+    eventHandler.obtainMessage(MSG_SOURCE_INFO_REFRESHED, prepareOrStopAcks, 0, playbackInfo)
         .sendToTarget();
   }
 
@@ -1265,6 +1272,10 @@ import java.io.IOException;
   }
 
   private void updatePeriods() throws ExoPlaybackException, IOException {
+    if (mediaSource == null) {
+      // The player has no media source yet.
+      return;
+    }
     if (playbackInfo.timeline == null) {
       // We're waiting to get information about periods.
       mediaSource.maybeThrowSourceInfoRefreshError();
@@ -1273,6 +1284,7 @@ import java.io.IOException;
 
     // Update the loading period if required.
     maybeUpdateLoadingPeriod();
+
     if (loadingPeriodHolder == null || loadingPeriodHolder.isFullyBuffered()) {
       setIsLoading(false);
     } else if (loadingPeriodHolder != null && !isLoading) {
@@ -1376,6 +1388,7 @@ import java.io.IOException;
     if (loadingPeriodHolder == null) {
       info = mediaPeriodInfoSequence.getFirstMediaPeriodInfo(playbackInfo);
     } else {
+      loadingPeriodHolder.reevaluateBuffer(rendererPositionUs);
       if (loadingPeriodHolder.info.isFinal || !loadingPeriodHolder.isFullyBuffered()
           || loadingPeriodHolder.info.durationUs == C.TIME_UNSET) {
         return;
@@ -1395,9 +1408,10 @@ import java.io.IOException;
       return;
     }
 
-    long rendererPositionOffsetUs = loadingPeriodHolder == null
-        ? RENDERER_TIMESTAMP_OFFSET_US
-        : (loadingPeriodHolder.getRendererOffset() + loadingPeriodHolder.info.durationUs);
+    long rendererPositionOffsetUs =
+        loadingPeriodHolder == null
+            ? (info.startPositionUs + RENDERER_TIMESTAMP_OFFSET_US)
+            : (loadingPeriodHolder.getRendererOffset() + loadingPeriodHolder.info.durationUs);
     int holderIndex = loadingPeriodHolder == null ? 0 : loadingPeriodHolder.index + 1;
     Object uid = playbackInfo.timeline.getPeriod(info.id.periodIndex, period, true).uid;
     MediaPeriodHolder newPeriodHolder = new MediaPeriodHolder(renderers, rendererCapabilities,
@@ -1430,6 +1444,7 @@ import java.io.IOException;
       // Stale event.
       return;
     }
+    loadingPeriodHolder.reevaluateBuffer(rendererPositionUs);
     maybeContinueLoading();
   }
 
@@ -1540,8 +1555,8 @@ import java.io.IOException;
     public final int index;
     public final SampleStream[] sampleStreams;
     public final boolean[] mayRetainStreamFlags;
-    public final long rendererPositionOffsetUs;
 
+    public long rendererPositionOffsetUs;
     public MediaPeriodInfo info;
     public boolean prepared;
     public boolean hasEnabledTracks;
@@ -1561,7 +1576,7 @@ import java.io.IOException;
         MediaSource mediaSource, Object periodUid, int index, MediaPeriodInfo info) {
       this.renderers = renderers;
       this.rendererCapabilities = rendererCapabilities;
-      this.rendererPositionOffsetUs = rendererPositionOffsetUs;
+      this.rendererPositionOffsetUs = rendererPositionOffsetUs - info.startPositionUs;
       this.trackSelector = trackSelector;
       this.loadControl = loadControl;
       this.mediaSource = mediaSource;
@@ -1588,8 +1603,7 @@ import java.io.IOException;
     }
 
     public long getRendererOffset() {
-      return index == 0 ? rendererPositionOffsetUs
-          : (rendererPositionOffsetUs - info.startPositionUs);
+      return rendererPositionOffsetUs;
     }
 
     public boolean isFullyBuffered() {
@@ -1615,7 +1629,14 @@ import java.io.IOException;
       prepared = true;
       selectTracks(playbackSpeed);
       long newStartPositionUs = updatePeriodTrackSelection(info.startPositionUs, false);
+      rendererPositionOffsetUs += info.startPositionUs - newStartPositionUs;
       info = info.copyWithStartPositionUs(newStartPositionUs);
+    }
+
+    public void reevaluateBuffer(long rendererPositionUs) {
+      if (prepared) {
+        mediaPeriod.reevaluateBuffer(toPeriodTime(rendererPositionUs));
+      }
     }
 
     public boolean shouldContinueLoading(long rendererPositionUs, float playbackSpeed) {
@@ -1623,8 +1644,7 @@ import java.io.IOException;
       if (nextLoadPositionUs == C.TIME_END_OF_SOURCE) {
         return false;
       } else {
-        long loadingPeriodPositionUs = toPeriodTime(rendererPositionUs);
-        long bufferedDurationUs = nextLoadPositionUs - loadingPeriodPositionUs;
+        long bufferedDurationUs = nextLoadPositionUs - toPeriodTime(rendererPositionUs);
         return loadControl.shouldContinueLoading(bufferedDurationUs, playbackSpeed);
       }
     }
@@ -1684,7 +1704,6 @@ import java.io.IOException;
           Assertions.checkState(trackSelections.get(i) == null);
         }
       }
-
       // The track selection has changed.
       loadControl.onTracksSelected(renderers, trackSelectorResult.groups, trackSelections);
       return positionUs;

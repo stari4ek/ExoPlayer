@@ -166,13 +166,18 @@ public class FakeSimpleExoPlayer extends SimpleExoPlayer {
 
     @Override
     public void stop() {
-      stop(/* quitPlaybackThread= */ false);
+      stop(/* reset= */ false);
+    }
+
+    @Override
+    public void stop(boolean reset) {
+      stopPlayback(/* quitPlaybackThread= */ false);
     }
 
     @Override
     @SuppressWarnings("ThreadJoinLoop")
     public void release() {
-      stop(/* quitPlaybackThread= */ true);
+      stopPlayback(/* quitPlaybackThread= */ true);
       while (playbackThread.isAlive()) {
         try {
           playbackThread.join();
@@ -359,6 +364,7 @@ public class FakeSimpleExoPlayer extends SimpleExoPlayer {
     public void run() {
       try {
         maybeContinueLoading();
+        mediaPeriod.discardBuffer(rendererPositionUs, /* toKeyframe= */ false);
         boolean allRenderersEnded = true;
         boolean allRenderersReadyOrEnded = true;
         if (playbackState == Player.STATE_READY) {
@@ -416,8 +422,12 @@ public class FakeSimpleExoPlayer extends SimpleExoPlayer {
       SampleStream[] sampleStreams = new SampleStream[renderers.length];
       boolean[] mayRetainStreamFlags = new boolean[renderers.length];
       Arrays.fill(mayRetainStreamFlags, true);
-      mediaPeriod.selectTracks(selectorResult.selections.getAll(), mayRetainStreamFlags,
-          sampleStreams, new boolean[renderers.length], 0);
+      mediaPeriod.selectTracks(
+          selectorResult.selections.getAll(),
+          mayRetainStreamFlags,
+          sampleStreams,
+          new boolean[renderers.length],
+          /* positionUs = */ 0);
       eventListenerHandler.post(new Runnable() {
         @Override
         public void run() {
@@ -513,7 +523,7 @@ public class FakeSimpleExoPlayer extends SimpleExoPlayer {
       }
     }
 
-    private void stop(final boolean quitPlaybackThread) {
+    private void stopPlayback(final boolean quitPlaybackThread) {
       playbackHandler.post(new Runnable() {
         @Override
         public void run () {

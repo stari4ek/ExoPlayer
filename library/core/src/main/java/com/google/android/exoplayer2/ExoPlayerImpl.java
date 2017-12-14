@@ -55,7 +55,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   private boolean shuffleModeEnabled;
   private int playbackState;
   private int pendingSeekAcks;
-  private int pendingPrepareAcks;
+  private int pendingPrepareOrStopAcks;
   private boolean waitingForInitialTimeline;
   private boolean isLoading;
   private TrackGroupArray trackGroups;
@@ -134,35 +134,9 @@ import java.util.concurrent.CopyOnWriteArraySet;
 
   @Override
   public void prepare(MediaSource mediaSource, boolean resetPosition, boolean resetState) {
-    if (!resetPosition) {
-      maskingWindowIndex = getCurrentWindowIndex();
-      maskingPeriodIndex = getCurrentPeriodIndex();
-      maskingWindowPositionMs = getCurrentPosition();
-    } else {
-      maskingWindowIndex = 0;
-      maskingPeriodIndex = 0;
-      maskingWindowPositionMs = 0;
-    }
-    if (resetState) {
-      if (!playbackInfo.timeline.isEmpty() || playbackInfo.manifest != null) {
-        playbackInfo = playbackInfo.copyWithTimeline(Timeline.EMPTY, null);
-        for (Player.EventListener listener : listeners) {
-          listener.onTimelineChanged(playbackInfo.timeline, playbackInfo.manifest,
-              Player.TIMELINE_CHANGE_REASON_RESET);
-        }
-      }
-      if (tracksSelected) {
-        tracksSelected = false;
-        trackGroups = TrackGroupArray.EMPTY;
-        trackSelections = emptyTrackSelections;
-        trackSelector.onSelectionActivated(null);
-        for (Player.EventListener listener : listeners) {
-          listener.onTracksChanged(trackGroups, trackSelections);
-        }
-      }
-    }
     waitingForInitialTimeline = true;
-    pendingPrepareAcks++;
+    pendingPrepareOrStopAcks++;
+    reset(resetPosition, resetState);
     internalPlayer.prepare(mediaSource, resetPosition);
   }
 
@@ -285,8 +259,23 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  public void setSeekParameters(@Nullable SeekParameters seekParameters) {
+    if (seekParameters == null) {
+      seekParameters = SeekParameters.DEFAULT;
+    }
+    internalPlayer.setSeekParameters(seekParameters);
+  }
+
+  @Override
   public void stop() {
-    internalPlayer.stop();
+    stop(/* reset= */ false);
+  }
+
+  @Override
+  public void stop(boolean reset) {
+    pendingPrepareOrStopAcks++;
+    reset(/* resetPosition= */ reset, /* resetState= */ reset);
+    internalPlayer.stop(reset);
   }
 
   @Override
@@ -468,14 +457,13 @@ import java.util.concurrent.CopyOnWriteArraySet;
         break;
       }
       case ExoPlayerImplInternal.MSG_SOURCE_INFO_REFRESHED: {
-        int prepareAcks = msg.arg1;
-        int seekAcks = msg.arg2;
-        handlePlaybackInfo((PlaybackInfo) msg.obj, prepareAcks, seekAcks, false,
+        int prepareOrStopAcks = msg.arg1;
+        handlePlaybackInfo((PlaybackInfo) msg.obj, prepareOrStopAcks, 0, false,
             /* ignored */ DISCONTINUITY_REASON_INTERNAL);
         break;
       }
       case ExoPlayerImplInternal.MSG_TRACKS_CHANGED: {
-        if (pendingPrepareAcks == 0) {
+        if (pendingPrepareOrStopAcks == 0) {
           TrackSelectorResult trackSelectorResult = (TrackSelectorResult) msg.obj;
           tracksSelected = true;
           trackGroups = trackSelectorResult.groups;
@@ -520,22 +508,31 @@ import java.util.concurrent.CopyOnWriteArraySet;
     }
   }
 
-  private void handlePlaybackInfo(PlaybackInfo playbackInfo, int prepareAcks, int seekAcks,
+  private void handlePlaybackInfo(PlaybackInfo playbackInfo, int prepareOrStopAcks, int seekAcks,
       boolean positionDiscontinuity, @DiscontinuityReason int positionDiscontinuityReason) {
-    Assertions.checkNotNull(playbackInfo.timeline);
-    pendingPrepareAcks -= prepareAcks;
+    pendingPrepareOrStopAcks -= prepareOrStopAcks;
     pendingSeekAcks -= seekAcks;
-    if (pendingPrepareAcks == 0 && pendingSeekAcks == 0) {
+    if (pendingPrepareOrStopAcks == 0 && pendingSeekAcks == 0) {
+      if (playbackInfo.timeline == null) {
+        // Replace internal null timeline with externally visible empty timeline.
+        playbackInfo = playbackInfo.copyWithTimeline(Timeline.EMPTY, playbackInfo.manifest);
+      }
+      if (playbackInfo.startPositionUs == C.TIME_UNSET) {
+        // Replace internal unset start position with externally visible start position of zero.
+        playbackInfo =
+            playbackInfo.fromNewPosition(
+                playbackInfo.periodId, /* startPositionUs= */ 0, playbackInfo.contentPositionUs);
+      }
       boolean timelineOrManifestChanged = this.playbackInfo.timeline != playbackInfo.timeline
           || this.playbackInfo.manifest != playbackInfo.manifest;
       this.playbackInfo = playbackInfo;
-      if (playbackInfo.timeline.isEmpty()) {
-        // Update the masking variables, which are used when the timeline is empty.
-        maskingPeriodIndex = 0;
-        maskingWindowIndex = 0;
-        maskingWindowPositionMs = 0;
-      }
       if (timelineOrManifestChanged || waitingForInitialTimeline) {
+        if (playbackInfo.timeline.isEmpty()) {
+          // Update the masking variables, which are used when the timeline becomes empty.
+          maskingPeriodIndex = 0;
+          maskingWindowIndex = 0;
+          maskingWindowPositionMs = 0;
+        }
         @Player.TimelineChangeReason int reason = waitingForInitialTimeline
             ? Player.TIMELINE_CHANGE_REASON_PREPARED : Player.TIMELINE_CHANGE_REASON_DYNAMIC;
         waitingForInitialTimeline = false;
@@ -556,6 +553,36 @@ import java.util.concurrent.CopyOnWriteArraySet;
     }
   }
 
+  private void reset(boolean resetPosition, boolean resetState) {
+    if (resetPosition) {
+      maskingWindowIndex = 0;
+      maskingPeriodIndex = 0;
+      maskingWindowPositionMs = 0;
+    } else {
+      maskingWindowIndex = getCurrentWindowIndex();
+      maskingPeriodIndex = getCurrentPeriodIndex();
+      maskingWindowPositionMs = getCurrentPosition();
+    }
+    if (resetState) {
+      if (!playbackInfo.timeline.isEmpty() || playbackInfo.manifest != null) {
+        playbackInfo = playbackInfo.copyWithTimeline(Timeline.EMPTY, null);
+        for (Player.EventListener listener : listeners) {
+          listener.onTimelineChanged(playbackInfo.timeline, playbackInfo.manifest,
+              Player.TIMELINE_CHANGE_REASON_RESET);
+        }
+      }
+      if (tracksSelected) {
+        tracksSelected = false;
+        trackGroups = TrackGroupArray.EMPTY;
+        trackSelections = emptyTrackSelections;
+        trackSelector.onSelectionActivated(null);
+        for (Player.EventListener listener : listeners) {
+          listener.onTracksChanged(trackGroups, trackSelections);
+        }
+      }
+    }
+  }
+
   private long playbackInfoPositionUsToWindowPositionMs(long positionUs) {
     long positionMs = C.usToMs(positionUs);
     if (!playbackInfo.periodId.isAd()) {
@@ -566,7 +593,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   private boolean shouldMaskPosition() {
-    return playbackInfo.timeline.isEmpty() || pendingSeekAcks > 0 || pendingPrepareAcks > 0;
+    return playbackInfo.timeline.isEmpty() || pendingSeekAcks > 0 || pendingPrepareOrStopAcks > 0;
   }
 
 }

@@ -41,6 +41,7 @@ import com.google.android.exoplayer2.testutil.Action.WaitForPositionDiscontinuit
 import com.google.android.exoplayer2.testutil.Action.WaitForSeekProcessed;
 import com.google.android.exoplayer2.testutil.Action.WaitForTimelineChanged;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 
 /**
@@ -161,6 +162,17 @@ public final class ActionSchedule {
     }
 
     /**
+     * Schedules a seek action to be executed.
+     *
+     * @param windowIndex The window to seek to.
+     * @param positionMs The seek position.
+     * @return The builder, for convenience.
+     */
+    public Builder seek(int windowIndex, long positionMs) {
+      return apply(new Seek(tag, windowIndex, positionMs));
+    }
+
+    /**
      * Schedules a seek action to be executed and waits until playback resumes after the seek.
      *
      * @param positionMs The seek position.
@@ -170,6 +182,15 @@ public final class ActionSchedule {
       return apply(new Seek(tag, positionMs))
           .apply(new WaitForSeekProcessed(tag))
           .apply(new WaitForPlaybackState(tag, Player.STATE_READY));
+    }
+
+    /**
+     * Schedules a delay until the player indicates that a seek has been processed.
+     *
+     * @return The builder, for convenience.
+     */
+    public Builder waitForSeekProcessed() {
+      return apply(new WaitForSeekProcessed(tag));
     }
 
     /**
@@ -190,6 +211,16 @@ public final class ActionSchedule {
      */
     public Builder stop() {
       return apply(new Stop(tag));
+    }
+
+    /**
+     * Schedules a stop action to be executed.
+     *
+     * @param reset Whether the player should be reset.
+     * @return The builder, for convenience.
+     */
+    public Builder stop(boolean reset) {
+      return apply(new Stop(tag, reset));
     }
 
     /**
@@ -457,11 +488,28 @@ public final class ActionSchedule {
     }
 
     @Override
-    protected void doActionImpl(SimpleExoPlayer player, MappingTrackSelector trackSelector,
-        Surface surface) {
+    protected void doActionAndScheduleNextImpl(
+        SimpleExoPlayer player,
+        MappingTrackSelector trackSelector,
+        Surface surface,
+        Handler handler,
+        ActionNode nextAction) {
+      Assertions.checkArgument(nextAction == null);
       if (callback != null) {
-        callback.onActionScheduleFinished();
+        handler.post(
+            new Runnable() {
+              @Override
+              public void run() {
+                callback.onActionScheduleFinished();
+              }
+            });
       }
+    }
+
+    @Override
+    protected void doActionImpl(
+        SimpleExoPlayer player, MappingTrackSelector trackSelector, Surface surface) {
+      // Not triggered.
     }
 
   }

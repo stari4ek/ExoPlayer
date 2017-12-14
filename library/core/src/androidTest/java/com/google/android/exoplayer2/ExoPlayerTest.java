@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2;
 
+import com.google.android.exoplayer2.Player.DefaultEventListener;
+import com.google.android.exoplayer2.Player.EventListener;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.TrackGroup;
@@ -54,7 +56,7 @@ public final class ExoPlayerTest extends TestCase {
    * error.
    */
   public void testPlayEmptyTimeline() throws Exception {
-    Timeline timeline = Timeline.EMPTY;
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 0);
     FakeRenderer renderer = new FakeRenderer();
     // TODO(b/69665207): Without waiting for the timeline update, this test is flaky as the timeline
     // update happens after the transition to STATE_ENDED and the test runner may already have been
@@ -306,11 +308,19 @@ public final class ExoPlayerTest extends TestCase {
   public void testSeekProcessedCallback() throws Exception {
     Timeline timeline = new FakeTimeline(/* windowCount= */ 2);
     ActionSchedule actionSchedule = new ActionSchedule.Builder("testSeekProcessedCallback")
-        // Initial seek before timeline preparation finished.
-        .pause().seek(10).waitForPlaybackState(Player.STATE_READY)
-        // Re-seek to same position, start playback and wait until playback reaches second window.
-        .seek(10).play().waitForPositionDiscontinuity()
-        // Seek twice in concession, expecting the first seek to be replaced.
+        // Initial seek before timeline preparation started. Expect immediate seek processed while
+        // the player is still in STATE_IDLE.
+        .pause().seek(5)
+        // Wait until the media source starts preparing and issue more initial seeks. Expect only
+        // one seek processed after the source has been prepared.
+        .waitForPlaybackState(Player.STATE_BUFFERING).seek(2).seek(10)
+        // Wait until media source prepared and re-seek to same position. Expect a seek processed
+        // while still being in STATE_READY.
+        .waitForPlaybackState(Player.STATE_READY).seek(10)
+        // Start playback and wait until playback reaches second window.
+        .play().waitForPositionDiscontinuity()
+        // Seek twice in concession, expecting the first seek to be replaced (and thus except only
+        // on seek processed callback).
         .seek(5).seek(60).build();
     final List<Integer> playbackStatesWhenSeekProcessed = new ArrayList<>();
     Player.EventListener eventListener = new Player.DefaultEventListener() {
@@ -329,10 +339,44 @@ public final class ExoPlayerTest extends TestCase {
     new ExoPlayerTestRunner.Builder()
         .setTimeline(timeline).setEventListener(eventListener).setActionSchedule(actionSchedule)
         .build().start().blockUntilEnded(TIMEOUT_MS);
-    assertEquals(3, playbackStatesWhenSeekProcessed.size());
-    assertEquals(Player.STATE_BUFFERING, (int) playbackStatesWhenSeekProcessed.get(0));
-    assertEquals(Player.STATE_READY, (int) playbackStatesWhenSeekProcessed.get(1));
-    assertEquals(Player.STATE_BUFFERING, (int) playbackStatesWhenSeekProcessed.get(2));
+    assertEquals(4, playbackStatesWhenSeekProcessed.size());
+    assertEquals(Player.STATE_IDLE, (int) playbackStatesWhenSeekProcessed.get(0));
+    assertEquals(Player.STATE_BUFFERING, (int) playbackStatesWhenSeekProcessed.get(1));
+    assertEquals(Player.STATE_READY, (int) playbackStatesWhenSeekProcessed.get(2));
+    assertEquals(Player.STATE_BUFFERING, (int) playbackStatesWhenSeekProcessed.get(3));
+  }
+
+  public void testSeekProcessedCalledWithIllegalSeekPosition() throws Exception {
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testSeekProcessedCalledWithIllegalSeekPosition")
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            // Cause an illegal seek exception by seeking to an invalid position while the media
+            // source is still being prepared and the player doesn't immediately know it will fail.
+            // Because the media source prepares immediately, the exception will be thrown when the
+            // player processed the seek.
+            .seek(/* windowIndex= */ 100, /* positionMs= */ 0)
+            .waitForPlaybackState(Player.STATE_IDLE)
+            .build();
+    final boolean[] onSeekProcessedCalled = new boolean[1];
+    EventListener listener =
+        new DefaultEventListener() {
+          @Override
+          public void onSeekProcessed() {
+            onSeekProcessedCalled[0] = true;
+          }
+        };
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setActionSchedule(actionSchedule)
+            .setEventListener(listener)
+            .build();
+    try {
+      testRunner.start().blockUntilActionScheduleFinished(TIMEOUT_MS).blockUntilEnded(TIMEOUT_MS);
+      fail();
+    } catch (ExoPlaybackException e) {
+      // Expected exception.
+    }
+    assertTrue(onSeekProcessedCalled[0]);
   }
 
   public void testSeekDiscontinuity() throws Exception {
@@ -620,5 +664,248 @@ public final class ExoPlayerTest extends TestCase {
             .build();
     new ExoPlayerTestRunner.Builder().setMediaSource(mediaSource).setActionSchedule(actionSchedule)
         .build().start().blockUntilEnded(TIMEOUT_MS);
+  }
+
+  public void testStopDoesNotResetPosition() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testStopDoesNotResetPosition")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop()
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(timeline);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
+    testRunner.assertNoPositionDiscontinuities();
+  }
+
+  public void testStopWithoutResetDoesNotResetPosition() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testStopWithoutResetDoesNotReset")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop(/* reset= */ false)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(timeline);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
+    testRunner.assertNoPositionDiscontinuities();
+  }
+
+  public void testStopWithResetDoesResetPosition() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testStopWithResetDoesReset")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop(/* reset= */ true)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(timeline, Timeline.EMPTY);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED,
+        Player.TIMELINE_CHANGE_REASON_RESET);
+    testRunner.assertNoPositionDiscontinuities();
+  }
+
+  public void testStopWithoutResetReleasesMediaSource() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    final FakeMediaSource mediaSource =
+        new FakeMediaSource(timeline, /* manifest= */ null, Builder.VIDEO_FORMAT);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testStopReleasesMediaSource")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop(/* reset= */ false)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilActionScheduleFinished(TIMEOUT_MS);
+    mediaSource.assertReleased();
+    testRunner.blockUntilEnded(TIMEOUT_MS);
+  }
+
+  public void testStopWithResetReleasesMediaSource() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    final FakeMediaSource mediaSource =
+        new FakeMediaSource(timeline, /* manifest= */ null, Builder.VIDEO_FORMAT);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testStopReleasesMediaSource")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop(/* reset= */ true)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilActionScheduleFinished(TIMEOUT_MS);
+    mediaSource.assertReleased();
+    testRunner.blockUntilEnded(TIMEOUT_MS);
+  }
+
+  public void testRepreparationDoesNotResetAfterStopWithReset() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    MediaSource secondSource = new FakeMediaSource(timeline, null, Builder.VIDEO_FORMAT);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testRepreparationAfterStop")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop(/* reset= */ true)
+        .waitForPlaybackState(Player.STATE_IDLE)
+        .prepareSource(secondSource)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .setExpectedPlayerEndedCount(2)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(timeline, Timeline.EMPTY, timeline);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED,
+        Player.TIMELINE_CHANGE_REASON_RESET, Player.TIMELINE_CHANGE_REASON_PREPARED);
+    testRunner.assertNoPositionDiscontinuities();
+  }
+
+  public void testSeekBeforeRepreparationPossibleAfterStopWithReset() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    Timeline secondTimeline = new FakeTimeline(/* windowCount= */ 2);
+    MediaSource secondSource = new FakeMediaSource(secondTimeline, null, Builder.VIDEO_FORMAT);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testSeekAfterStopWithReset")
+        .waitForPlaybackState(Player.STATE_READY)
+        .stop(/* reset= */ true)
+        .waitForPlaybackState(Player.STATE_IDLE)
+        // If we were still using the first timeline, this would throw.
+        .seek(/* windowIndex= */ 1, /* positionMs= */ 0)
+        .prepareSource(secondSource, /* resetPosition= */ false, /* resetState= */ true)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .setExpectedPlayerEndedCount(2)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(timeline, Timeline.EMPTY, secondTimeline);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED,
+        Player.TIMELINE_CHANGE_REASON_RESET, Player.TIMELINE_CHANGE_REASON_PREPARED);
+    testRunner.assertPositionDiscontinuityReasonsEqual(Player.DISCONTINUITY_REASON_SEEK);
+    testRunner.assertPlayedPeriodIndices(0, 1);
+  }
+
+  public void testStopDuringPreparationOverwritesPreparation() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    ActionSchedule actionSchedule = new ActionSchedule.Builder("testStopOverwritesPrepare")
+        .waitForPlaybackState(Player.STATE_BUFFERING)
+        .stop(true)
+        .build();
+    ExoPlayerTestRunner testRunner = new ExoPlayerTestRunner.Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(Timeline.EMPTY);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
+    testRunner.assertNoPositionDiscontinuities();
+  }
+
+  public void testStopAndSeekAfterStopDoesNotResetTimeline() throws Exception {
+    // Combining additional stop and seek after initial stop in one test to get the seek processed
+    // callback which ensures that all operations have been processed by the player.
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testStopTwice")
+            .waitForPlaybackState(Player.STATE_READY)
+            .stop(false)
+            .stop(false)
+            .seek(0)
+            .waitForSeekProcessed()
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setTimeline(timeline)
+            .setActionSchedule(actionSchedule)
+            .build()
+            .start()
+            .blockUntilActionScheduleFinished(TIMEOUT_MS)
+            .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertTimelinesEqual(timeline);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
+    testRunner.assertPositionDiscontinuityReasonsEqual(Player.DISCONTINUITY_REASON_SEEK);
+  }
+
+  public void testReprepareAfterPlaybackError() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testReprepareAfterPlaybackError")
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            // Cause an internal exception by seeking to an invalid position while the media source
+            // is still being prepared and the player doesn't immediately know it will fail.
+            .seek(/* windowIndex= */ 100, /* positionMs= */ 0)
+            .waitForPlaybackState(Player.STATE_IDLE)
+            .prepareSource(
+                new FakeMediaSource(timeline, /* manifest= */ null),
+                /* resetPosition= */ false,
+                /* resetState= */ false)
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setTimeline(timeline)
+            .setActionSchedule(actionSchedule)
+            .build();
+    try {
+      testRunner.start().blockUntilActionScheduleFinished(TIMEOUT_MS).blockUntilEnded(TIMEOUT_MS);
+      fail();
+    } catch (ExoPlaybackException e) {
+      // Expected exception.
+    }
+    testRunner.assertTimelinesEqual(timeline, timeline);
+    testRunner.assertTimelineChangeReasonsEqual(
+        Player.TIMELINE_CHANGE_REASON_PREPARED, Player.TIMELINE_CHANGE_REASON_PREPARED);
+  }
+
+  public void testPlaybackErrorDuringSourceInfoRefreshStillUpdatesTimeline() throws Exception {
+    final Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    final FakeMediaSource mediaSource =
+        new FakeMediaSource(/* timeline= */ null, /* manifest= */ null);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testPlaybackErrorDuringSourceInfoRefreshStillUpdatesTimeline")
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            // Cause an internal exception by seeking to an invalid position while the media source
+            // is still being prepared. The error will be thrown while the player handles the new
+            // source info.
+            .seek(/* windowIndex= */ 100, /* positionMs= */ 0)
+            .executeRunnable(
+                new Runnable() {
+                  @Override
+                  public void run() {
+                    mediaSource.setNewSourceInfo(timeline, /* manifest= */ null);
+                  }
+                })
+            .waitForPlaybackState(Player.STATE_IDLE)
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setMediaSource(mediaSource)
+            .setActionSchedule(actionSchedule)
+            .build();
+    try {
+      testRunner.start().blockUntilActionScheduleFinished(TIMEOUT_MS).blockUntilEnded(TIMEOUT_MS);
+      fail();
+    } catch (ExoPlaybackException e) {
+      // Expected exception.
+    }
+    testRunner.assertTimelinesEqual(timeline);
+    testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
   }
 }

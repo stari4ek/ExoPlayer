@@ -20,10 +20,11 @@ import android.util.Pair;
 import android.util.SparseIntArray;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
-import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener.EventDispatcher;
+import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.EmptySampleStream;
 import com.google.android.exoplayer2.source.MediaPeriod;
+import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.TrackGroup;
@@ -271,6 +272,11 @@ import java.util.Map;
   }
 
   @Override
+  public void reevaluateBuffer(long positionUs) {
+    compositeSequenceableLoader.reevaluateBuffer(positionUs);
+  }
+
+  @Override
   public boolean continueLoading(long positionUs) {
     return compositeSequenceableLoader.continueLoading(positionUs);
   }
@@ -298,6 +304,11 @@ import java.util.Map;
     for (EventSampleStream sampleStream : eventSampleStreams) {
       sampleStream.seekToUs(positionUs);
     }
+    return positionUs;
+  }
+
+  @Override
+  public long getAdjustedSeekPositionUs(long positionUs, SeekParameters seekParameters) {
     return positionUs;
   }
 

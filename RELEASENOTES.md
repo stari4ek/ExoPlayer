@@ -2,27 +2,66 @@
 
 ### dev-v2 (not yet released) ###
 
-* Allow more flexible loading strategy when playing media containing multiple
-  sub-streams, by allowing injection of custom `CompositeSequenceableLoader`
-  factories through `DashMediaSource.Builder`, `HlsMediaSource.Builder`,
-  `SsMediaSource.Builder`, and `MergingMediaSource`.
-* Add Builder to `ExtractorMediaSource`, `HlsMediaSource`, `SsMediaSource`,
-  `DashMediaSource`, `SingleSampleMediaSource`.
-* DASH:
-  * Support in-MPD EventStream.
-* Allow a back-buffer of media to be retained behind the current playback
-  position, for fast backward seeking. The back-buffer can be configured by
-  custom `LoadControl` implementations.
+* Player interface:
+  * Add optional parameter to `stop` to reset the player when stopping.
+  * Add a reason to `EventListener.onTimelineChanged` to distinguish between
+    initial preparation, reset and dynamic updates.
+* Buffering:
+  * Allow a back-buffer of media to be retained behind the current playback
+    position, for fast backward seeking. The back-buffer can be configured by
+    custom `LoadControl` implementations.
+  * Add ability for `SequenceableLoader` to reevaluate its buffer and discard
+    buffered media so that it can be re-buffered in a different quality.
+  * Allow more flexible loading strategy when playing media containing multiple
+    sub-streams, by allowing injection of custom `CompositeSequenceableLoader`
+    factories through `DashMediaSource.Factory`, `HlsMediaSource.Factory`,
+    `SsMediaSource.Factory`, and `MergingMediaSource`.
+* DASH: Support DASH manifest EventStream elements.
+* HLS: Add opt-in support for chunkless preparation in HLS. This allows an
+  HLS source to finish preparation without downloading any chunks, which can
+  significantly reduce initial buffering time
+  ([#3149](https://github.com/google/ExoPlayer/issues/3149)).
+* DefaultTrackSelector: Replace `DefaultTrackSelector.Parameters` copy methods
+  with a builder.
 * New Cast extension: Simplifies toggling between local and Cast playbacks.
-* Support 32-bit PCM float output from `DefaultAudioSink`, and add an option to
-  use this with `FfmpegAudioRenderer`.
-* Support extraction and decoding of Dolby Atmos
-  ([#2465](https://github.com/google/ExoPlayer/issues/2465)).
-* Added a reason to `EventListener.onTimelineChanged` to distinguish between
-  initial preparation, reset and dynamic updates.
+
+### 2.6.1 ###
+
+* Add factories to `ExtractorMediaSource`, `HlsMediaSource`, `SsMediaSource`,
+  `DashMediaSource` and `SingleSampleMediaSource`.
+* Use the same listener `MediaSourceEventListener` for all MediaSource
+  implementations.
+* IMA extension:
+  * Support non-ExtractorMediaSource ads
+    ([#3302](https://github.com/google/ExoPlayer/issues/3302)).
+  * Skip ads before the ad preceding the player's initial seek position
+    ([#3527](https://github.com/google/ExoPlayer/issues/3527)).
+  * Fix ad loading when there is no preroll.
+  * Add an option to turn off hiding controls during ad playback
+    ([#3532](https://github.com/google/ExoPlayer/issues/3532)).
+  * Support specifying an ads response instead of an ad tag
+    ([#3548](https://github.com/google/ExoPlayer/issues/3548)).
+  * Support overriding the ad load timeout
+    ([#3556](https://github.com/google/ExoPlayer/issues/3556)).
+* DASH: Support time zone designators in ISO8601 UTCTiming elements
+  ([#3524](https://github.com/google/ExoPlayer/issues/3524)).
+* Audio:
+  * Support 32-bit PCM float output from `DefaultAudioSink`, and add an option
+    to use this with `FfmpegAudioRenderer`.
+  * Support extraction and decoding of Dolby Atmos
+    ([#2465](https://github.com/google/ExoPlayer/issues/2465)).
+  * Fix handling of playback parameter changes while paused when followed by a
+    seek.
+* SimpleExoPlayer: Allow multiple audio and video debug listeners.
 * DefaultTrackSelector: Support undefined language text track selection when the
   preferred language is not available
   ([#2980](https://github.com/google/ExoPlayer/issues/2980)).
+* Use surfaceless context for secure `DummySurface`, if available
+  ([#3558](https://github.com/google/ExoPlayer/issues/3558)).
+* FLV: Fix playback of live streams that do not contain an audio track
+  ([#3188](https://github.com/google/ExoPlayer/issues/3188)).
+* CEA-608: Fix handling of row count changes in roll-up mode
+  ([#3513](https://github.com/google/ExoPlayer/issues/3513)).
 
 ### 2.6.0 ###
 
