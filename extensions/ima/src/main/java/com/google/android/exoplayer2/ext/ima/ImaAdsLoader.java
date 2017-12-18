@@ -151,6 +151,9 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
   private static final String IMA_SDK_SETTINGS_PLAYER_TYPE = "google/exo.ext.ima";
   private static final String IMA_SDK_SETTINGS_PLAYER_VERSION = ExoPlayerLibraryInfo.VERSION;
 
+  /** The value used in {@link VideoProgressUpdate}s to indicate an unset duration. */
+  private static final long IMA_DURATION_UNSET = -1L;
+
   /**
    * Threshold before the end of content at which IMA is notified that content is complete if the
    * player buffers, in milliseconds.
@@ -533,6 +536,8 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
 
   @Override
   public VideoProgressUpdate getContentProgress() {
+    boolean hasContentDuration = contentDurationMs != C.TIME_UNSET;
+    long contentDurationMs = hasContentDuration ? this.contentDurationMs : IMA_DURATION_UNSET;
     if (player == null) {
       return lastContentProgress;
     } else if (pendingContentPositionMs != C.TIME_UNSET) {
@@ -542,7 +547,7 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
       long elapsedSinceEndMs = SystemClock.elapsedRealtime() - fakeContentProgressElapsedRealtimeMs;
       long fakePositionMs = fakeContentProgressOffsetMs + elapsedSinceEndMs;
       return new VideoProgressUpdate(fakePositionMs, contentDurationMs);
-    } else if (playingAd || contentDurationMs == C.TIME_UNSET) {
+    } else if (imaAdState != IMA_AD_STATE_NONE || !hasContentDuration) {
       return VideoProgressUpdate.VIDEO_TIME_NOT_READY;
     } else {
       return new VideoProgressUpdate(player.getCurrentPosition(), contentDurationMs);
@@ -555,7 +560,7 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
   public VideoProgressUpdate getAdProgress() {
     if (player == null) {
       return lastAdProgress;
-    } else if (!playingAd) {
+    } else if (imaAdState == IMA_AD_STATE_NONE) {
       return VideoProgressUpdate.VIDEO_TIME_NOT_READY;
     } else {
       long adDuration = player.getDuration();
@@ -698,6 +703,9 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
       for (int i = 0; i < adCallbacks.size(); i++) {
         adCallbacks.get(i).onEnded();
       }
+      if (DEBUG) {
+        Log.d(TAG, "VideoAdPlayerCallback.onEnded in onPlayerStateChanged");
+      }
     }
   }
 
@@ -793,15 +801,19 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
 
   private void updateImaStateForPlayerState() {
     boolean wasPlayingAd = playingAd;
+    int oldPlayingAdIndexInAdGroup = playingAdIndexInAdGroup;
     playingAd = player.isPlayingAd();
+    playingAdIndexInAdGroup = playingAd ? player.getCurrentAdIndexInAdGroup() : C.INDEX_UNSET;
     if (!sentContentComplete) {
-      boolean adFinished = (wasPlayingAd && !playingAd)
-          || playingAdIndexInAdGroup != player.getCurrentAdIndexInAdGroup();
+      boolean adFinished = wasPlayingAd && playingAdIndexInAdGroup != oldPlayingAdIndexInAdGroup;
       if (adFinished) {
         // IMA is waiting for the ad playback to finish so invoke the callback now.
         // Either CONTENT_RESUME_REQUESTED will be passed next, or playAd will be called again.
         for (int i = 0; i < adCallbacks.size(); i++) {
           adCallbacks.get(i).onEnded();
+        }
+        if (DEBUG) {
+          Log.d(TAG, "VideoAdPlayerCallback.onEnded in onTimelineChanged/onPositionDiscontinuity");
         }
       }
       if (!wasPlayingAd && playingAd) {
@@ -814,7 +826,6 @@ public final class ImaAdsLoader extends Player.DefaultEventListener implements A
         }
       }
     }
-    playingAdIndexInAdGroup = playingAd ? player.getCurrentAdIndexInAdGroup() : C.INDEX_UNSET;
   }
 
   private void resumeContentInternal() {

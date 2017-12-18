@@ -16,6 +16,12 @@
     sub-streams, by allowing injection of custom `CompositeSequenceableLoader`
     factories through `DashMediaSource.Factory`, `HlsMediaSource.Factory`,
     `SsMediaSource.Factory`, and `MergingMediaSource`.
+* Add `ExoPlayer.setSeekParameters` for controlling how seek operations are
+  performed. The `SeekParameters` class contains defaults for exact seeking and
+  seeking to the closest sync points before, either side or after specified seek
+  positions.
+  * Note: `SeekParameters` are only currently effective when playing
+    `ExtractorMediaSource`s (i.e. progressive streams).
 * DASH: Support DASH manifest EventStream elements.
 * HLS: Add opt-in support for chunkless preparation in HLS. This allows an
   HLS source to finish preparation without downloading any chunks, which can
@@ -23,6 +29,8 @@
   ([#3149](https://github.com/google/ExoPlayer/issues/3149)).
 * DefaultTrackSelector: Replace `DefaultTrackSelector.Parameters` copy methods
   with a builder.
+* DefaultTrackSelector: Support disabling of individual text track selection
+  flags.
 * New Cast extension: Simplifies toggling between local and Cast playbacks.
 
 ### 2.6.1 ###
@@ -56,6 +64,8 @@
 * DefaultTrackSelector: Support undefined language text track selection when the
   preferred language is not available
   ([#2980](https://github.com/google/ExoPlayer/issues/2980)).
+* Add options to `DefaultLoadControl` to set maximum buffer size in bytes and
+  to choose whether size or time constraints are prioritized.
 * Use surfaceless context for secure `DummySurface`, if available
   ([#3558](https://github.com/google/ExoPlayer/issues/3558)).
 * FLV: Fix playback of live streams that do not contain an audio track
