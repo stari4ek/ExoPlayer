@@ -25,6 +25,7 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
 import com.google.android.exoplayer2.ExoPlaybackException;
+import com.google.android.exoplayer2.PlayerMessage;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
@@ -281,7 +282,8 @@ public class MediaSourceTestRunner {
 
   }
 
-  private static class EventHandlingExoPlayer extends StubExoPlayer implements Handler.Callback {
+  private static class EventHandlingExoPlayer extends StubExoPlayer
+      implements Handler.Callback, PlayerMessage.Sender {
 
     private final Handler handler;
 
@@ -290,23 +292,28 @@ public class MediaSourceTestRunner {
     }
 
     @Override
-    public void sendMessages(ExoPlayerMessage... messages) {
-      handler.obtainMessage(0, messages).sendToTarget();
+    public PlayerMessage createMessage(PlayerMessage.Target target) {
+      return new PlayerMessage(
+          /* sender= */ this, target, Timeline.EMPTY, /* defaultWindowIndex= */ 0, handler);
     }
 
     @Override
+    public void sendMessage(PlayerMessage message) {
+      handler.obtainMessage(0, message).sendToTarget();
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
     public boolean handleMessage(Message msg) {
-      ExoPlayerMessage[] messages = (ExoPlayerMessage[]) msg.obj;
-      for (ExoPlayerMessage message : messages) {
-        try {
-          message.target.handleMessage(message.messageType, message.message);
-        } catch (ExoPlaybackException e) {
-          fail("Unexpected ExoPlaybackException.");
-        }
+      PlayerMessage message = (PlayerMessage) msg.obj;
+      try {
+        message.getTarget().handleMessage(message.getType(), message.getPayload());
+        message.markAsProcessed(/* isDelivered= */ true);
+      } catch (ExoPlaybackException e) {
+        fail("Unexpected ExoPlaybackException.");
       }
       return true;
     }
-
   }
 
 }

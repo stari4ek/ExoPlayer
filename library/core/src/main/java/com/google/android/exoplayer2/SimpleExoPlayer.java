@@ -38,8 +38,10 @@ import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
+import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoRendererEventListener;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArraySet;
 
@@ -93,8 +95,6 @@ public class SimpleExoPlayer implements ExoPlayer {
   private final CopyOnWriteArraySet<MetadataOutput> metadataOutputs;
   private final CopyOnWriteArraySet<VideoRendererEventListener> videoDebugListeners;
   private final CopyOnWriteArraySet<AudioRendererEventListener> audioDebugListeners;
-  private final int videoRendererCount;
-  private final int audioRendererCount;
 
   private Format videoFormat;
   private Format audioFormat;
@@ -111,8 +111,28 @@ public class SimpleExoPlayer implements ExoPlayer {
   private AudioAttributes audioAttributes;
   private float audioVolume;
 
-  protected SimpleExoPlayer(RenderersFactory renderersFactory, TrackSelector trackSelector,
-      LoadControl loadControl) {
+  /**
+   * @param renderersFactory A factory for creating {@link Renderer}s to be used by the instance.
+   * @param trackSelector The {@link TrackSelector} that will be used by the instance.
+   * @param loadControl The {@link LoadControl} that will be used by the instance.
+   */
+  protected SimpleExoPlayer(
+      RenderersFactory renderersFactory, TrackSelector trackSelector, LoadControl loadControl) {
+    this(renderersFactory, trackSelector, loadControl, Clock.DEFAULT);
+  }
+
+  /**
+   * @param renderersFactory A factory for creating {@link Renderer}s to be used by the instance.
+   * @param trackSelector The {@link TrackSelector} that will be used by the instance.
+   * @param loadControl The {@link LoadControl} that will be used by the instance.
+   * @param clock The {@link Clock} that will be used by the instance. Should always be {@link
+   *     Clock#DEFAULT}, unless the player is being used from a test.
+   */
+  protected SimpleExoPlayer(
+      RenderersFactory renderersFactory,
+      TrackSelector trackSelector,
+      LoadControl loadControl,
+      Clock clock) {
     componentListener = new ComponentListener();
     videoListeners = new CopyOnWriteArraySet<>();
     textOutputs = new CopyOnWriteArraySet<>();
@@ -124,25 +144,6 @@ public class SimpleExoPlayer implements ExoPlayer {
     renderers = renderersFactory.createRenderers(eventHandler, componentListener, componentListener,
         componentListener, componentListener);
 
-    // Obtain counts of video and audio renderers.
-    int videoRendererCount = 0;
-    int audioRendererCount = 0;
-    for (Renderer renderer : renderers) {
-      switch (renderer.getTrackType()) {
-        case C.TRACK_TYPE_VIDEO:
-          videoRendererCount++;
-          break;
-        case C.TRACK_TYPE_AUDIO:
-          audioRendererCount++;
-          break;
-        default:
-          // Don't count other track types.
-          break;
-      }
-    }
-    this.videoRendererCount = videoRendererCount;
-    this.audioRendererCount = audioRendererCount;
-
     // Set initial values.
     audioVolume = 1;
     audioSessionId = C.AUDIO_SESSION_ID_UNSET;
@@ -150,7 +151,7 @@ public class SimpleExoPlayer implements ExoPlayer {
     videoScalingMode = C.VIDEO_SCALING_MODE_DEFAULT;
 
     // Build the player and associated objects.
-    player = createExoPlayerImpl(renderers, trackSelector, loadControl);
+    player = createExoPlayerImpl(renderers, trackSelector, loadControl, clock);
   }
 
   /**
@@ -163,15 +164,15 @@ public class SimpleExoPlayer implements ExoPlayer {
    */
   public void setVideoScalingMode(@C.VideoScalingMode int videoScalingMode) {
     this.videoScalingMode = videoScalingMode;
-    ExoPlayerMessage[] messages = new ExoPlayerMessage[videoRendererCount];
-    int count = 0;
     for (Renderer renderer : renderers) {
       if (renderer.getTrackType() == C.TRACK_TYPE_VIDEO) {
-        messages[count++] = new ExoPlayerMessage(renderer, C.MSG_SET_SCALING_MODE,
-            videoScalingMode);
+        player
+            .createMessage(renderer)
+            .setType(C.MSG_SET_SCALING_MODE)
+            .setPayload(videoScalingMode)
+            .send();
       }
     }
-    player.sendMessages(messages);
   }
 
   /**
@@ -352,15 +353,15 @@ public class SimpleExoPlayer implements ExoPlayer {
    */
   public void setAudioAttributes(AudioAttributes audioAttributes) {
     this.audioAttributes = audioAttributes;
-    ExoPlayerMessage[] messages = new ExoPlayerMessage[audioRendererCount];
-    int count = 0;
     for (Renderer renderer : renderers) {
       if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-        messages[count++] = new ExoPlayerMessage(renderer, C.MSG_SET_AUDIO_ATTRIBUTES,
-            audioAttributes);
+        player
+            .createMessage(renderer)
+            .setType(C.MSG_SET_AUDIO_ATTRIBUTES)
+            .setPayload(audioAttributes)
+            .send();
       }
     }
-    player.sendMessages(messages);
   }
 
   /**
@@ -377,14 +378,11 @@ public class SimpleExoPlayer implements ExoPlayer {
    */
   public void setVolume(float audioVolume) {
     this.audioVolume = audioVolume;
-    ExoPlayerMessage[] messages = new ExoPlayerMessage[audioRendererCount];
-    int count = 0;
     for (Renderer renderer : renderers) {
       if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-        messages[count++] = new ExoPlayerMessage(renderer, C.MSG_SET_VOLUME, audioVolume);
+        player.createMessage(renderer).setType(C.MSG_SET_VOLUME).setPayload(audioVolume).send();
       }
     }
-    player.sendMessages(messages);
   }
 
   /**
@@ -771,6 +769,11 @@ public class SimpleExoPlayer implements ExoPlayer {
   }
 
   @Override
+  public PlayerMessage createMessage(PlayerMessage.Target target) {
+    return player.createMessage(target);
+  }
+
+  @Override
   public void blockingSendMessages(ExoPlayerMessage... messages) {
     player.blockingSendMessages(messages);
   }
@@ -883,11 +886,12 @@ public class SimpleExoPlayer implements ExoPlayer {
    * @param renderers The {@link Renderer}s that will be used by the instance.
    * @param trackSelector The {@link TrackSelector} that will be used by the instance.
    * @param loadControl The {@link LoadControl} that will be used by the instance.
+   * @param clock The {@link Clock} that will be used by this instance.
    * @return A new {@link ExoPlayer} instance.
    */
   protected ExoPlayer createExoPlayerImpl(
-      Renderer[] renderers, TrackSelector trackSelector, LoadControl loadControl) {
-    return new ExoPlayerImpl(renderers, trackSelector, loadControl);
+      Renderer[] renderers, TrackSelector trackSelector, LoadControl loadControl, Clock clock) {
+    return new ExoPlayerImpl(renderers, trackSelector, loadControl, clock);
   }
 
   private void removeSurfaceCallbacks() {
@@ -908,22 +912,26 @@ public class SimpleExoPlayer implements ExoPlayer {
   private void setVideoSurfaceInternal(Surface surface, boolean ownsSurface) {
     // Note: We don't turn this method into a no-op if the surface is being replaced with itself
     // so as to ensure onRenderedFirstFrame callbacks are still called in this case.
-    ExoPlayerMessage[] messages = new ExoPlayerMessage[videoRendererCount];
-    int count = 0;
+    List<PlayerMessage> messages = new ArrayList<>();
     for (Renderer renderer : renderers) {
       if (renderer.getTrackType() == C.TRACK_TYPE_VIDEO) {
-        messages[count++] = new ExoPlayerMessage(renderer, C.MSG_SET_SURFACE, surface);
+        messages.add(
+            player.createMessage(renderer).setType(C.MSG_SET_SURFACE).setPayload(surface).send());
       }
     }
     if (this.surface != null && this.surface != surface) {
       // We're replacing a surface. Block to ensure that it's not accessed after the method returns.
-      player.blockingSendMessages(messages);
+      try {
+        for (PlayerMessage message : messages) {
+          message.blockUntilDelivered();
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
       // If we created the previous surface, we are responsible for releasing it.
       if (this.ownsSurface) {
         this.surface.release();
       }
-    } else {
-      player.sendMessages(messages);
     }
     this.surface = surface;
     this.ownsSurface = ownsSurface;

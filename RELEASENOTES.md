@@ -6,6 +6,10 @@
   * Add optional parameter to `stop` to reset the player when stopping.
   * Add a reason to `EventListener.onTimelineChanged` to distinguish between
     initial preparation, reset and dynamic updates.
+  * Replaced `ExoPlayer.sendMessages` with `ExoPlayer.createMessage` to allow
+    more customization of the message. Now supports setting a message delivery
+    playback position and/or a delivery handler.
+    ([#2189](https://github.com/google/ExoPlayer/issues/2189)).
 * Buffering:
   * Allow a back-buffer of media to be retained behind the current playback
     position, for fast backward seeking. The back-buffer can be configured by
@@ -32,6 +36,8 @@
 * DefaultTrackSelector: Support disabling of individual text track selection
   flags.
 * New Cast extension: Simplifies toggling between local and Cast playbacks.
+* Add support for extracting 32-bit WAVE files
+ ([#3379](https://github.com/google/ExoPlayer/issues/3379)).
 
 ### 2.6.1 ###
 
@@ -72,6 +78,8 @@
   ([#3188](https://github.com/google/ExoPlayer/issues/3188)).
 * CEA-608: Fix handling of row count changes in roll-up mode
   ([#3513](https://github.com/google/ExoPlayer/issues/3513)).
+* Prevent period transitions when seeking to the end of a period when paused
+  ([#2439](https://github.com/google/ExoPlayer/issues/2439)).
 
 ### 2.6.0 ###
 
@@ -215,7 +223,7 @@
   easy and seamless way of incorporating display ads into ExoPlayer playbacks.
   You can read more about the IMA extension
   [here](https://medium.com/google-exoplayer/playing-ads-with-exoplayer-and-ima-868dfd767ea).
-* MediaSession extension: Provides an easy to to connect ExoPlayer with
+* MediaSession extension: Provides an easy way to connect ExoPlayer with
   MediaSessionCompat in the Android Support Library.
 * RTMP extension: An extension for playing streams over RTMP.
 * Build: Made it easier for application developers to depend on a local checkout
