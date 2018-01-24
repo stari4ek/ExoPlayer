@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.google.android.exoplayer2.demo;
+package com.google.android.exoplayer2.util;
 
 import android.os.SystemClock;
 import android.util.Log;
@@ -38,6 +38,7 @@ import com.google.android.exoplayer2.metadata.id3.Id3Frame;
 import com.google.android.exoplayer2.metadata.id3.PrivFrame;
 import com.google.android.exoplayer2.metadata.id3.TextInformationFrame;
 import com.google.android.exoplayer2.metadata.id3.UrlLinkFrame;
+import com.google.android.exoplayer2.metadata.scte35.SpliceCommand;
 import com.google.android.exoplayer2.source.MediaSourceEventListener;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
@@ -52,8 +53,8 @@ import java.io.IOException;
 import java.text.NumberFormat;
 import java.util.Locale;
 
-/** Logs player events using {@link Log}. */
-/* package */ final class EventLogger
+/** Logs events from {@link Player} and other core components using {@link Log}. */
+public class EventLogger
     implements Player.EventListener,
         MetadataOutput,
         AudioRendererEventListener,
@@ -429,6 +430,10 @@ import java.util.Locale;
         EventMessage eventMessage = (EventMessage) entry;
         Log.d(TAG, prefix + String.format("EMSG: scheme=%s, id=%d, value=%s",
             eventMessage.schemeIdUri, eventMessage.id, eventMessage.value));
+      } else if (entry instanceof SpliceCommand) {
+        String description =
+            String.format("SCTE-35 splice command: type=%s.", entry.getClass().getSimpleName());
+        Log.d(TAG, prefix + description);
       }
     }
   }
@@ -523,6 +528,8 @@ import java.util.Locale;
         return "SEEK";
       case Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT:
         return "SEEK_ADJUSTMENT";
+      case Player.DISCONTINUITY_REASON_AD_INSERTION:
+        return "AD_INSERTION";
       case Player.DISCONTINUITY_REASON_INTERNAL:
         return "INTERNAL";
       default:

@@ -166,9 +166,9 @@ public class DefaultLoadControl implements LoadControl {
     this.allocator = allocator;
     minBufferUs = minBufferMs * 1000L;
     maxBufferUs = maxBufferMs * 1000L;
-    targetBufferBytesOverwrite = targetBufferBytes;
     bufferForPlaybackUs = bufferForPlaybackMs * 1000L;
     bufferForPlaybackAfterRebufferUs = bufferForPlaybackAfterRebufferMs * 1000L;
+    targetBufferBytesOverwrite = targetBufferBytes;
     this.prioritizeTimeOverSizeThresholds = prioritizeTimeOverSizeThresholds;
     this.priorityTaskManager = priorityTaskManager;
   }
@@ -214,22 +214,8 @@ public class DefaultLoadControl implements LoadControl {
   }
 
   @Override
-  public boolean shouldStartPlayback(long bufferedDurationUs, float playbackSpeed,
-      boolean rebuffering) {
-    if (bufferedDurationUs >= minBufferUs) {
-      // It's possible that we're not loading, so allow playback to start unconditionally.
-      return true;
-    }
-    bufferedDurationUs = Util.getPlayoutDurationForMediaDuration(bufferedDurationUs, playbackSpeed);
-    long minBufferDurationUs = rebuffering ? bufferForPlaybackAfterRebufferUs : bufferForPlaybackUs;
-    return minBufferDurationUs <= 0
-        || bufferedDurationUs >= minBufferDurationUs
-        || (!prioritizeTimeOverSizeThresholds
-            && allocator.getTotalBytesAllocated() >= targetBufferSize);
-  }
-
-  @Override
-  public boolean shouldContinueLoading(long bufferedDurationUs, float playbackSpeed) {
+  public boolean shouldContinueLoading(
+      boolean canStartPlayback, long bufferedDurationUs, float playbackSpeed) {
     boolean targetBufferSizeReached = allocator.getTotalBytesAllocated() >= targetBufferSize;
     boolean wasBuffering = isBuffering;
     if (prioritizeTimeOverSizeThresholds) {
@@ -244,6 +230,9 @@ public class DefaultLoadControl implements LoadControl {
               && (bufferedDurationUs < minBufferUs // below low watermark
                   || (bufferedDurationUs <= maxBufferUs && isBuffering)); // between watermarks
     }
+    if (!isBuffering && !canStartPlayback && !targetBufferSizeReached) {
+      isBuffering = true;
+    }
     if (priorityTaskManager != null && isBuffering != wasBuffering) {
       if (isBuffering) {
         priorityTaskManager.add(C.PRIORITY_PLAYBACK);
@@ -252,6 +241,17 @@ public class DefaultLoadControl implements LoadControl {
       }
     }
     return isBuffering;
+  }
+
+  @Override
+  public boolean shouldStartPlayback(
+      long bufferedDurationUs, float playbackSpeed, boolean rebuffering) {
+    bufferedDurationUs = Util.getPlayoutDurationForMediaDuration(bufferedDurationUs, playbackSpeed);
+    long minBufferDurationUs = rebuffering ? bufferForPlaybackAfterRebufferUs : bufferForPlaybackUs;
+    return minBufferDurationUs <= 0
+        || bufferedDurationUs >= minBufferDurationUs
+        || (!prioritizeTimeOverSizeThresholds
+            && allocator.getTotalBytesAllocated() >= targetBufferSize);
   }
 
   /**

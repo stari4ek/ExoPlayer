@@ -426,7 +426,7 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
     try {
       audioSink.playToEndOfStream();
     } catch (AudioSink.WriteException e) {
-      throw ExoPlaybackException.createForRenderer(drmSession.getError(), getIndex());
+      throw ExoPlaybackException.createForRenderer(e, getIndex());
     }
   }
 
@@ -566,10 +566,12 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
       if (mediaCrypto == null) {
         DrmSessionException drmError = drmSession.getError();
         if (drmError != null) {
-          throw ExoPlaybackException.createForRenderer(drmError, getIndex());
+          // Continue for now. We may be able to avoid failure if the session recovers, or if a new
+          // input format causes the session to be replaced before it's used.
+        } else {
+          // The drm session isn't open yet.
+          return;
         }
-        // The drm session isn't open yet.
-        return;
       }
     }
 

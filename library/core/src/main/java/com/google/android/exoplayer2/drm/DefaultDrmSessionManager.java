@@ -85,6 +85,17 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
   }
 
   /**
+   * Signals that the {@link DrmInitData} passed to {@link #acquireSession} does not contain does
+   * not contain scheme data for the required UUID.
+   */
+  public static final class MissingSchemeDataException extends Exception {
+
+    private MissingSchemeDataException(UUID uuid) {
+      super("Media does not support uuid: " + uuid);
+    }
+  }
+
+  /**
    * The key to use when passing CustomData to a PlayReady instance in an optional parameter map.
    */
   public static final String PLAYREADY_CUSTOM_DATA_KEY = "PRCustomData";
@@ -109,7 +120,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
   /** Number of times to retry for initial provisioning and key request for reporting error. */
   public static final int INITIAL_DRM_REQUEST_RETRY_COUNT = 3;
 
-  private static final String TAG = "DrmSessionManager";
+  private static final String TAG = "DefaultDrmSessionMgr";
   private static final String CENC_SCHEME_MIME_TYPE = "cenc";
 
   private final UUID uuid;
@@ -351,6 +362,10 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
 
   @Override
   public boolean canAcquireSession(@NonNull DrmInitData drmInitData) {
+    if (offlineLicenseKeySetId != null) {
+      // An offline license can be restored so a session can always be acquired.
+      return true;
+    }
     SchemeData schemeData = getSchemeData(drmInitData, uuid, true);
     if (schemeData == null) {
       if (drmInitData.schemeDataCount == 1 && drmInitData.get(0).matches(C.COMMON_PSSH_UUID)) {
@@ -390,15 +405,15 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSe
     if (offlineLicenseKeySetId == null) {
       SchemeData data = getSchemeData(drmInitData, uuid, false);
       if (data == null) {
-        final IllegalStateException error = new IllegalStateException(
-            "Media does not support uuid: " + uuid);
+        final MissingSchemeDataException error = new MissingSchemeDataException(uuid);
         if (eventHandler != null && eventListener != null) {
-          eventHandler.post(new Runnable() {
-            @Override
-            public void run() {
-              eventListener.onDrmSessionManagerError(error);
-            }
-          });
+          eventHandler.post(
+              new Runnable() {
+                @Override
+                public void run() {
+                  eventListener.onDrmSessionManagerError(error);
+                }
+              });
         }
         return new ErrorStateDrmSession<>(new DrmSessionException(error));
       }
