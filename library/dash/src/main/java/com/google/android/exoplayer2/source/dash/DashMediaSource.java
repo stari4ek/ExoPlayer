@@ -280,14 +280,16 @@ public final class DashMediaSource implements MediaSource {
   private final Runnable refreshManifestRunnable;
   private final Runnable simulateManifestRefreshRunnable;
   private final PlayerEmsgCallback playerEmsgCallback;
+  private final LoaderErrorThrower manifestLoadErrorThrower;
 
   private Listener sourceListener;
   private DataSource dataSource;
   private Loader loader;
-  private LoaderErrorThrower manifestLoadErrorThrower;
+
   private IOException manifestFatalError;
   private Handler handler;
 
+  private Uri initialManifestUri;
   private Uri manifestUri;
   private DashManifest manifest;
   private boolean manifestLoadPending;
@@ -440,6 +442,7 @@ public final class DashMediaSource implements MediaSource {
       long livePresentationDelayMs,
       Handler eventHandler,
       MediaSourceEventListener eventListener) {
+    this.initialManifestUri = manifestUri;
     this.manifest = manifest;
     this.manifestUri = manifestUri;
     this.manifestDataSourceFactory = manifestDataSourceFactory;
@@ -459,8 +462,10 @@ public final class DashMediaSource implements MediaSource {
       manifestCallback = null;
       refreshManifestRunnable = null;
       simulateManifestRefreshRunnable = null;
+      manifestLoadErrorThrower = new LoaderErrorThrower.Dummy();
     } else {
       manifestCallback = new ManifestCallback();
+      manifestLoadErrorThrower = new ManifestLoadErrorThrower();
       refreshManifestRunnable = new Runnable() {
         @Override
         public void run() {
@@ -484,6 +489,7 @@ public final class DashMediaSource implements MediaSource {
   public void replaceManifestUri(Uri manifestUri) {
     synchronized (manifestUriLock) {
       this.manifestUri = manifestUri;
+      this.initialManifestUri = manifestUri;
     }
   }
 
@@ -491,15 +497,12 @@ public final class DashMediaSource implements MediaSource {
 
   @Override
   public void prepareSource(ExoPlayer player, boolean isTopLevelSource, Listener listener) {
-    Assertions.checkState(sourceListener == null, MEDIA_SOURCE_REUSED_ERROR_MESSAGE);
     sourceListener = listener;
     if (sideloadedManifest) {
-      manifestLoadErrorThrower = new LoaderErrorThrower.Dummy();
       processManifest(false);
     } else {
       dataSource = manifestDataSourceFactory.createDataSource();
       loader = new Loader("Loader:DashMediaSource");
-      manifestLoadErrorThrower = new ManifestLoadErrorThrower();
       handler = new Handler();
       startLoadingManifest();
     }
@@ -543,19 +546,24 @@ public final class DashMediaSource implements MediaSource {
   public void releaseSource() {
     manifestLoadPending = false;
     dataSource = null;
-    manifestLoadErrorThrower = null;
     if (loader != null) {
       loader.release();
       loader = null;
     }
     manifestLoadStartTimestampMs = 0;
     manifestLoadEndTimestampMs = 0;
-    manifest = null;
+    manifest = sideloadedManifest ? manifest : null;
+    manifestUri = initialManifestUri;
+    manifestFatalError = null;
     if (handler != null) {
       handler.removeCallbacksAndMessages(null);
       handler = null;
     }
     elapsedRealtimeOffsetMs = 0;
+    staleManifestReloadAttempt = 0;
+    expiredManifestPublishTimeUs = C.TIME_UNSET;
+    dynamicMediaPresentationEnded = false;
+    firstPeriodId = 0;
     periodsById.clear();
   }
 
@@ -890,11 +898,11 @@ public final class DashMediaSource implements MediaSource {
           availableStartTimeUs = 0;
           availableEndTimeUs = 0;
         } else if (!seenEmptyIndex) {
-          int firstSegmentNum = index.getFirstSegmentNum();
+          long firstSegmentNum = index.getFirstSegmentNum();
           long adaptationSetAvailableStartTimeUs = index.getTimeUs(firstSegmentNum);
           availableStartTimeUs = Math.max(availableStartTimeUs, adaptationSetAvailableStartTimeUs);
           if (segmentCount != DashSegmentIndex.INDEX_UNBOUNDED) {
-            int lastSegmentNum = firstSegmentNum + segmentCount - 1;
+            long lastSegmentNum = firstSegmentNum + segmentCount - 1;
             long adaptationSetAvailableEndTimeUs = index.getTimeUs(lastSegmentNum)
                 + index.getDurationUs(lastSegmentNum, durationUs);
             availableEndTimeUs = Math.min(availableEndTimeUs, adaptationSetAvailableEndTimeUs);
@@ -1019,7 +1027,7 @@ public final class DashMediaSource implements MediaSource {
         // Video adaptation set does not include a non-empty index for snapping.
         return windowDefaultStartPositionUs;
       }
-      int segmentNum = snapIndex.getSegmentNum(defaultStartPositionInPeriodUs, periodDurationUs);
+      long segmentNum = snapIndex.getSegmentNum(defaultStartPositionInPeriodUs, periodDurationUs);
       return windowDefaultStartPositionUs + snapIndex.getTimeUs(segmentNum)
           - defaultStartPositionInPeriodUs;
     }

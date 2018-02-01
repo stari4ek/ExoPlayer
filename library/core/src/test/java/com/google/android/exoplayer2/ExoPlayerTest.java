@@ -85,7 +85,7 @@ public final class ExoPlayerTest {
     testRunner.assertNoPositionDiscontinuities();
     testRunner.assertTimelinesEqual(timeline);
     assertThat(renderer.formatReadCount).isEqualTo(0);
-    assertThat(renderer.bufferReadCount).isEqualTo(0);
+    assertThat(renderer.sampleBufferReadCount).isEqualTo(0);
     assertThat(renderer.isEnded).isFalse();
   }
 
@@ -109,7 +109,7 @@ public final class ExoPlayerTest {
     testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
     testRunner.assertTrackGroupsEqual(new TrackGroupArray(new TrackGroup(Builder.VIDEO_FORMAT)));
     assertThat(renderer.formatReadCount).isEqualTo(1);
-    assertThat(renderer.bufferReadCount).isEqualTo(1);
+    assertThat(renderer.sampleBufferReadCount).isEqualTo(1);
     assertThat(renderer.isEnded).isTrue();
   }
 
@@ -131,7 +131,7 @@ public final class ExoPlayerTest {
     testRunner.assertTimelinesEqual(timeline);
     testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
     assertThat(renderer.formatReadCount).isEqualTo(3);
-    assertThat(renderer.bufferReadCount).isEqualTo(1);
+    assertThat(renderer.sampleBufferReadCount).isEqualTo(3);
     assertThat(renderer.isEnded).isTrue();
   }
 
@@ -155,7 +155,7 @@ public final class ExoPlayerTest {
     testRunner.assertTimelinesEqual(timeline);
     testRunner.assertTimelineChangeReasonsEqual(Player.TIMELINE_CHANGE_REASON_PREPARED);
     assertThat(renderer.formatReadCount).isEqualTo(100);
-    assertThat(renderer.bufferReadCount).isEqualTo(1);
+    assertThat(renderer.sampleBufferReadCount).isEqualTo(100);
     assertThat(renderer.isEnded).isTrue();
   }
 
@@ -165,7 +165,11 @@ public final class ExoPlayerTest {
    */
   @Test
   public void testReadAheadToEndDoesNotResetRenderer() throws Exception {
-    Timeline timeline = new FakeTimeline(/* windowCount= */ 3);
+    // Use sufficiently short periods to ensure the player attempts to read all at once.
+    TimelineWindowDefinition windowDefinition =
+        new TimelineWindowDefinition(
+            /* isSeekable= */ false, /* isDynamic= */ false, /* durationUs= */ 100_000);
+    Timeline timeline = new FakeTimeline(windowDefinition, windowDefinition, windowDefinition);
     final FakeRenderer videoRenderer = new FakeRenderer(Builder.VIDEO_FORMAT);
     FakeMediaClockRenderer audioRenderer =
         new FakeMediaClockRenderer(Builder.AUDIO_FORMAT) {
