@@ -56,8 +56,9 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
   // Accessed on the playback thread.
   private final List<MediaSourceHolder> mediaSourceHolders;
   private final MediaSourceHolder query;
-  private final Map<MediaPeriod, MediaSource> mediaSourceByMediaPeriod;
+  private final Map<MediaPeriod, MediaSourceHolder> mediaSourceByMediaPeriod;
   private final List<DeferredMediaPeriod> deferredMediaPeriods;
+  private final boolean isAtomic;
 
   private ExoPlayer player;
   private Listener listener;
@@ -70,22 +71,35 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
    * Creates a new dynamic concatenating media source.
    */
   public DynamicConcatenatingMediaSource() {
-    this(new DefaultShuffleOrder(0));
+    this(/* isAtomic= */ false, new DefaultShuffleOrder(0));
+  }
+
+  /**
+   * Creates a new dynamic concatenating media source.
+   *
+   * @param isAtomic Whether the concatenating media source will be treated as atomic, i.e., treated
+   *     as a single item for repeating and shuffling.
+   */
+  public DynamicConcatenatingMediaSource(boolean isAtomic) {
+    this(isAtomic, new DefaultShuffleOrder(0));
   }
 
   /**
    * Creates a new dynamic concatenating media source with a custom shuffle order.
    *
+   * @param isAtomic Whether the concatenating media source will be treated as atomic, i.e., treated
+   *     as a single item for repeating and shuffling.
    * @param shuffleOrder The {@link ShuffleOrder} to use when shuffling the child media sources.
    *     This shuffle order must be empty.
    */
-  public DynamicConcatenatingMediaSource(ShuffleOrder shuffleOrder) {
+  public DynamicConcatenatingMediaSource(boolean isAtomic, ShuffleOrder shuffleOrder) {
     this.shuffleOrder = shuffleOrder;
     this.mediaSourceByMediaPeriod = new IdentityHashMap<>();
     this.mediaSourcesPublic = new ArrayList<>();
     this.mediaSourceHolders = new ArrayList<>();
     this.deferredMediaPeriods = new ArrayList<>(1);
     this.query = new MediaSourceHolder(null, null, -1, -1, -1);
+    this.isAtomic = isAtomic;
   }
 
   /**
@@ -355,19 +369,23 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
     } else {
       mediaPeriod = holder.mediaSource.createPeriod(idInSource, allocator);
     }
-    mediaSourceByMediaPeriod.put(mediaPeriod, holder.mediaSource);
+    mediaSourceByMediaPeriod.put(mediaPeriod, holder);
+    holder.activeMediaPeriods++;
     return mediaPeriod;
   }
 
   @Override
   public void releasePeriod(MediaPeriod mediaPeriod) {
-    MediaSource mediaSource = mediaSourceByMediaPeriod.get(mediaPeriod);
-    mediaSourceByMediaPeriod.remove(mediaPeriod);
+    MediaSourceHolder holder = mediaSourceByMediaPeriod.remove(mediaPeriod);
     if (mediaPeriod instanceof DeferredMediaPeriod) {
       deferredMediaPeriods.remove(mediaPeriod);
       ((DeferredMediaPeriod) mediaPeriod).releasePeriod();
     } else {
-      mediaSource.releasePeriod(mediaPeriod);
+      holder.mediaSource.releasePeriod(mediaPeriod);
+    }
+    holder.activeMediaPeriods--;
+    if (holder.activeMediaPeriods == 0 && holder.isRemoved) {
+      releaseChildSource(holder);
     }
   }
 
@@ -442,8 +460,10 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
 
   private void maybeNotifyListener(@Nullable EventDispatcher actionOnCompletion) {
     if (!preventListenerNotification) {
-      listener.onSourceInfoRefreshed(this,
-          new ConcatenatedTimeline(mediaSourceHolders, windowCount, periodCount, shuffleOrder),
+      listener.onSourceInfoRefreshed(
+          this,
+          new ConcatenatedTimeline(
+              mediaSourceHolders, windowCount, periodCount, shuffleOrder, isAtomic),
           null);
       if (actionOnCompletion != null) {
         player.createMessage(this).setType(MSG_ON_COMPLETION).setPayload(actionOnCompletion).send();
@@ -520,7 +540,10 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
         /* childIndexUpdate= */ -1,
         -oldTimeline.getWindowCount(),
         -oldTimeline.getPeriodCount());
-    releaseChildSource(holder);
+    holder.isRemoved = true;
+    if (holder.activeMediaPeriods == 0) {
+      releaseChildSource(holder);
+    }
   }
 
   private void moveMediaSourceInternal(int currentIndex, int newIndex) {
@@ -573,6 +596,8 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
     public int firstWindowIndexInChild;
     public int firstPeriodIndexInChild;
     public boolean isPrepared;
+    public boolean isRemoved;
+    public int activeMediaPeriods;
 
     public MediaSourceHolder(
         MediaSource mediaSource,
@@ -643,9 +668,13 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
     private final int[] uids;
     private final SparseIntArray childIndexByUid;
 
-    public ConcatenatedTimeline(Collection<MediaSourceHolder> mediaSourceHolders, int windowCount,
-        int periodCount, ShuffleOrder shuffleOrder) {
-      super(shuffleOrder);
+    public ConcatenatedTimeline(
+        Collection<MediaSourceHolder> mediaSourceHolders,
+        int windowCount,
+        int periodCount,
+        ShuffleOrder shuffleOrder,
+        boolean isAtomic) {
+      super(isAtomic, shuffleOrder);
       this.windowCount = windowCount;
       this.periodCount = periodCount;
       int childCount = mediaSourceHolders.size();
@@ -719,27 +748,29 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
    * Timeline used as placeholder for an unprepared media source. After preparation, a copy of the
    * DeferredTimeline is used to keep the originally assigned first period ID.
    */
-  private static final class DeferredTimeline extends Timeline {
+  private static final class DeferredTimeline extends ForwardingTimeline {
 
     private static final Object DUMMY_ID = new Object();
     private static final Period period = new Period();
+    private static final DummyTimeline dummyTimeline = new DummyTimeline();
 
-    private final Timeline timeline;
-    private final Object replacedID;
+    private final Object replacedId;
 
     public DeferredTimeline() {
-      timeline = null;
-      replacedID = null;
+      this(dummyTimeline, /* replacedId= */ null);
     }
 
-    private DeferredTimeline(Timeline timeline, Object replacedID) {
-      this.timeline = timeline;
-      this.replacedID = replacedID;
+    private DeferredTimeline(Timeline timeline, Object replacedId) {
+      super(timeline);
+      this.replacedId = replacedId;
     }
 
     public DeferredTimeline cloneWithNewTimeline(Timeline timeline) {
-      return new DeferredTimeline(timeline, replacedID == null && timeline.getPeriodCount() > 0
-          ? timeline.getPeriod(0, period, true).uid : replacedID);
+      return new DeferredTimeline(
+          timeline,
+          replacedId == null && timeline.getPeriodCount() > 0
+              ? timeline.getPeriod(0, period, true).uid
+              : replacedId);
     }
 
     public Timeline getTimeline() {
@@ -747,33 +778,9 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
     }
 
     @Override
-    public int getWindowCount() {
-      return timeline == null ? 1 : timeline.getWindowCount();
-    }
-
-    @Override
-    public Window getWindow(int windowIndex, Window window, boolean setIds,
-        long defaultPositionProjectionUs) {
-      return timeline == null
-          // Dynamic window to indicate pending timeline updates.
-          ? window.set(setIds ? DUMMY_ID : null, C.TIME_UNSET, C.TIME_UNSET, false, true, 0,
-              C.TIME_UNSET, 0, 0, 0)
-          : timeline.getWindow(windowIndex, window, setIds, defaultPositionProjectionUs);
-    }
-
-    @Override
-    public int getPeriodCount() {
-      return timeline == null ? 1 : timeline.getPeriodCount();
-    }
-
-    @Override
     public Period getPeriod(int periodIndex, Period period, boolean setIds) {
-      if (timeline == null) {
-        return period.set(setIds ? DUMMY_ID : null, setIds ? DUMMY_ID : null, 0, C.TIME_UNSET,
-            C.TIME_UNSET);
-      }
       timeline.getPeriod(periodIndex, period, setIds);
-      if (period.uid == replacedID) {
+      if (Util.areEqual(period.uid, replacedId)) {
         period.uid = DUMMY_ID;
       }
       return period;
@@ -781,11 +788,54 @@ public final class DynamicConcatenatingMediaSource extends CompositeMediaSource<
 
     @Override
     public int getIndexOfPeriod(Object uid) {
-      return timeline == null ? (uid == DUMMY_ID ? 0 : C.INDEX_UNSET)
-          : timeline.getIndexOfPeriod(uid == DUMMY_ID ? replacedID : uid);
+      return timeline.getIndexOfPeriod(DUMMY_ID.equals(uid) ? replacedId : uid);
     }
-
   }
 
+  /** Dummy placeholder timeline with one dynamic window with a period of indeterminate duration. */
+  private static final class DummyTimeline extends Timeline {
+
+    @Override
+    public int getWindowCount() {
+      return 1;
+    }
+
+    @Override
+    public Window getWindow(int windowIndex, Window window, boolean setIds,
+        long defaultPositionProjectionUs) {
+      // Dynamic window to indicate pending timeline updates.
+      return window.set(
+          /* id= */ null,
+          /* presentationStartTimeMs= */ C.TIME_UNSET,
+          /* windowStartTimeMs= */ C.TIME_UNSET,
+          /* isSeekable= */ false,
+          /* isDynamic= */ true,
+          /* defaultPositionUs= */ 0,
+          /* durationUs= */ C.TIME_UNSET,
+          /* firstPeriodIndex= */ 0,
+          /* lastPeriodIndex= */ 0,
+          /* positionInFirstPeriodUs= */ 0);
+    }
+
+    @Override
+    public int getPeriodCount() {
+      return 1;
+    }
+
+    @Override
+    public Period getPeriod(int periodIndex, Period period, boolean setIds) {
+      return period.set(
+          /* id= */ null,
+          /* uid= */ null,
+          /* windowIndex= */ 0,
+          /* durationUs = */ C.TIME_UNSET,
+          /* positionInWindowUs= */ C.TIME_UNSET);
+    }
+
+    @Override
+    public int getIndexOfPeriod(Object uid) {
+      return uid == null ? 0 : C.INDEX_UNSET;
+    }
+  }
 }
 

@@ -24,8 +24,10 @@ import com.google.android.exoplayer2.Player.EventListener;
 import com.google.android.exoplayer2.Timeline.Window;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
+import com.google.android.exoplayer2.source.ads.AdPlaybackState;
 import com.google.android.exoplayer2.testutil.ActionSchedule;
 import com.google.android.exoplayer2.testutil.ActionSchedule.PlayerRunnable;
 import com.google.android.exoplayer2.testutil.ActionSchedule.PlayerTarget;
@@ -40,6 +42,7 @@ import com.google.android.exoplayer2.testutil.FakeTimeline;
 import com.google.android.exoplayer2.testutil.FakeTimeline.TimelineWindowDefinition;
 import com.google.android.exoplayer2.testutil.FakeTrackSelection;
 import com.google.android.exoplayer2.testutil.FakeTrackSelector;
+import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import com.google.android.exoplayer2.upstream.Allocator;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -53,11 +56,7 @@ import org.robolectric.annotation.Config;
 
 /** Unit test for {@link ExoPlayer}. */
 @RunWith(RobolectricTestRunner.class)
-@Config(
-  sdk = Config.TARGET_SDK,
-  manifest = Config.NONE,
-  shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class}
-)
+@Config(shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class})
 public final class ExoPlayerTest {
 
   /**
@@ -382,6 +381,57 @@ public final class ExoPlayerTest {
         Player.DISCONTINUITY_REASON_PERIOD_TRANSITION,
         Player.DISCONTINUITY_REASON_PERIOD_TRANSITION);
     assertThat(renderer.isEnded).isTrue();
+  }
+
+  @Test
+  public void testAdGroupWithLoadErrorIsSkipped() throws Exception {
+    AdPlaybackState initialAdPlaybackState =
+        FakeTimeline.createAdPlaybackState(
+            /* adsPerAdGroup= */ 1, /* adGroupTimesUs= */ 5 * C.MICROS_PER_SECOND);
+    Timeline fakeTimeline =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* periodCount= */ 1,
+                /* id= */ 0,
+                /* isSeekable= */ true,
+                /* isDynamic= */ false,
+                /* durationUs= */ C.MICROS_PER_SECOND,
+                initialAdPlaybackState));
+    AdPlaybackState errorAdPlaybackState = initialAdPlaybackState.withAdLoadError(0, 0);
+    final Timeline adErrorTimeline =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* periodCount= */ 1,
+                /* id= */ 0,
+                /* isSeekable= */ true,
+                /* isDynamic= */ false,
+                /* durationUs= */ C.MICROS_PER_SECOND,
+                errorAdPlaybackState));
+    final FakeMediaSource fakeMediaSource =
+        new FakeMediaSource(fakeTimeline, /* manifest= */ null, Builder.VIDEO_FORMAT);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testAdGroupWithLoadErrorIsSkipped")
+            .pause()
+            .waitForPlaybackState(Player.STATE_READY)
+            .executeRunnable(
+                new Runnable() {
+                  @Override
+                  public void run() {
+                    fakeMediaSource.setNewSourceInfo(adErrorTimeline, null);
+                  }
+                })
+            .waitForTimelineChanged(adErrorTimeline)
+            .play()
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setMediaSource(fakeMediaSource)
+            .setActionSchedule(actionSchedule)
+            .build()
+            .start()
+            .blockUntilEnded(TIMEOUT_MS);
+    // There is still one discontinuity from content to content for the failed ad insertion.
+    testRunner.assertPositionDiscontinuityReasonsEqual(Player.DISCONTINUITY_REASON_AD_INSERTION);
   }
 
   @Test
@@ -1711,6 +1761,53 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilActionScheduleFinished(TIMEOUT_MS)
         .blockUntilEnded(TIMEOUT_MS);
+  }
+
+  @Test
+  public void testTimelineUpdateDropsPrebufferedPeriods() throws Exception {
+    Timeline timeline1 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(/* periodCount= */ 1, /* id= */ 1),
+            new TimelineWindowDefinition(/* periodCount= */ 1, /* id= */ 2));
+    final Timeline timeline2 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(/* periodCount= */ 1, /* id= */ 1),
+            new TimelineWindowDefinition(/* periodCount= */ 1, /* id= */ 3));
+    final FakeMediaSource mediaSource =
+        new FakeMediaSource(timeline1, /* manifest= */ null, Builder.VIDEO_FORMAT);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testTimelineUpdateDropsPeriods")
+            .pause()
+            .waitForPlaybackState(Player.STATE_READY)
+            // Ensure next period is pre-buffered by playing until end of first period.
+            .playUntilPosition(
+                /* windowIndex= */ 0,
+                /* positionMs= */ C.usToMs(TimelineWindowDefinition.DEFAULT_WINDOW_DURATION_US))
+            .executeRunnable(
+                new Runnable() {
+                  @Override
+                  public void run() {
+                    mediaSource.setNewSourceInfo(timeline2, /* newManifest= */ null);
+                  }
+                })
+            .waitForTimelineChanged(timeline2)
+            .play()
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setMediaSource(mediaSource)
+            .setActionSchedule(actionSchedule)
+            .build()
+            .start()
+            .blockUntilEnded(TIMEOUT_MS);
+    testRunner.assertPlayedPeriodIndices(0, 1);
+    // Assert that the second period was re-created from the new timeline.
+    assertThat(mediaSource.getCreatedMediaPeriods())
+        .containsExactly(
+            new MediaPeriodId(/* periodIndex= */ 0, /* windowSequenceNumber= */ 0),
+            new MediaPeriodId(/* periodIndex= */ 1, /* windowSequenceNumber= */ 1),
+            new MediaPeriodId(/* periodIndex= */ 1, /* windowSequenceNumber= */ 2))
+        .inOrder();
   }
 
   // Internal methods.

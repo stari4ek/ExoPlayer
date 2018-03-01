@@ -160,7 +160,7 @@ public final class Util {
    */
   public static boolean isLocalFileUri(Uri uri) {
     String scheme = uri.getScheme();
-    return TextUtils.isEmpty(scheme) || scheme.equals("file");
+    return TextUtils.isEmpty(scheme) || "file".equals(scheme);
   }
 
   /**
@@ -629,7 +629,7 @@ public final class Util {
     } else {
       timezoneShift = ((Integer.parseInt(matcher.group(12)) * 60
           + Integer.parseInt(matcher.group(13))));
-      if (matcher.group(11).equals("-")) {
+      if ("-".equals(matcher.group(11))) {
         timezoneShift *= -1;
       }
     }
@@ -942,7 +942,7 @@ public final class Util {
   }
 
   /**
-   * Returns whether {@code encoding} is high resolution (> 16-bit) integer PCM.
+   * Returns whether {@code encoding} is high resolution (&gt; 16-bit) integer PCM.
    *
    * @param encoding The encoding of the audio data.
    * @return Whether the encoding is high resolution integer PCM.
@@ -1334,7 +1334,11 @@ public final class Util {
       if ("Sony".equals(Util.MANUFACTURER) && Util.MODEL.startsWith("BRAVIA")
           && context.getPackageManager().hasSystemFeature("com.sony.dtv.hardware.panel.qfhd")) {
         return new Point(3840, 2160);
-      } else if ("NVIDIA".equals(Util.MANUFACTURER) && Util.MODEL.contains("SHIELD")) {
+      } else if (("NVIDIA".equals(Util.MANUFACTURER) && Util.MODEL.contains("SHIELD"))
+          || ("philips".equals(Util.toLowerInvariant(Util.MANUFACTURER))
+              && (Util.MODEL.startsWith("QM1")
+                  || Util.MODEL.equals("QV151E")
+                  || Util.MODEL.equals("TPM171E")))) {
         // Attempt to read sys.display-size.
         String sysDisplaySize = null;
         try {

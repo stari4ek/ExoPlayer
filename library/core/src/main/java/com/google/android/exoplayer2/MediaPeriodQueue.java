@@ -31,6 +31,7 @@ import com.google.android.exoplayer2.util.Assertions;
  * loading media period at the end of the queue, with methods for controlling loading and updating
  * the queue. Also has a reference to the media period currently being read.
  */
+@SuppressWarnings("UngroupedOverloads")
 /* package */ final class MediaPeriodQueue {
 
   /**
@@ -43,6 +44,7 @@ import com.google.android.exoplayer2.util.Assertions;
   private final Timeline.Period period;
   private final Timeline.Window window;
 
+  private long nextWindowSequenceNumber;
   private Timeline timeline;
   private @RepeatMode int repeatMode;
   private boolean shuffleModeEnabled;
@@ -58,27 +60,29 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   /**
-   * Sets the {@link Timeline}. Call {@link #getUpdatedMediaPeriodInfo} to update period information
-   * taking into account the new timeline.
+   * Sets the {@link Timeline}. Call {@link #updateQueuedPeriods(MediaPeriodId, long)} to update the
+   * queued media periods to take into account the new timeline.
    */
   public void setTimeline(Timeline timeline) {
     this.timeline = timeline;
   }
 
   /**
-   * Sets the {@link RepeatMode}. Call {@link #getUpdatedMediaPeriodInfo} to update period
-   * information taking into account the new repeat mode.
+   * Sets the {@link RepeatMode} and returns whether the repeat mode change has been fully handled.
+   * If not, it is necessary to seek to the current playback position.
    */
-  public void setRepeatMode(@RepeatMode int repeatMode) {
+  public boolean updateRepeatMode(@RepeatMode int repeatMode) {
     this.repeatMode = repeatMode;
+    return updateForPlaybackModeChange();
   }
 
   /**
-   * Sets whether shuffling is enabled. Call {@link #getUpdatedMediaPeriodInfo} to update period
-   * information taking into account the shuffle mode.
+   * Sets whether shuffling is enabled and returns whether the shuffle mode change has been fully
+   * handled. If not, it is necessary to seek to the current playback position.
    */
-  public void setShuffleModeEnabled(boolean shuffleModeEnabled) {
+  public boolean updateShuffleModeEnabled(boolean shuffleModeEnabled) {
     this.shuffleModeEnabled = shuffleModeEnabled;
+    return updateForPlaybackModeChange();
   }
 
   /** Returns whether {@code mediaPeriod} is the current loading media period. */
@@ -118,8 +122,7 @@ import com.google.android.exoplayer2.util.Assertions;
       long rendererPositionUs, PlaybackInfo playbackInfo) {
     return loading == null
         ? getFirstMediaPeriodInfo(playbackInfo)
-        : getFollowingMediaPeriodInfo(
-            loading.info, loading.getRendererOffset(), rendererPositionUs);
+        : getFollowingMediaPeriodInfo(loading, rendererPositionUs);
   }
 
   /**
@@ -287,14 +290,59 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   /**
-   * Returns new media period info based on specified {@code mediaPeriodInfo} but taking into
-   * account the current timeline.
+   * Updates media periods in the queue to take into account the latest timeline, and returns
+   * whether the timeline change has been fully handled. If not, it is necessary to seek to the
+   * current playback position. The method assumes that the first media period in the queue is still
+   * consistent with the new timeline.
    *
-   * @param mediaPeriodInfo Media period info for a media period based on an old timeline.
-   * @return The updated media period info for the current timeline.
+   * @param playingPeriodId The current playing media period identifier.
+   * @param rendererPositionUs The current renderer position in microseconds.
+   * @return Whether the timeline change has been handled completely.
    */
-  public MediaPeriodInfo getUpdatedMediaPeriodInfo(MediaPeriodInfo mediaPeriodInfo) {
-    return getUpdatedMediaPeriodInfo(mediaPeriodInfo, mediaPeriodInfo.id);
+  public boolean updateQueuedPeriods(MediaPeriodId playingPeriodId, long rendererPositionUs) {
+    // TODO: Merge this into setTimeline so that the queue gets updated as soon as the new timeline
+    // is set, once all cases handled by ExoPlayerImplInternal.handleSourceInfoRefreshed can be
+    // handled here.
+    int periodIndex = playingPeriodId.periodIndex;
+    // The front period is either playing now, or is being loaded and will become the playing
+    // period.
+    MediaPeriodHolder previousPeriodHolder = null;
+    MediaPeriodHolder periodHolder = getFrontPeriod();
+    while (periodHolder != null) {
+      if (previousPeriodHolder == null) {
+        periodHolder.info = getUpdatedMediaPeriodInfo(periodHolder.info, periodIndex);
+      } else {
+        // Check this period holder still follows the previous one, based on the new timeline.
+        if (periodIndex == C.INDEX_UNSET
+            || !periodHolder.uid.equals(timeline.getPeriod(periodIndex, period, true).uid)) {
+          // The holder uid is inconsistent with the new timeline.
+          return !removeAfter(previousPeriodHolder);
+        }
+        MediaPeriodInfo periodInfo =
+            getFollowingMediaPeriodInfo(previousPeriodHolder, rendererPositionUs);
+        if (periodInfo == null) {
+          // We've loaded a next media period that is not in the new timeline.
+          return !removeAfter(previousPeriodHolder);
+        }
+        // Update the period index.
+        periodHolder.info = getUpdatedMediaPeriodInfo(periodHolder.info, periodIndex);
+        // Check the media period information matches the new timeline.
+        if (!canKeepMediaPeriodHolder(periodHolder, periodInfo)) {
+          return !removeAfter(previousPeriodHolder);
+        }
+      }
+
+      if (periodHolder.info.isLastInTimelinePeriod) {
+        // Move on to the next timeline period index, if there is one.
+        periodIndex =
+            timeline.getNextPeriodIndex(
+                periodIndex, period, window, repeatMode, shuffleModeEnabled);
+      }
+
+      previousPeriodHolder = periodHolder;
+      periodHolder = periodHolder.next;
+    }
+    return true;
   }
 
   /**
@@ -321,17 +369,121 @@ import com.google.android.exoplayer2.util.Assertions;
    * @return The identifier for the first media period to play, taking into account unplayed ads.
    */
   public MediaPeriodId resolveMediaPeriodIdForAds(int periodIndex, long positionUs) {
-    timeline.getPeriod(periodIndex, period);
-    int adGroupIndex = period.getAdGroupIndexForPositionUs(positionUs);
-    if (adGroupIndex == C.INDEX_UNSET) {
-      return new MediaPeriodId(periodIndex);
-    } else {
-      int adIndexInAdGroup = period.getNextAdIndexToPlay(adGroupIndex);
-      return new MediaPeriodId(periodIndex, adGroupIndex, adIndexInAdGroup);
-    }
+    long windowSequenceNumber = resolvePeriodIndexToWindowSequenceNumber(periodIndex);
+    return resolveMediaPeriodIdForAds(periodIndex, positionUs, windowSequenceNumber);
   }
 
   // Internal methods.
+
+  /**
+   * Resolves the specified timeline period and position to a {@link MediaPeriodId} that should be
+   * played, returning an identifier for an ad group if one needs to be played before the specified
+   * position, or an identifier for a content media period if not.
+   *
+   * @param periodIndex The index of the timeline period to play.
+   * @param positionUs The next content position in the period to play.
+   * @param windowSequenceNumber The sequence number of the window in the buffered sequence of
+   *     windows this period is part of.
+   * @return The identifier for the first media period to play, taking into account unplayed ads.
+   */
+  private MediaPeriodId resolveMediaPeriodIdForAds(
+      int periodIndex, long positionUs, long windowSequenceNumber) {
+    timeline.getPeriod(periodIndex, period);
+    int adGroupIndex = period.getAdGroupIndexForPositionUs(positionUs);
+    if (adGroupIndex == C.INDEX_UNSET) {
+      return new MediaPeriodId(periodIndex, windowSequenceNumber);
+    } else {
+      int adIndexInAdGroup = period.getFirstAdIndexToPlay(adGroupIndex);
+      return new MediaPeriodId(periodIndex, adGroupIndex, adIndexInAdGroup, windowSequenceNumber);
+    }
+  }
+
+  /**
+   * Resolves the specified period index to a corresponding window sequence number. Either by
+   * reusing the window sequence number of an existing matching media period or by creating a new
+   * window sequence number.
+   *
+   * @param periodIndex The index of the timeline period.
+   * @return A window sequence number for a media period created for this timeline period.
+   */
+  private long resolvePeriodIndexToWindowSequenceNumber(int periodIndex) {
+    Object periodUid = timeline.getPeriod(periodIndex, period, /* setIds= */ true).uid;
+    MediaPeriodHolder mediaPeriodHolder = getFrontPeriod();
+    while (mediaPeriodHolder != null) {
+      if (mediaPeriodHolder.uid.equals(periodUid)) {
+        // Reuse window sequence number of first exact period match.
+        return mediaPeriodHolder.info.id.windowSequenceNumber;
+      }
+      mediaPeriodHolder = mediaPeriodHolder.next;
+    }
+    int windowIndex = period.windowIndex;
+    mediaPeriodHolder = getFrontPeriod();
+    while (mediaPeriodHolder != null) {
+      int indexOfHolderInTimeline = timeline.getIndexOfPeriod(mediaPeriodHolder.uid);
+      if (indexOfHolderInTimeline != C.INDEX_UNSET) {
+        int holderWindowIndex = timeline.getPeriod(indexOfHolderInTimeline, period).windowIndex;
+        if (holderWindowIndex == windowIndex) {
+          // As an alternative, try to match other periods of the same window.
+          return mediaPeriodHolder.info.id.windowSequenceNumber;
+        }
+      }
+      mediaPeriodHolder = mediaPeriodHolder.next;
+    }
+    // If no match is found, create new sequence number.
+    return nextWindowSequenceNumber++;
+  }
+
+  /**
+   * Returns whether {@code periodHolder} can be kept for playing the media period described by
+   * {@code info}.
+   */
+  private boolean canKeepMediaPeriodHolder(MediaPeriodHolder periodHolder, MediaPeriodInfo info) {
+    MediaPeriodInfo periodHolderInfo = periodHolder.info;
+    return periodHolderInfo.startPositionUs == info.startPositionUs
+        && periodHolderInfo.endPositionUs == info.endPositionUs
+        && periodHolderInfo.id.equals(info.id);
+  }
+
+  /**
+   * Updates the queue for any playback mode change, and returns whether the change was fully
+   * handled. If not, it is necessary to seek to the current playback position.
+   */
+  private boolean updateForPlaybackModeChange() {
+    // Find the last existing period holder that matches the new period order.
+    MediaPeriodHolder lastValidPeriodHolder = getFrontPeriod();
+    if (lastValidPeriodHolder == null) {
+      return true;
+    }
+    while (true) {
+      int nextPeriodIndex =
+          timeline.getNextPeriodIndex(
+              lastValidPeriodHolder.info.id.periodIndex,
+              period,
+              window,
+              repeatMode,
+              shuffleModeEnabled);
+      while (lastValidPeriodHolder.next != null
+          && !lastValidPeriodHolder.info.isLastInTimelinePeriod) {
+        lastValidPeriodHolder = lastValidPeriodHolder.next;
+      }
+      if (nextPeriodIndex == C.INDEX_UNSET
+          || lastValidPeriodHolder.next == null
+          || lastValidPeriodHolder.next.info.id.periodIndex != nextPeriodIndex) {
+        break;
+      }
+      lastValidPeriodHolder = lastValidPeriodHolder.next;
+    }
+
+    // Release any period holders that don't match the new period order.
+    boolean readingPeriodRemoved = removeAfter(lastValidPeriodHolder);
+
+    // Update the period info for the last holder, as it may now be the last period in the timeline.
+    lastValidPeriodHolder.info =
+        getUpdatedMediaPeriodInfo(lastValidPeriodHolder.info, lastValidPeriodHolder.info.id);
+
+    // If renderers may have read from a period that's been removed, it is necessary to restart.
+    return !readingPeriodRemoved || !hasPlayingPeriod();
+  }
 
   /**
    * Returns the first {@link MediaPeriodInfo} to play, based on the specified playback position.
@@ -342,35 +494,35 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   /**
-   * Returns the {@link MediaPeriodInfo} following {@code currentMediaPeriodInfo}.
+   * Returns the {@link MediaPeriodInfo} for the media period following {@code mediaPeriodHolder}'s
+   * media period.
    *
-   * @param currentMediaPeriodInfo The current media period info.
-   * @param rendererOffsetUs The current renderer offset in microseconds.
+   * @param mediaPeriodHolder The media period holder.
    * @param rendererPositionUs The current renderer position in microseconds.
-   * @return The following media period info, or {@code null} if it is not yet possible to get the
+   * @return The following media period's info, or {@code null} if it is not yet possible to get the
    *     next media period info.
    */
-  private MediaPeriodInfo getFollowingMediaPeriodInfo(
-      MediaPeriodInfo currentMediaPeriodInfo, long rendererOffsetUs, long rendererPositionUs) {
+  private @Nullable MediaPeriodInfo getFollowingMediaPeriodInfo(
+      MediaPeriodHolder mediaPeriodHolder, long rendererPositionUs) {
     // TODO: This method is called repeatedly from ExoPlayerImplInternal.maybeUpdateLoadingPeriod
     // but if the timeline is not ready to provide the next period it can't return a non-null value
     // until the timeline is updated. Store whether the next timeline period is ready when the
     // timeline is updated, to avoid repeatedly checking the same timeline.
-    if (currentMediaPeriodInfo.isLastInTimelinePeriod) {
+    MediaPeriodInfo mediaPeriodInfo = mediaPeriodHolder.info;
+    if (mediaPeriodInfo.isLastInTimelinePeriod) {
       int nextPeriodIndex =
           timeline.getNextPeriodIndex(
-              currentMediaPeriodInfo.id.periodIndex,
-              period,
-              window,
-              repeatMode,
-              shuffleModeEnabled);
+              mediaPeriodInfo.id.periodIndex, period, window, repeatMode, shuffleModeEnabled);
       if (nextPeriodIndex == C.INDEX_UNSET) {
         // We can't create a next period yet.
         return null;
       }
 
       long startPositionUs;
-      int nextWindowIndex = timeline.getPeriod(nextPeriodIndex, period).windowIndex;
+      int nextWindowIndex =
+          timeline.getPeriod(nextPeriodIndex, period, /* setIds= */ true).windowIndex;
+      Object nextPeriodUid = period.uid;
+      long windowSequenceNumber = mediaPeriodInfo.id.windowSequenceNumber;
       if (timeline.getWindow(nextWindowIndex, window).firstPeriodIndex == nextPeriodIndex) {
         // We're starting to buffer a new window. When playback transitions to this window we'll
         // want it to be from its default start position. The expected delay until playback
@@ -378,7 +530,7 @@ import com.google.android.exoplayer2.util.Assertions;
         // interruptions). Hence we project the default start position forward by the duration of
         // the buffer, and start buffering from this point.
         long defaultPositionProjectionUs =
-            rendererOffsetUs + currentMediaPeriodInfo.durationUs - rendererPositionUs;
+            mediaPeriodHolder.getRendererOffset() + mediaPeriodInfo.durationUs - rendererPositionUs;
         Pair<Integer, Long> defaultPosition =
             timeline.getPeriodPosition(
                 window,
@@ -391,65 +543,87 @@ import com.google.android.exoplayer2.util.Assertions;
         }
         nextPeriodIndex = defaultPosition.first;
         startPositionUs = defaultPosition.second;
+        if (mediaPeriodHolder.next != null && mediaPeriodHolder.next.uid.equals(nextPeriodUid)) {
+          windowSequenceNumber = mediaPeriodHolder.next.info.id.windowSequenceNumber;
+        } else {
+          windowSequenceNumber = nextWindowSequenceNumber++;
+        }
       } else {
         startPositionUs = 0;
       }
-      MediaPeriodId periodId = resolveMediaPeriodIdForAds(nextPeriodIndex, startPositionUs);
+      MediaPeriodId periodId =
+          resolveMediaPeriodIdForAds(nextPeriodIndex, startPositionUs, windowSequenceNumber);
       return getMediaPeriodInfo(periodId, startPositionUs, startPositionUs);
     }
 
-    MediaPeriodId currentPeriodId = currentMediaPeriodInfo.id;
+    MediaPeriodId currentPeriodId = mediaPeriodInfo.id;
+    timeline.getPeriod(currentPeriodId.periodIndex, period);
     if (currentPeriodId.isAd()) {
-      int currentAdGroupIndex = currentPeriodId.adGroupIndex;
-      timeline.getPeriod(currentPeriodId.periodIndex, period);
-      int adCountInCurrentAdGroup = period.getAdCountInAdGroup(currentAdGroupIndex);
+      int adGroupIndex = currentPeriodId.adGroupIndex;
+      int adCountInCurrentAdGroup = period.getAdCountInAdGroup(adGroupIndex);
       if (adCountInCurrentAdGroup == C.LENGTH_UNSET) {
         return null;
       }
-      int nextAdIndexInAdGroup = currentPeriodId.adIndexInAdGroup + 1;
+      int nextAdIndexInAdGroup =
+          period.getNextAdIndexToPlay(adGroupIndex, currentPeriodId.adIndexInAdGroup);
       if (nextAdIndexInAdGroup < adCountInCurrentAdGroup) {
         // Play the next ad in the ad group if it's available.
-        return !period.isAdAvailable(currentAdGroupIndex, nextAdIndexInAdGroup)
+        return !period.isAdAvailable(adGroupIndex, nextAdIndexInAdGroup)
             ? null
             : getMediaPeriodInfoForAd(
                 currentPeriodId.periodIndex,
-                currentAdGroupIndex,
+                adGroupIndex,
                 nextAdIndexInAdGroup,
-                currentMediaPeriodInfo.contentPositionUs);
+                mediaPeriodInfo.contentPositionUs,
+                currentPeriodId.windowSequenceNumber);
       } else {
         // Play content from the ad group position.
-        int nextAdGroupIndex =
-            period.getAdGroupIndexAfterPositionUs(currentMediaPeriodInfo.contentPositionUs);
-        long endUs =
-            nextAdGroupIndex == C.INDEX_UNSET
-                ? C.TIME_END_OF_SOURCE
-                : period.getAdGroupTimeUs(nextAdGroupIndex);
         return getMediaPeriodInfoForContent(
-            currentPeriodId.periodIndex, currentMediaPeriodInfo.contentPositionUs, endUs);
+            currentPeriodId.periodIndex,
+            mediaPeriodInfo.contentPositionUs,
+            currentPeriodId.windowSequenceNumber);
       }
-    } else if (currentMediaPeriodInfo.endPositionUs != C.TIME_END_OF_SOURCE) {
+    } else if (mediaPeriodInfo.endPositionUs != C.TIME_END_OF_SOURCE) {
       // Play the next ad group if it's available.
-      int nextAdGroupIndex =
-          period.getAdGroupIndexForPositionUs(currentMediaPeriodInfo.endPositionUs);
-      return !period.isAdAvailable(nextAdGroupIndex, 0)
+      int nextAdGroupIndex = period.getAdGroupIndexForPositionUs(mediaPeriodInfo.endPositionUs);
+      if (nextAdGroupIndex == C.INDEX_UNSET) {
+        // The next ad group can't be played. Play content from the ad group position instead.
+        return getMediaPeriodInfoForContent(
+            currentPeriodId.periodIndex,
+            mediaPeriodInfo.endPositionUs,
+            currentPeriodId.windowSequenceNumber);
+      }
+      int adIndexInAdGroup = period.getFirstAdIndexToPlay(nextAdGroupIndex);
+      return !period.isAdAvailable(nextAdGroupIndex, adIndexInAdGroup)
           ? null
           : getMediaPeriodInfoForAd(
               currentPeriodId.periodIndex,
               nextAdGroupIndex,
-              0,
-              currentMediaPeriodInfo.endPositionUs);
+              adIndexInAdGroup,
+              mediaPeriodInfo.endPositionUs,
+              currentPeriodId.windowSequenceNumber);
     } else {
       // Check if the postroll ad should be played.
       int adGroupCount = period.getAdGroupCount();
-      if (adGroupCount == 0
-          || period.getAdGroupTimeUs(adGroupCount - 1) != C.TIME_END_OF_SOURCE
-          || period.hasPlayedAdGroup(adGroupCount - 1)
-          || !period.isAdAvailable(adGroupCount - 1, 0)) {
+      if (adGroupCount == 0) {
+        return null;
+      }
+      int adGroupIndex = adGroupCount - 1;
+      if (period.getAdGroupTimeUs(adGroupIndex) != C.TIME_END_OF_SOURCE
+          || period.hasPlayedAdGroup(adGroupIndex)) {
+        return null;
+      }
+      int adIndexInAdGroup = period.getFirstAdIndexToPlay(adGroupIndex);
+      if (!period.isAdAvailable(adGroupIndex, adIndexInAdGroup)) {
         return null;
       }
       long contentDurationUs = period.getDurationUs();
       return getMediaPeriodInfoForAd(
-          currentPeriodId.periodIndex, adGroupCount - 1, 0, contentDurationUs);
+          currentPeriodId.periodIndex,
+          adGroupIndex,
+          adIndexInAdGroup,
+          contentDurationUs,
+          currentPeriodId.windowSequenceNumber);
     }
   }
 
@@ -481,20 +655,24 @@ import com.google.android.exoplayer2.util.Assertions;
         return null;
       }
       return getMediaPeriodInfoForAd(
-          id.periodIndex, id.adGroupIndex, id.adIndexInAdGroup, contentPositionUs);
+          id.periodIndex,
+          id.adGroupIndex,
+          id.adIndexInAdGroup,
+          contentPositionUs,
+          id.windowSequenceNumber);
     } else {
-      int nextAdGroupIndex = period.getAdGroupIndexAfterPositionUs(startPositionUs);
-      long endUs =
-          nextAdGroupIndex == C.INDEX_UNSET
-              ? C.TIME_END_OF_SOURCE
-              : period.getAdGroupTimeUs(nextAdGroupIndex);
-      return getMediaPeriodInfoForContent(id.periodIndex, startPositionUs, endUs);
+      return getMediaPeriodInfoForContent(id.periodIndex, startPositionUs, id.windowSequenceNumber);
     }
   }
 
   private MediaPeriodInfo getMediaPeriodInfoForAd(
-      int periodIndex, int adGroupIndex, int adIndexInAdGroup, long contentPositionUs) {
-    MediaPeriodId id = new MediaPeriodId(periodIndex, adGroupIndex, adIndexInAdGroup);
+      int periodIndex,
+      int adGroupIndex,
+      int adIndexInAdGroup,
+      long contentPositionUs,
+      long windowSequenceNumber) {
+    MediaPeriodId id =
+        new MediaPeriodId(periodIndex, adGroupIndex, adIndexInAdGroup, windowSequenceNumber);
     boolean isLastInPeriod = isLastInPeriod(id, C.TIME_END_OF_SOURCE);
     boolean isLastInTimeline = isLastInTimeline(id, isLastInPeriod);
     long durationUs =
@@ -502,7 +680,7 @@ import com.google.android.exoplayer2.util.Assertions;
             .getPeriod(id.periodIndex, period)
             .getAdDurationUs(id.adGroupIndex, id.adIndexInAdGroup);
     long startPositionUs =
-        adIndexInAdGroup == period.getNextAdIndexToPlay(adGroupIndex)
+        adIndexInAdGroup == period.getFirstAdIndexToPlay(adGroupIndex)
             ? period.getAdResumePositionUs()
             : 0;
     return new MediaPeriodInfo(
@@ -516,11 +694,16 @@ import com.google.android.exoplayer2.util.Assertions;
   }
 
   private MediaPeriodInfo getMediaPeriodInfoForContent(
-      int periodIndex, long startPositionUs, long endUs) {
-    MediaPeriodId id = new MediaPeriodId(periodIndex);
+      int periodIndex, long startPositionUs, long windowSequenceNumber) {
+    MediaPeriodId id = new MediaPeriodId(periodIndex, windowSequenceNumber);
+    timeline.getPeriod(id.periodIndex, period);
+    int nextAdGroupIndex = period.getAdGroupIndexAfterPositionUs(startPositionUs);
+    long endUs =
+        nextAdGroupIndex == C.INDEX_UNSET
+            ? C.TIME_END_OF_SOURCE
+            : period.getAdGroupTimeUs(nextAdGroupIndex);
     boolean isLastInPeriod = isLastInPeriod(id, endUs);
     boolean isLastInTimeline = isLastInTimeline(id, isLastInPeriod);
-    timeline.getPeriod(id.periodIndex, period);
     long durationUs = endUs == C.TIME_END_OF_SOURCE ? period.getDurationUs() : endUs;
     return new MediaPeriodInfo(
         id, startPositionUs, endUs, C.TIME_UNSET, durationUs, isLastInPeriod, isLastInTimeline);
@@ -547,7 +730,7 @@ import com.google.android.exoplayer2.util.Assertions;
 
     boolean isLastAd =
         isAd && id.adGroupIndex == lastAdGroupIndex && id.adIndexInAdGroup == postrollAdCount - 1;
-    return isLastAd || (!isAd && period.getNextAdIndexToPlay(lastAdGroupIndex) == postrollAdCount);
+    return isLastAd || (!isAd && period.getFirstAdIndexToPlay(lastAdGroupIndex) == postrollAdCount);
   }
 
   private boolean isLastInTimeline(MediaPeriodId id, boolean isLastMediaPeriodInPeriod) {

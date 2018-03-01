@@ -49,8 +49,6 @@ public final class AdPlaybackState {
     public final @AdState int[] states;
     /** The durations of each ad in the ad group, in microseconds. */
     public final long[] durationsUs;
-    /** The index of the next ad that should be played, or {@link #count} if all ads were played. */
-    public final int nextAdIndexToPlay;
 
     /** Creates a new ad group with an unspecified number of ads. */
     public AdGroup() {
@@ -67,14 +65,35 @@ public final class AdPlaybackState {
       this.states = states;
       this.uris = uris;
       this.durationsUs = durationsUs;
-      int nextAdIndexToPlay;
-      for (nextAdIndexToPlay = 0; nextAdIndexToPlay < states.length; nextAdIndexToPlay++) {
+    }
+
+    /**
+     * Returns the index of the first ad in the ad group that should be played, or {@link #count} if
+     * no ads should be played.
+     */
+    public int getFirstAdIndexToPlay() {
+      return getNextAdIndexToPlay(-1);
+    }
+
+    /**
+     * Returns the index of the next ad in the ad group that should be played after playing {@code
+     * lastPlayedAdIndex}, or {@link #count} if no later ads should be played.
+     */
+    public int getNextAdIndexToPlay(int lastPlayedAdIndex) {
+      int nextAdIndexToPlay = lastPlayedAdIndex + 1;
+      while (nextAdIndexToPlay < states.length) {
         if (states[nextAdIndexToPlay] == AD_STATE_UNAVAILABLE
             || states[nextAdIndexToPlay] == AD_STATE_AVAILABLE) {
           break;
         }
+        nextAdIndexToPlay++;
       }
-      this.nextAdIndexToPlay = nextAdIndexToPlay;
+      return nextAdIndexToPlay;
+    }
+
+    /** Returns whether the ad group has at least one ad that still needs to be played. */
+    public boolean hasUnplayedAds() {
+      return count == C.LENGTH_UNSET || getFirstAdIndexToPlay() < count;
     }
 
     /**
@@ -126,7 +145,9 @@ public final class AdPlaybackState {
       Assertions.checkArgument(count == C.LENGTH_UNSET || index < count);
       @AdState int[] states = copyStatesWithSpaceForAdCount(this.states, index + 1);
       Assertions.checkArgument(
-          states[index] == AD_STATE_UNAVAILABLE || states[index] == AD_STATE_AVAILABLE);
+          states[index] == AD_STATE_UNAVAILABLE
+              || states[index] == AD_STATE_AVAILABLE
+              || states[index] == state);
       long[] durationsUs =
           this.durationsUs.length == states.length
               ? this.durationsUs
@@ -211,7 +232,7 @@ public final class AdPlaybackState {
   public static final int AD_STATE_ERROR = 4;
 
   /** Ad playback state with no ads. */
-  public static final AdPlaybackState NONE = new AdPlaybackState(new long[0]);
+  public static final AdPlaybackState NONE = new AdPlaybackState();
 
   /** The number of ad groups. */
   public final int adGroupCount;
@@ -233,7 +254,7 @@ public final class AdPlaybackState {
    * @param adGroupTimesUs The times of ad groups in microseconds. A final element with the value
    *     {@link C#TIME_END_OF_SOURCE} indicates that there is a postroll ad.
    */
-  public AdPlaybackState(long[] adGroupTimesUs) {
+  public AdPlaybackState(long... adGroupTimesUs) {
     int count = adGroupTimesUs.length;
     adGroupCount = count;
     this.adGroupTimesUs = Arrays.copyOf(adGroupTimesUs, count);
@@ -252,6 +273,44 @@ public final class AdPlaybackState {
     this.adGroups = adGroups;
     this.adResumePositionUs = adResumePositionUs;
     this.contentDurationUs = contentDurationUs;
+  }
+
+  /**
+   * Returns the index of the ad group at or before {@code positionUs}, if that ad group is
+   * unplayed. Returns {@link C#INDEX_UNSET} if the ad group at or before {@code positionUs} has no
+   * ads remaining to be played, or if there is no such ad group.
+   *
+   * @param positionUs The position at or before which to find an ad group, in microseconds.
+   * @return The index of the ad group, or {@link C#INDEX_UNSET}.
+   */
+  public int getAdGroupIndexForPositionUs(long positionUs) {
+    // Use a linear search as the array elements may not be increasing due to TIME_END_OF_SOURCE.
+    // In practice we expect there to be few ad groups so the search shouldn't be expensive.
+    int index = adGroupTimesUs.length - 1;
+    while (index >= 0
+        && (adGroupTimesUs[index] == C.TIME_END_OF_SOURCE || adGroupTimesUs[index] > positionUs)) {
+      index--;
+    }
+    return index >= 0 && adGroups[index].hasUnplayedAds() ? index : C.INDEX_UNSET;
+  }
+
+  /**
+   * Returns the index of the next ad group after {@code positionUs} that has ads remaining to be
+   * played. Returns {@link C#INDEX_UNSET} if there is no such ad group.
+   *
+   * @param positionUs The position after which to find an ad group, in microseconds.
+   * @return The index of the ad group, or {@link C#INDEX_UNSET}.
+   */
+  public int getAdGroupIndexAfterPositionUs(long positionUs) {
+    // Use a linear search as the array elements may not be increasing due to TIME_END_OF_SOURCE.
+    // In practice we expect there to be few ad groups so the search shouldn't be expensive.
+    int index = 0;
+    while (index < adGroupTimesUs.length
+        && adGroupTimesUs[index] != C.TIME_END_OF_SOURCE
+        && (positionUs >= adGroupTimesUs[index] || !adGroups[index].hasUnplayedAds())) {
+      index++;
+    }
+    return index < adGroupTimesUs.length ? index : C.INDEX_UNSET;
   }
 
   /**

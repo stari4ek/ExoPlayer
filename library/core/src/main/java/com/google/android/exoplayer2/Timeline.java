@@ -381,15 +381,29 @@ public abstract class Timeline {
     }
 
     /**
-     * Returns the index of the next ad to play in the specified ad group, or the number of ads in
-     * the ad group if the ad group does not have any ads remaining to play.
+     * Returns the index of the first ad in the specified ad group that should be played, or the
+     * number of ads in the ad group if no ads should be played.
      *
      * @param adGroupIndex The ad group index.
+     * @return The index of the first ad that should be played, or the number of ads in the ad group
+     *     if no ads should be played.
+     */
+    public int getFirstAdIndexToPlay(int adGroupIndex) {
+      return adPlaybackState.adGroups[adGroupIndex].getFirstAdIndexToPlay();
+    }
+
+    /**
+     * Returns the index of the next ad in the specified ad group that should be played after
+     * playing {@code adIndexInAdGroup}, or the number of ads in the ad group if no later ads should
+     * be played.
+     *
+     * @param adGroupIndex The ad group index.
+     * @param lastPlayedAdIndex The last played ad index in the ad group.
      * @return The index of the next ad that should be played, or the number of ads in the ad group
      *     if the ad group does not have any ads remaining to play.
      */
-    public int getNextAdIndexToPlay(int adGroupIndex) {
-      return adPlaybackState.adGroups[adGroupIndex].nextAdIndexToPlay;
+    public int getNextAdIndexToPlay(int adGroupIndex, int lastPlayedAdIndex) {
+      return adPlaybackState.adGroups[adGroupIndex].getNextAdIndexToPlay(lastPlayedAdIndex);
     }
 
     /**
@@ -399,53 +413,30 @@ public abstract class Timeline {
      * @return Whether the ad group at index {@code adGroupIndex} has been played.
      */
     public boolean hasPlayedAdGroup(int adGroupIndex) {
-      AdPlaybackState.AdGroup adGroup = adPlaybackState.adGroups[adGroupIndex];
-      return adGroup.nextAdIndexToPlay == adGroup.count;
+      return !adPlaybackState.adGroups[adGroupIndex].hasUnplayedAds();
     }
 
     /**
      * Returns the index of the ad group at or before {@code positionUs}, if that ad group is
-     * unplayed. Returns {@link C#INDEX_UNSET} if the ad group before {@code positionUs} has been
-     * played, or if there is no such ad group.
+     * unplayed. Returns {@link C#INDEX_UNSET} if the ad group at or before {@code positionUs} has
+     * no ads remaining to be played, or if there is no such ad group.
      *
      * @param positionUs The position at or before which to find an ad group, in microseconds.
      * @return The index of the ad group, or {@link C#INDEX_UNSET}.
      */
     public int getAdGroupIndexForPositionUs(long positionUs) {
-      long[] adGroupTimesUs = adPlaybackState.adGroupTimesUs;
-      if (adGroupTimesUs == null) {
-        return C.INDEX_UNSET;
-      }
-      // Use a linear search as the array elements may not be increasing due to TIME_END_OF_SOURCE.
-      // In practice we expect there to be few ad groups so the search shouldn't be expensive.
-      int index = adGroupTimesUs.length - 1;
-      while (index >= 0 && (adGroupTimesUs[index] == C.TIME_END_OF_SOURCE
-          || adGroupTimesUs[index] > positionUs)) {
-        index--;
-      }
-      return index >= 0 && !hasPlayedAdGroup(index) ? index : C.INDEX_UNSET;
+      return adPlaybackState.getAdGroupIndexForPositionUs(positionUs);
     }
 
     /**
-     * Returns the index of the next unplayed ad group after {@code positionUs}. Returns
-     * {@link C#INDEX_UNSET} if there is no such ad group.
+     * Returns the index of the next ad group after {@code positionUs} that has ads remaining to be
+     * played. Returns {@link C#INDEX_UNSET} if there is no such ad group.
      *
      * @param positionUs The position after which to find an ad group, in microseconds.
      * @return The index of the ad group, or {@link C#INDEX_UNSET}.
      */
     public int getAdGroupIndexAfterPositionUs(long positionUs) {
-      long[] adGroupTimesUs = adPlaybackState.adGroupTimesUs;
-      if (adGroupTimesUs == null) {
-        return C.INDEX_UNSET;
-      }
-      // Use a linear search as the array elements may not be increasing due to TIME_END_OF_SOURCE.
-      // In practice we expect there to be few ad groups so the search shouldn't be expensive.
-      int index = 0;
-      while (index < adGroupTimesUs.length && adGroupTimesUs[index] != C.TIME_END_OF_SOURCE
-          && (positionUs >= adGroupTimesUs[index] || hasPlayedAdGroup(index))) {
-        index++;
-      }
-      return index < adGroupTimesUs.length ? index : C.INDEX_UNSET;
+      return adPlaybackState.getAdGroupIndexAfterPositionUs(positionUs);
     }
 
     /**
@@ -481,7 +472,8 @@ public abstract class Timeline {
      * @return The duration of the ad, or {@link C#TIME_UNSET} if not yet known.
      */
     public long getAdDurationUs(int adGroupIndex, int adIndexInAdGroup) {
-      return adPlaybackState.adGroups[adGroupIndex].durationsUs[adIndexInAdGroup];
+      AdPlaybackState.AdGroup adGroup = adPlaybackState.adGroups[adGroupIndex];
+      return adGroup.count != C.LENGTH_UNSET ? adGroup.durationsUs[adIndexInAdGroup] : C.TIME_UNSET;
     }
 
     /**

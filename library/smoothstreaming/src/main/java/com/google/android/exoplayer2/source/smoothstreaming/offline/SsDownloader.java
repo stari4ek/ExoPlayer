@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.offline.SegmentDownloader;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest.StreamElement;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifestParser;
+import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsUtil;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.TrackKey;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
@@ -47,7 +48,7 @@ import java.util.List;
  * // Select the first track of the first stream element
  * ssDownloader.selectRepresentations(new TrackKey[] {new TrackKey(0, 0)});
  * ssDownloader.download(new ProgressListener() {
- *   @Override
+ *   {@literal @}Override
  *   public void onDownloadProgress(Downloader downloader, float downloadPercentage,
  *       long downloadedBytes) {
  *     // Invoked periodically during the download.
@@ -64,7 +65,7 @@ public final class SsDownloader extends SegmentDownloader<SsManifest, TrackKey> 
    * @see SegmentDownloader#SegmentDownloader(Uri, DownloaderConstructorHelper)
    */
   public SsDownloader(Uri manifestUri, DownloaderConstructorHelper constructorHelper)  {
-    super(manifestUri, constructorHelper);
+    super(SsUtil.fixManifestUri(manifestUri), constructorHelper);
   }
 
   @Override
@@ -82,10 +83,8 @@ public final class SsDownloader extends SegmentDownloader<SsManifest, TrackKey> 
 
   @Override
   protected SsManifest getManifest(DataSource dataSource, Uri uri) throws IOException {
-    DataSpec dataSpec = new DataSpec(uri,
-        DataSpec.FLAG_ALLOW_CACHING_UNKNOWN_LENGTH | DataSpec.FLAG_ALLOW_GZIP);
-    ParsingLoadable<SsManifest> loadable = new ParsingLoadable<>(dataSource, dataSpec,
-        C.DATA_TYPE_MANIFEST, new SsManifestParser());
+    ParsingLoadable<SsManifest> loadable =
+        new ParsingLoadable<>(dataSource, uri, C.DATA_TYPE_MANIFEST, new SsManifestParser());
     loadable.load();
     return loadable.getResult();
   }
