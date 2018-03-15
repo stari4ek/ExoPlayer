@@ -111,7 +111,9 @@ import java.util.List;
  *   <li><b>{@code surface_type}</b> - The type of surface view used for video playbacks. Valid
  *       values are {@code surface_view}, {@code texture_view} and {@code none}. Using {@code none}
  *       is recommended for audio only applications, since creating the surface can be expensive.
- *       Using {@code surface_view} is recommended for video applications.
+ *       Using {@code surface_view} is recommended for video applications. Note, TextureView can
+ *       only be used in a hardware accelerated window. When rendered in software, TextureView will
+ *       draw nothing.
  *       <ul>
  *         <li>Corresponding method: None
  *         <li>Default: {@code surface_view}
@@ -478,6 +480,12 @@ public class PlayerView extends FrameLayout {
     contentFrame.setResizeMode(resizeMode);
   }
 
+  /** Returns the resize mode. */
+  public @ResizeMode int getResizeMode() {
+    Assertions.checkState(contentFrame != null);
+    return contentFrame.getResizeMode();
+  }
+
   /** Returns whether artwork is displayed if present in the media. */
   public boolean getUseArtwork() {
     return useArtwork;
@@ -748,6 +756,17 @@ public class PlayerView extends FrameLayout {
   public void setShowMultiWindowTimeBar(boolean showMultiWindowTimeBar) {
     Assertions.checkState(controller != null);
     controller.setShowMultiWindowTimeBar(showMultiWindowTimeBar);
+  }
+
+  /**
+   * Set the {@link AspectRatioFrameLayout.AspectRatioListener}.
+   *
+   * @param listener The listener to be notified about aspect ratios changes of the video content or
+   *     the content frame.
+   */
+  public void setAspectRatioListener(AspectRatioFrameLayout.AspectRatioListener listener) {
+    Assertions.checkState(contentFrame != null);
+    contentFrame.setAspectRatioListener(listener);
   }
 
   /**

@@ -193,13 +193,16 @@ public class MediaSourceTestRunner {
         });
   }
 
-  /** Calls {@link MediaSource#releaseSource()} on the playback thread. */
+  /**
+   * Calls {@link MediaSource#releaseSource(MediaSource.SourceInfoRefreshListener)} on the playback
+   * thread.
+   */
   public void releaseSource() {
     runOnPlaybackThread(
         new Runnable() {
           @Override
           public void run() {
-            mediaSource.releaseSource();
+            mediaSource.releaseSource(mediaSourceListener);
           }
         });
   }
@@ -282,7 +285,7 @@ public class MediaSourceTestRunner {
     playbackThread.quit();
   }
 
-  private class MediaSourceListener implements MediaSource.Listener {
+  private class MediaSourceListener implements MediaSource.SourceInfoRefreshListener {
 
     @Override
     public void onSourceInfoRefreshed(MediaSource source, Timeline timeline, Object manifest) {

@@ -51,13 +51,9 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
      * Creates a new {@link MediaSource} for loading the ad media with the specified {@code uri}.
      *
      * @param uri The URI of the media or manifest to play.
-     * @param handler A handler for listener events. May be null if delivery of events is not
-     *     required.
-     * @param listener A listener for events. May be null if delivery of events is not required.
      * @return The new media source.
      */
-    MediaSource createMediaSource(
-        Uri uri, @Nullable Handler handler, @Nullable MediaSourceEventListener listener);
+    MediaSource createMediaSource(Uri uri);
 
     /**
      * Returns the content types supported by media sources created by this factory. Each element
@@ -119,7 +115,6 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   private AdPlaybackState adPlaybackState;
   private MediaSource[][] adGroupMediaSources;
   private long[][] adDurationsUs;
-  private MediaSource.Listener listener;
 
   /**
    * Constructs a new source that inserts ads linearly with the content specified by {@code
@@ -204,11 +199,10 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   }
 
   @Override
-  public void prepareSource(final ExoPlayer player, boolean isTopLevelSource, Listener listener) {
-    super.prepareSource(player, isTopLevelSource, listener);
+  public void prepareSourceInternal(final ExoPlayer player, boolean isTopLevelSource) {
+    super.prepareSourceInternal(player, isTopLevelSource);
     Assertions.checkArgument(isTopLevelSource);
     final ComponentListener componentListener = new ComponentListener();
-    this.listener = listener;
     this.componentListener = componentListener;
     prepareChildSource(new MediaPeriodId(/* periodIndex= */ 0), contentMediaSource);
     mainHandler.post(new Runnable() {
@@ -226,8 +220,8 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
       int adIndexInAdGroup = id.adIndexInAdGroup;
       if (adGroupMediaSources[adGroupIndex].length <= adIndexInAdGroup) {
         Uri adUri = adPlaybackState.adGroups[id.adGroupIndex].uris[id.adIndexInAdGroup];
-        MediaSource adMediaSource =
-            adMediaSourceFactory.createMediaSource(adUri, eventHandler, eventListener);
+        MediaSource adMediaSource = adMediaSourceFactory.createMediaSource(adUri);
+        adMediaSource.addEventListener(eventHandler, eventListener);
         int oldAdCount = adGroupMediaSources[id.adGroupIndex].length;
         if (adIndexInAdGroup >= oldAdCount) {
           int adCount = adIndexInAdGroup + 1;
@@ -276,8 +270,8 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   }
 
   @Override
-  public void releaseSource() {
-    super.releaseSource();
+  public void releaseSourceInternal() {
+    super.releaseSourceInternal();
     componentListener.release();
     componentListener = null;
     deferredMediaPeriodByAdMediaSource.clear();
@@ -286,7 +280,6 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
     adPlaybackState = null;
     adGroupMediaSources = new MediaSource[0][];
     adDurationsUs = new long[0][];
-    listener = null;
     mainHandler.post(new Runnable() {
       @Override
       public void run() {
@@ -350,7 +343,7 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
           adPlaybackState.adGroupCount == 0
               ? contentTimeline
               : new SinglePeriodAdTimeline(contentTimeline, adPlaybackState);
-      listener.onSourceInfoRefreshed(this, timeline, contentManifest);
+      refreshSourceInfo(timeline, contentManifest);
     }
   }
 

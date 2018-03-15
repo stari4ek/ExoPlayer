@@ -175,7 +175,7 @@ public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callb
 
   @Override
   public long getAdjustedSeekPositionUs(long positionUs, SeekParameters seekParameters) {
-    if (positionUs == startUs) {
+    if (positionUs == 0) {
       // Never adjust seeks to the start of the clipped view.
       return 0;
     }
@@ -293,7 +293,7 @@ public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callb
       int result = childStream.readData(formatHolder, buffer, requireFormat);
       if (result == C.RESULT_FORMAT_READ) {
         Format format = formatHolder.format;
-        if (format.encoderDelay != Format.NO_VALUE || format.encoderPadding != Format.NO_VALUE) {
+        if (format.encoderDelay != 0 || format.encoderPadding != 0) {
           // Clear gapless playback metadata if the start/end points don't match the media.
           int encoderDelay = startUs != 0 ? 0 : format.encoderDelay;
           int encoderPadding = endUs != C.TIME_END_OF_SOURCE ? 0 : format.encoderPadding;
