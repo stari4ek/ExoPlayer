@@ -28,8 +28,9 @@ import java.util.TreeSet;
  */
 /*package*/ final class CachedContent {
 
-  private static final String EXOPLAYER_METADATA_NAME_PREFIX = "exo_";
-  private static final String METADATA_NAME_LENGTH = EXOPLAYER_METADATA_NAME_PREFIX + "len";
+  private static final int VERSION_METADATA_INTRODUCED = 2;
+  private static final int VERSION_MAX = Integer.MAX_VALUE;
+
   /** The cache file id that uniquely identifies the original stream. */
   public final int id;
   /** The cache key that uniquely identifies the original stream. */
@@ -44,15 +45,21 @@ import java.util.TreeSet;
   /**
    * Reads an instance from a {@link DataInputStream}.
    *
+   * @param version Version of the encoded data.
    * @param input Input stream containing values needed to initialize CachedContent instance.
    * @throws IOException If an error occurs during reading values.
    */
-  public static CachedContent readFromStream(DataInputStream input) throws IOException {
+  public static CachedContent readFromStream(int version, DataInputStream input)
+      throws IOException {
     int id = input.readInt();
     String key = input.readUTF();
-    long length = input.readLong();
     CachedContent cachedContent = new CachedContent(id, key);
-    cachedContent.setLength(length);
+    if (version < VERSION_METADATA_INTRODUCED) {
+      long length = input.readLong();
+      cachedContent.setLength(length);
+    } else {
+      cachedContent.metadata = DefaultContentMetadata.readFromStream(input);
+    }
     return cachedContent;
   }
 
@@ -65,7 +72,7 @@ import java.util.TreeSet;
   public CachedContent(int id, String key) {
     this.id = id;
     this.key = key;
-    this.metadata = new DefaultContentMetadata();
+    this.metadata = DefaultContentMetadata.EMPTY;
     this.cachedSpans = new TreeSet<>();
   }
 
@@ -78,21 +85,36 @@ import java.util.TreeSet;
   public void writeToStream(DataOutputStream output) throws IOException {
     output.writeInt(id);
     output.writeUTF(key);
-    output.writeLong(getLength());
+    metadata.writeToStream(output);
+  }
+
+  /** Returns the metadata. */
+  public ContentMetadata getMetadata() {
+    return metadata;
+  }
+
+  /**
+   * Applies {@code mutations} to the metadata.
+   *
+   * @return Whether {@code mutations} changed any metadata.
+   */
+  public boolean applyMetadataMutations(ContentMetadataMutations mutations) {
+    DefaultContentMetadata oldMetadata = metadata;
+    metadata = metadata.copyWithMutationsApplied(mutations);
+    return metadata.equals(oldMetadata);
   }
 
   /**
    * Returns the length of the original stream, or {@link C#LENGTH_UNSET} if the length is unknown.
    */
   public long getLength() {
-    return metadata.get(METADATA_NAME_LENGTH, C.LENGTH_UNSET);
+    return metadata.get(ContentMetadata.METADATA_NAME_LENGTH, C.LENGTH_UNSET);
   }
 
   /** Sets the length of the content. */
   public void setLength(long length) {
-    ContentMetadataMutations mutations =
-        new ContentMetadataMutations().set(METADATA_NAME_LENGTH, length);
-    metadata = new DefaultContentMetadata(metadata, mutations);
+    applyMetadataMutations(
+        new ContentMetadataMutations().set(ContentMetadata.METADATA_NAME_LENGTH, length));
   }
 
   /** Returns whether the content is locked. */
@@ -202,13 +224,41 @@ import java.util.TreeSet;
     return false;
   }
 
-  /** Calculates a hash code for the header of this {@code CachedContent}. */
-  public int headerHashCode() {
-    long length = getLength();
+  /**
+   * Calculates a hash code for the header of this {@code CachedContent} which is compatible with
+   * the index file with {@code version}.
+   */
+  public int headerHashCode(int version) {
     int result = id;
     result = 31 * result + key.hashCode();
-    result = 31 * result + (int) (length ^ (length >>> 32));
+    if (version < VERSION_METADATA_INTRODUCED) {
+      long length = getLength();
+      result = 31 * result + (int) (length ^ (length >>> 32));
+    } else {
+      result = 31 * result + metadata.hashCode();
+    }
     return result;
   }
 
+  @Override
+  public int hashCode() {
+    int result = headerHashCode(VERSION_MAX);
+    result = 31 * result + cachedSpans.hashCode();
+    return result;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    CachedContent that = (CachedContent) o;
+    return id == that.id
+        && key.equals(that.key)
+        && cachedSpans.equals(that.cachedSpans)
+        && metadata.equals(that.metadata);
+  }
 }

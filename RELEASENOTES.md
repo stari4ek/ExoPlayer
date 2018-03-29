@@ -2,6 +2,9 @@
 
 ### dev-v2 (not yet released) ###
 
+* Optimize seeking in FMP4 by enabling seeking to the nearest sync sample within
+  a fragment. This benefits standalone FMP4 playbacks, DASH and SmoothStreaming.
+* Optimize seeking in FMP4.
 * Moved initial bitrate estimate from `AdaptiveTrackSelection` to
   `DefaultBandwidthMeter`.
 * Updated default max buffer length in `DefaultLoadControl`.
@@ -19,6 +22,47 @@
     deprecated `DynamicConcatenatingMediaSource`.
   * Allow clipping of child media sources where the period and window have a
     non-zero offset with `ClippingMediaSource`.
+  * Allow adding and removing `MediaSourceEventListener`s to MediaSources after
+    they have been created. Listening to events is now supported for all
+    media sources including composite sources.
+  * Added callbacks to `MediaSourceEventListener` to get notified when media
+    periods are created, released and being read from.
+  * Support live stream clipping with `ClippingMediaSource`.
+* Audio:
+  * Factor out `AudioTrack` position tracking from `DefaultAudioSink`.
+  * Fix an issue where the playback position would pause just after playback
+    begins, and poll the audio timestamp less frequently once it starts
+    advancing ([#3841](https://github.com/google/ExoPlayer/issues/3841)).
+  * Add an option to skip silent audio in `PlaybackParameters`
+    ((#2635)[https://github.com/google/ExoPlayer/issues/2635]).
+* Caching:
+  * Add release method to Cache interface.
+  * Prevent multiple instances of SimpleCache in the same folder.
+    Previous instance must be released.
+  * Store redirected URI
+  ([#2360](https://github.com/google/ExoPlayer/issues/2360)).
+* DRM:
+  * Allow multiple listeners for `DefaultDrmSessionManager`.
+  * Pass `DrmSessionManager` to `ExoPlayerFactory` instead of `RendererFactory`.
+* Removed default renderer time offset of 60000000 from internal player. The
+  actual renderer timestamp offset can be obtained by listening to
+  `BaseRenderer.onStreamChanged`.
+* HLS: Fix playlist loading error propagation when the current selection does
+  not include all of the playlist's variants.
+
+### 2.7.2 ###
+
+* Gradle: Upgrade Gradle version from 4.1 to 4.4 so it can work with Android
+  Studio 3.1 ([#3708](https://github.com/google/ExoPlayer/issues/3708)).
+* Match codecs starting with "mp4a" to different Audio MimeTypes
+  ([#3779](https://github.com/google/ExoPlayer/issues/3779)).
+* Fix ANR issue on Redmi 4X and Redmi Note 4
+  ([#4006](https://github.com/google/ExoPlayer/issues/4006)).
+* Fix handling of zero padded strings when parsing Matroska streams
+  ([#4010](https://github.com/google/ExoPlayer/issues/4010)).
+* Fix "Decoder input buffer too small" error when playing some FLAC streams.
+* MediaSession extension: Omit fast forward and rewind actions when media is not
+  seekable ([#4001](https://github.com/google/ExoPlayer/issues/4001)).
 
 ### 2.7.1 ###
 
@@ -94,7 +138,7 @@
   ([#3630](https://github.com/google/ExoPlayer/issues/3630)).
 * DASH:
   * Support in-band Emsg events targeting the player with scheme id
-    "urn:mpeg:dash:event:2012" and scheme values "1", "2" and "3".
+    `urn:mpeg:dash:event:2012` and scheme values "1", "2" and "3".
   * Support EventStream elements in DASH manifests.
 * HLS:
     * Add opt-in support for chunkless preparation in HLS. This allows an

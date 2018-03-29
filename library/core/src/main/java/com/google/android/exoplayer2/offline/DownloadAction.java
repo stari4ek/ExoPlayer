@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.offline;
 
+import android.support.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -108,7 +109,7 @@ public abstract class DownloadAction {
   private final String data;
 
   /** @param data Optional custom data for this action. If null, an empty string is used. */
-  protected DownloadAction(String data) {
+  protected DownloadAction(@Nullable String data) {
     this.data = data != null ? data : "";
   }
 
@@ -138,7 +139,7 @@ public abstract class DownloadAction {
   /** Serializes itself into the {@code output}. */
   protected abstract void writeToStream(DataOutputStream output) throws IOException;
 
-  /** Returns whether this is action is for the same media as the {@code other}. */
+  /** Returns whether this is an action for the same media as the {@code other}. */
   protected abstract boolean isSameMedia(DownloadAction other);
 
   /** Creates a {@link Downloader} with the given parameters. */

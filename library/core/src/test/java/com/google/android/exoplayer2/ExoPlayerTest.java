@@ -25,6 +25,7 @@ import com.google.android.exoplayer2.Timeline.Window;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
+import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.source.ads.AdPlaybackState;
@@ -180,8 +181,7 @@ public final class ExoPlayerTest {
             // media clock position will be the start of the timeline until the stream is set to be
             // final, at which point it jumps to the end of the timeline allowing the playing period
             // to advance.
-            // TODO: Avoid hard-coding ExoPlayerImplInternal.RENDERER_TIMESTAMP_OFFSET_US.
-            return isCurrentStreamFinal() ? 60000030 : 60000000;
+            return isCurrentStreamFinal() ? 30 : 0;
           }
 
           @Override
@@ -573,8 +573,11 @@ public final class ExoPlayerTest {
         new FakeMediaSource(timeline, null, Builder.VIDEO_FORMAT) {
           @Override
           protected FakeMediaPeriod createFakeMediaPeriod(
-              MediaPeriodId id, TrackGroupArray trackGroupArray, Allocator allocator) {
-            FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray);
+              MediaPeriodId id,
+              TrackGroupArray trackGroupArray,
+              Allocator allocator,
+              EventDispatcher eventDispatcher) {
+            FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray, eventDispatcher);
             mediaPeriod.setSeekToUsOffset(10);
             return mediaPeriod;
           }
@@ -604,8 +607,11 @@ public final class ExoPlayerTest {
         new FakeMediaSource(timeline, null, Builder.VIDEO_FORMAT) {
           @Override
           protected FakeMediaPeriod createFakeMediaPeriod(
-              MediaPeriodId id, TrackGroupArray trackGroupArray, Allocator allocator) {
-            FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray);
+              MediaPeriodId id,
+              TrackGroupArray trackGroupArray,
+              Allocator allocator,
+              EventDispatcher eventDispatcher) {
+            FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray, eventDispatcher);
             mediaPeriod.setDiscontinuityPositionUs(10);
             return mediaPeriod;
           }
@@ -626,8 +632,11 @@ public final class ExoPlayerTest {
         new FakeMediaSource(timeline, null, Builder.VIDEO_FORMAT) {
           @Override
           protected FakeMediaPeriod createFakeMediaPeriod(
-              MediaPeriodId id, TrackGroupArray trackGroupArray, Allocator allocator) {
-            FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray);
+              MediaPeriodId id,
+              TrackGroupArray trackGroupArray,
+              Allocator allocator,
+              EventDispatcher eventDispatcher) {
+            FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray, eventDispatcher);
             mediaPeriod.setDiscontinuityPositionUs(0);
             return mediaPeriod;
           }
@@ -878,10 +887,13 @@ public final class ExoPlayerTest {
         new FakeMediaSource(new FakeTimeline(/* windowCount= */ 1), null, Builder.VIDEO_FORMAT) {
           @Override
           protected FakeMediaPeriod createFakeMediaPeriod(
-              MediaPeriodId id, TrackGroupArray trackGroupArray, Allocator allocator) {
+              MediaPeriodId id,
+              TrackGroupArray trackGroupArray,
+              Allocator allocator,
+              EventDispatcher eventDispatcher) {
             // Defer completing preparation of the period until playback parameters have been set.
             fakeMediaPeriodHolder[0] =
-                new FakeMediaPeriod(trackGroupArray, /* deferOnPrepared= */ true);
+                new FakeMediaPeriod(trackGroupArray, eventDispatcher, /* deferOnPrepared= */ true);
             createPeriodCalledCountDownLatch.countDown();
             return fakeMediaPeriodHolder[0];
           }
@@ -902,7 +914,7 @@ public final class ExoPlayerTest {
                   }
                 })
             // Set playback parameters (while the fake media period is not yet prepared).
-            .setPlaybackParameters(new PlaybackParameters(2f, 2f))
+            .setPlaybackParameters(new PlaybackParameters(/* speed= */ 2f, /* pitch= */ 2f))
             // Complete preparation of the fake media period.
             .executeRunnable(
                 new Runnable() {

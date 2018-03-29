@@ -15,7 +15,6 @@
  */
 package com.google.android.exoplayer2.source.hls;
 
-import android.os.Handler;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.SeekParameters;
@@ -55,7 +54,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private final Allocator allocator;
   private final IdentityHashMap<SampleStream, Integer> streamWrapperIndices;
   private final TimestampAdjusterProvider timestampAdjusterProvider;
-  private final Handler continueLoadingHandler;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
   private final boolean allowChunklessPreparation;
 
@@ -65,6 +63,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private HlsSampleStreamWrapper[] sampleStreamWrappers;
   private HlsSampleStreamWrapper[] enabledSampleStreamWrappers;
   private SequenceableLoader compositeSequenceableLoader;
+  private boolean notifiedReadingStarted;
 
   public HlsMediaPeriod(
       HlsExtractorFactory extractorFactory,
@@ -83,19 +82,21 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
     this.allocator = allocator;
     this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
     this.allowChunklessPreparation = allowChunklessPreparation;
+    compositeSequenceableLoader =
+        compositeSequenceableLoaderFactory.createCompositeSequenceableLoader();
     streamWrapperIndices = new IdentityHashMap<>();
     timestampAdjusterProvider = new TimestampAdjusterProvider();
-    continueLoadingHandler = new Handler();
     sampleStreamWrappers = new HlsSampleStreamWrapper[0];
     enabledSampleStreamWrappers = new HlsSampleStreamWrapper[0];
+    eventDispatcher.mediaPeriodCreated();
   }
 
   public void release() {
     playlistTracker.removeListener(this);
-    continueLoadingHandler.removeCallbacksAndMessages(null);
     for (HlsSampleStreamWrapper sampleStreamWrapper : sampleStreamWrappers) {
       sampleStreamWrapper.release();
     }
+    eventDispatcher.mediaPeriodReleased();
   }
 
   @Override
@@ -211,7 +212,15 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
 
   @Override
   public boolean continueLoading(long positionUs) {
-    return compositeSequenceableLoader.continueLoading(positionUs);
+    if (trackGroups == null) {
+      // Preparation is still going on.
+      for (HlsSampleStreamWrapper wrapper : sampleStreamWrappers) {
+        wrapper.continuePreparing();
+      }
+      return false;
+    } else {
+      return compositeSequenceableLoader.continueLoading(positionUs);
+    }
   }
 
   @Override
@@ -221,6 +230,10 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
 
   @Override
   public long readDiscontinuity() {
+    if (!notifiedReadingStarted) {
+      eventDispatcher.readingStarted();
+      notifiedReadingStarted = true;
+    }
     return C.TIME_UNSET;
   }
 
@@ -281,10 +294,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
 
   @Override
   public void onContinueLoadingRequested(HlsSampleStreamWrapper sampleStreamWrapper) {
-    if (trackGroups == null) {
-      // Still preparing.
-      return;
-    }
     callback.onContinueLoadingRequested(this);
   }
 
@@ -292,15 +301,17 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
 
   @Override
   public void onPlaylistChanged() {
-    continuePreparingOrLoading();
+    callback.onContinueLoadingRequested(this);
   }
 
   @Override
-  public void onPlaylistBlacklisted(HlsUrl url, long blacklistMs) {
+  public boolean onPlaylistError(HlsUrl url, boolean shouldBlacklist) {
+    boolean noBlacklistingFailure = true;
     for (HlsSampleStreamWrapper streamWrapper : sampleStreamWrappers) {
-      streamWrapper.onPlaylistBlacklisted(url, blacklistMs);
+      noBlacklistingFailure &= streamWrapper.onPlaylistError(url, shouldBlacklist);
     }
-    continuePreparingOrLoading();
+    callback.onContinueLoadingRequested(this);
+    return noBlacklistingFailure;
   }
 
   // Internal methods.
@@ -466,17 +477,6 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
         variants, dataSourceFactory, timestampAdjusterProvider, muxedCaptionFormats);
     return new HlsSampleStreamWrapper(trackType, this, defaultChunkSource, allocator, positionUs,
         muxedAudioFormat, minLoadableRetryCount, eventDispatcher);
-  }
-
-  private void continuePreparingOrLoading() {
-    if (trackGroups != null) {
-      callback.onContinueLoadingRequested(this);
-    } else {
-      // Some of the wrappers were waiting for their media playlist to prepare.
-      for (HlsSampleStreamWrapper wrapper : sampleStreamWrappers) {
-        wrapper.continuePreparing();
-      }
-    }
   }
 
   private static Format deriveVideoFormat(Format variantFormat) {

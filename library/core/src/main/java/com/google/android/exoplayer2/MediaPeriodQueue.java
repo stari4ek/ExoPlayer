@@ -22,7 +22,6 @@ import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
-import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.util.Assertions;
 
@@ -132,7 +131,6 @@ import com.google.android.exoplayer2.util.Assertions;
    * and returns it.
    *
    * @param rendererCapabilities The renderer capabilities.
-   * @param rendererTimestampOffsetUs The base time offset added to for renderers.
    * @param trackSelector The track selector.
    * @param allocator The allocator.
    * @param mediaSource The media source that produced the media period.
@@ -141,7 +139,6 @@ import com.google.android.exoplayer2.util.Assertions;
    */
   public MediaPeriod enqueueNextMediaPeriod(
       RendererCapabilities[] rendererCapabilities,
-      long rendererTimestampOffsetUs,
       TrackSelector trackSelector,
       Allocator allocator,
       MediaSource mediaSource,
@@ -149,7 +146,7 @@ import com.google.android.exoplayer2.util.Assertions;
       MediaPeriodInfo info) {
     long rendererPositionOffsetUs =
         loading == null
-            ? (info.startPositionUs + rendererTimestampOffsetUs)
+            ? info.startPositionUs
             : (loading.getRendererOffset() + loading.info.durationUs);
     MediaPeriodHolder newPeriodHolder =
         new MediaPeriodHolder(
@@ -168,17 +165,6 @@ import com.google.android.exoplayer2.util.Assertions;
     loading = newPeriodHolder;
     length++;
     return newPeriodHolder.mediaPeriod;
-  }
-
-  /**
-   * Handles the loading media period being prepared.
-   *
-   * @param playbackSpeed The current playback speed.
-   * @return The result of selecting tracks on the newly prepared loading media period.
-   */
-  public TrackSelectorResult handleLoadingPeriodPrepared(float playbackSpeed)
-      throws ExoPlaybackException {
-    return loading.handlePrepared(playbackSpeed);
   }
 
   /**

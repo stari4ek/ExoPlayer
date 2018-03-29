@@ -100,6 +100,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   @C.VideoScalingMode
   private int scalingMode;
   private boolean renderedFirstFrame;
+  private long initialPositionUs;
   private long joiningDeadlineMs;
   private long droppedFrameAccumulationStartTimeMs;
   private int droppedFrames;
@@ -276,6 +277,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   protected void onPositionReset(long positionUs, boolean joining) throws ExoPlaybackException {
     super.onPositionReset(positionUs, joining);
     clearRenderedFirstFrame();
+    initialPositionUs = C.TIME_UNSET;
     consecutiveDroppedFrameCount = 0;
     if (pendingOutputStreamOffsetCount != 0) {
       outputStreamOffsetUs = pendingOutputStreamOffsetsUs[pendingOutputStreamOffsetCount - 1];
@@ -532,6 +534,10 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   protected boolean processOutputBuffer(long positionUs, long elapsedRealtimeUs, MediaCodec codec,
       ByteBuffer buffer, int bufferIndex, int bufferFlags, long bufferPresentationTimeUs,
       boolean shouldSkip) throws ExoPlaybackException {
+    if (initialPositionUs == C.TIME_UNSET) {
+      initialPositionUs = positionUs;
+    }
+
     while (pendingOutputStreamOffsetCount != 0
         && bufferPresentationTimeUs >= pendingOutputStreamOffsetsUs[0]) {
       outputStreamOffsetUs = pendingOutputStreamOffsetsUs[0];
@@ -569,7 +575,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       return true;
     }
 
-    if (!isStarted) {
+    if (!isStarted || positionUs == initialPositionUs) {
       return false;
     }
 
@@ -1135,9 +1141,13 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     // Work around https://github.com/google/ExoPlayer/issues/3236,
     // https://github.com/google/ExoPlayer/issues/3355,
     // https://github.com/google/ExoPlayer/issues/3439,
-    // https://github.com/google/ExoPlayer/issues/3724 and
-    // https://github.com/google/ExoPlayer/issues/3835.
-    return (("deb".equals(Util.DEVICE) || "flo".equals(Util.DEVICE)) // Nexus 7 (2013)
+    // https://github.com/google/ExoPlayer/issues/3724,
+    // https://github.com/google/ExoPlayer/issues/3835 and
+    // https://github.com/google/ExoPlayer/issues/4006.
+    return (("deb".equals(Util.DEVICE) // Nexus 7 (2013)
+                || "flo".equals(Util.DEVICE) // Nexus 7 (2013)
+                || "mido".equals(Util.DEVICE) // Redmi Note 4
+                || "santoni".equals(Util.DEVICE)) // Redmi 4X
             && "OMX.qcom.video.decoder.avc".equals(name))
         || (("tcl_eu".equals(Util.DEVICE) // TCL Percee TV
                 || "SVP-DTV15".equals(Util.DEVICE) // Sony Bravia 4K 2015

@@ -279,7 +279,7 @@ public final class DashTestRunner {
         MediaDrmCallback drmCallback = new HttpMediaDrmCallback(widevineLicenseUrl,
             new DefaultHttpDataSourceFactory(userAgent));
         DefaultDrmSessionManager<FrameworkMediaCrypto> drmSessionManager =
-            DefaultDrmSessionManager.newWidevineInstance(drmCallback, null, null, null);
+            DefaultDrmSessionManager.newWidevineInstance(drmCallback, null);
         if (!useL1Widevine) {
           drmSessionManager.setPropertyString(
               SECURITY_LEVEL_PROPERTY, WIDEVINE_SECURITY_LEVEL_3);
@@ -298,8 +298,9 @@ public final class DashTestRunner {
     protected SimpleExoPlayer buildExoPlayer(HostActivity host, Surface surface,
         MappingTrackSelector trackSelector,
         DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
-      SimpleExoPlayer player = ExoPlayerFactory.newSimpleInstance(
-          new DebugRenderersFactory(host, drmSessionManager), trackSelector);
+      SimpleExoPlayer player =
+          ExoPlayerFactory.newSimpleInstance(
+              new DebugRenderersFactory(host), trackSelector, drmSessionManager);
       player.setVideoSurface(surface);
       return player;
     }

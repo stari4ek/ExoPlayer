@@ -25,6 +25,7 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.graphics.Point;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Parcel;
 import android.support.annotation.NonNull;
 import android.text.TextUtils;
 import android.util.Log;
@@ -252,6 +253,28 @@ public final class Util {
   }
 
   /**
+   * Reads an integer from a {@link Parcel} and interprets it as a boolean, with 0 mapping to false
+   * and all other values mapping to true.
+   *
+   * @param parcel The {@link Parcel} to read from.
+   * @return The read value.
+   */
+  public static boolean readBoolean(Parcel parcel) {
+    return parcel.readInt() != 0;
+  }
+
+  /**
+   * Writes a boolean to a {@link Parcel}. The boolean is written as an integer with value 1 (true)
+   * or 0 (false).
+   *
+   * @param parcel The {@link Parcel} to write to.
+   * @param value The value to write.
+   */
+  public static void writeBoolean(Parcel parcel, boolean value) {
+    parcel.writeInt(value ? 1 : 0);
+  }
+
+  /**
    * Returns a normalized RFC 639-2/T code for {@code language}.
    *
    * @param language A case-insensitive ISO 639 alpha-2 or alpha-3 language code.
@@ -304,6 +327,25 @@ public final class Util {
    */
   public static String toLowerInvariant(String text) {
     return text == null ? null : text.toLowerCase(Locale.US);
+  }
+
+  /**
+   * Converts text to upper case using {@link Locale#US}.
+   *
+   * @param text The text to convert.
+   * @return The upper case text, or null if {@code text} is null.
+   */
+  public static String toUpperInvariant(String text) {
+    return text == null ? null : text.toUpperCase(Locale.US);
+  }
+
+  /**
+   * Formats a string using {@link Locale#US}.
+   *
+   * @see String#format(String, Object...)
+   */
+  public static String formatInvariant(String format, Object... args) {
+    return String.format(Locale.US, format, args);
   }
 
   /**
@@ -942,6 +984,20 @@ public final class Util {
   }
 
   /**
+   * Returns whether {@code encoding} is one of the PCM encodings.
+   *
+   * @param encoding The encoding of the audio data.
+   * @return Whether the encoding is one of the PCM encodings.
+   */
+  public static boolean isEncodingPcm(@C.Encoding int encoding) {
+    return encoding == C.ENCODING_PCM_8BIT
+        || encoding == C.ENCODING_PCM_16BIT
+        || encoding == C.ENCODING_PCM_24BIT
+        || encoding == C.ENCODING_PCM_32BIT
+        || encoding == C.ENCODING_PCM_FLOAT;
+  }
+
+  /**
    * Returns whether {@code encoding} is high resolution (&gt; 16-bit) integer PCM.
    *
    * @param encoding The encoding of the audio data.
@@ -1077,6 +1133,20 @@ public final class Util {
           return null;
         }
     }
+  }
+
+  /**
+   * Makes a best guess to infer the type from a {@link Uri}.
+   *
+   * @param uri The {@link Uri}.
+   * @param overrideExtension If not null, used to infer the type.
+   * @return The content type.
+   */
+  @C.ContentType
+  public static int inferContentType(Uri uri, String overrideExtension) {
+    return TextUtils.isEmpty(overrideExtension)
+        ? inferContentType(uri)
+        : inferContentType("." + overrideExtension);
   }
 
   /**
