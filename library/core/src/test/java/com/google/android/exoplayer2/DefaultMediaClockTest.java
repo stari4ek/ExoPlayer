@@ -30,19 +30,17 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
 /**
  * Unit test for {@link DefaultMediaClock}.
  */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = Config.TARGET_SDK, manifest = Config.NONE)
 public class DefaultMediaClockTest {
 
   private static final long TEST_POSITION_US = 123456789012345678L;
   private static final long SLEEP_TIME_MS = 1_000;
   private static final PlaybackParameters TEST_PLAYBACK_PARAMETERS =
-      new PlaybackParameters(2.0f, 1.0f);
+      new PlaybackParameters(/* speed= */ 2f);
 
   @Mock private PlaybackParameterListener listener;
   private FakeClock fakeClock;
@@ -377,12 +375,15 @@ public class DefaultMediaClockTest {
     assertThat(mediaClock.syncAndGetPositionUs()).isEqualTo(positionAtStartUs);
   }
 
+  @SuppressWarnings("HidingField")
   private static class MediaClockRenderer extends FakeMediaClockRenderer {
 
-    public long positionUs;
-    public PlaybackParameters playbackParameters;
-
     private final boolean playbackParametersAreMutable;
+    private final boolean isReady;
+    private final boolean isEnded;
+
+    public PlaybackParameters playbackParameters;
+    public long positionUs;
 
     public MediaClockRenderer() throws ExoPlaybackException {
       this(PlaybackParameters.DEFAULT, false, true, false, false);
@@ -403,11 +404,11 @@ public class DefaultMediaClockTest {
         boolean playbackParametersAreMutable, boolean isReady, boolean isEnded,
         boolean hasReadStreamToEnd)
         throws ExoPlaybackException {
-      this.positionUs = TEST_POSITION_US;
       this.playbackParameters = playbackParameters;
       this.playbackParametersAreMutable = playbackParametersAreMutable;
       this.isReady = isReady;
       this.isEnded = isEnded;
+      this.positionUs = TEST_POSITION_US;
       if (!hasReadStreamToEnd) {
         resetPosition(0);
       }
@@ -436,6 +437,10 @@ public class DefaultMediaClockTest {
       return isReady;
     }
 
+    @Override
+    public boolean isEnded() {
+      return isEnded;
+    }
   }
 
 }

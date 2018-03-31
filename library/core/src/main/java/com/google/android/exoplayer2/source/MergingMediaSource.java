@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.source;
 
 import android.support.annotation.IntDef;
+import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.upstream.Allocator;
@@ -24,13 +25,14 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 
 /**
  * Merges multiple {@link MediaSource}s.
- * <p>
- * The {@link Timeline}s of the sources being merged must have the same number of periods.
+ *
+ * <p>The {@link Timeline}s of the sources being merged must have the same number of periods.
  */
-public final class MergingMediaSource implements MediaSource {
+public final class MergingMediaSource extends CompositeMediaSource<Integer> {
 
   /**
    * Thrown when a {@link MergingMediaSource} cannot merge its sources.
@@ -68,7 +70,6 @@ public final class MergingMediaSource implements MediaSource {
   private final ArrayList<MediaSource> pendingTimelineSources;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
 
-  private Listener listener;
   private Timeline primaryTimeline;
   private Object primaryManifest;
   private int periodCount;
@@ -96,16 +97,10 @@ public final class MergingMediaSource implements MediaSource {
   }
 
   @Override
-  public void prepareSource(ExoPlayer player, boolean isTopLevelSource, Listener listener) {
-    this.listener = listener;
+  public void prepareSourceInternal(ExoPlayer player, boolean isTopLevelSource) {
+    super.prepareSourceInternal(player, isTopLevelSource);
     for (int i = 0; i < mediaSources.length; i++) {
-      final int sourceIndex = i;
-      mediaSources[sourceIndex].prepareSource(player, false, new Listener() {
-        @Override
-        public void onSourceInfoRefreshed(MediaSource source, Timeline timeline, Object manifest) {
-          handleSourceInfoRefreshed(sourceIndex, timeline, manifest);
-        }
-      });
+      prepareChildSource(i, mediaSources[i]);
     }
   }
 
@@ -114,9 +109,7 @@ public final class MergingMediaSource implements MediaSource {
     if (mergeError != null) {
       throw mergeError;
     }
-    for (MediaSource mediaSource : mediaSources) {
-      mediaSource.maybeThrowSourceInfoRefreshError();
-    }
+    super.maybeThrowSourceInfoRefreshError();
   }
 
   @Override
@@ -137,26 +130,32 @@ public final class MergingMediaSource implements MediaSource {
   }
 
   @Override
-  public void releaseSource() {
-    for (MediaSource mediaSource : mediaSources) {
-      mediaSource.releaseSource();
-    }
+  public void releaseSourceInternal() {
+    super.releaseSourceInternal();
+    primaryTimeline = null;
+    primaryManifest = null;
+    periodCount = PERIOD_COUNT_UNSET;
+    mergeError = null;
+    pendingTimelineSources.clear();
+    Collections.addAll(pendingTimelineSources, mediaSources);
   }
 
-  private void handleSourceInfoRefreshed(int sourceIndex, Timeline timeline, Object manifest) {
+  @Override
+  protected void onChildSourceInfoRefreshed(
+      Integer id, MediaSource mediaSource, Timeline timeline, @Nullable Object manifest) {
     if (mergeError == null) {
       mergeError = checkTimelineMerges(timeline);
     }
     if (mergeError != null) {
       return;
     }
-    pendingTimelineSources.remove(mediaSources[sourceIndex]);
-    if (sourceIndex == 0) {
+    pendingTimelineSources.remove(mediaSource);
+    if (mediaSource == mediaSources[0]) {
       primaryTimeline = timeline;
       primaryManifest = manifest;
     }
     if (pendingTimelineSources.isEmpty()) {
-      listener.onSourceInfoRefreshed(this, primaryTimeline, primaryManifest);
+      refreshSourceInfo(primaryTimeline, primaryManifest);
     }
   }
 

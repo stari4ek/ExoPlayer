@@ -20,6 +20,7 @@ import android.support.annotation.Nullable;
 import android.view.ViewGroup;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.source.BaseMediaSource;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ads.AdsMediaSource;
@@ -33,9 +34,11 @@ import java.io.IOException;
  * @deprecated Use com.google.android.exoplayer2.source.ads.AdsMediaSource with ImaAdsLoader.
  */
 @Deprecated
-public final class ImaAdsMediaSource implements MediaSource {
+public final class ImaAdsMediaSource extends BaseMediaSource {
 
   private final AdsMediaSource adsMediaSource;
+
+  private SourceInfoRefreshListener adsMediaSourceListener;
 
   /**
    * Constructs a new source that inserts ads linearly with the content specified by
@@ -52,8 +55,8 @@ public final class ImaAdsMediaSource implements MediaSource {
   }
 
   /**
-   * Constructs a new source that inserts ads linearly with the content specified by
-   * {@code contentMediaSource}.
+   * Constructs a new source that inserts ads linearly with the content specified by {@code
+   * contentMediaSource}.
    *
    * @param contentMediaSource The {@link MediaSource} providing the content to play.
    * @param dataSourceFactory Factory for data sources used to load ad media.
@@ -62,23 +65,28 @@ public final class ImaAdsMediaSource implements MediaSource {
    * @param eventHandler A handler for events. May be null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    */
-  public ImaAdsMediaSource(MediaSource contentMediaSource, DataSource.Factory dataSourceFactory,
-      ImaAdsLoader imaAdsLoader, ViewGroup adUiViewGroup, @Nullable Handler eventHandler,
-      @Nullable AdsMediaSource.AdsListener eventListener) {
+  public ImaAdsMediaSource(
+      MediaSource contentMediaSource,
+      DataSource.Factory dataSourceFactory,
+      ImaAdsLoader imaAdsLoader,
+      ViewGroup adUiViewGroup,
+      @Nullable Handler eventHandler,
+      @Nullable AdsMediaSource.EventListener eventListener) {
     adsMediaSource = new AdsMediaSource(contentMediaSource, dataSourceFactory, imaAdsLoader,
         adUiViewGroup, eventHandler, eventListener);
   }
 
   @Override
-  public void prepareSource(final ExoPlayer player, boolean isTopLevelSource,
-      final Listener listener) {
-    adsMediaSource.prepareSource(player, false, new Listener() {
-      @Override
-      public void onSourceInfoRefreshed(MediaSource source, Timeline timeline,
-          @Nullable Object manifest) {
-        listener.onSourceInfoRefreshed(ImaAdsMediaSource.this, timeline, manifest);
-      }
-    });
+  public void prepareSourceInternal(final ExoPlayer player, boolean isTopLevelSource) {
+    adsMediaSourceListener =
+        new SourceInfoRefreshListener() {
+          @Override
+          public void onSourceInfoRefreshed(
+              MediaSource source, Timeline timeline, @Nullable Object manifest) {
+            refreshSourceInfo(timeline, manifest);
+          }
+        };
+    adsMediaSource.prepareSource(player, isTopLevelSource, adsMediaSourceListener);
   }
 
   @Override
@@ -97,8 +105,7 @@ public final class ImaAdsMediaSource implements MediaSource {
   }
 
   @Override
-  public void releaseSource() {
-    adsMediaSource.releaseSource();
+  public void releaseSourceInternal() {
+    adsMediaSource.releaseSource(adsMediaSourceListener);
   }
-
 }

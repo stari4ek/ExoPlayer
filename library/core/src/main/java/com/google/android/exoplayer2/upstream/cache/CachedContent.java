@@ -28,31 +28,39 @@ import java.util.TreeSet;
  */
 /*package*/ final class CachedContent {
 
-  /**
-   * The cache file id that uniquely identifies the original stream.
-   */
+  private static final int VERSION_METADATA_INTRODUCED = 2;
+  private static final int VERSION_MAX = Integer.MAX_VALUE;
+
+  /** The cache file id that uniquely identifies the original stream. */
   public final int id;
-  /**
-   * The cache key that uniquely identifies the original stream.
-   */
+  /** The cache key that uniquely identifies the original stream. */
   public final String key;
-  /**
-   * The cached spans of this content.
-   */
+  /** The cached spans of this content. */
   private final TreeSet<SimpleCacheSpan> cachedSpans;
-  /**
-   * The length of the original stream, or {@link C#LENGTH_UNSET} if the length is unknown.
-   */
-  private long length;
+  /** Metadata values. */
+  private DefaultContentMetadata metadata;
+  /** Whether the content is locked. */
+  private boolean locked;
 
   /**
    * Reads an instance from a {@link DataInputStream}.
    *
+   * @param version Version of the encoded data.
    * @param input Input stream containing values needed to initialize CachedContent instance.
    * @throws IOException If an error occurs during reading values.
    */
-  public CachedContent(DataInputStream input) throws IOException {
-    this(input.readInt(), input.readUTF(), input.readLong());
+  public static CachedContent readFromStream(int version, DataInputStream input)
+      throws IOException {
+    int id = input.readInt();
+    String key = input.readUTF();
+    CachedContent cachedContent = new CachedContent(id, key);
+    if (version < VERSION_METADATA_INTRODUCED) {
+      long length = input.readLong();
+      cachedContent.setLength(length);
+    } else {
+      cachedContent.metadata = DefaultContentMetadata.readFromStream(input);
+    }
+    return cachedContent;
   }
 
   /**
@@ -60,12 +68,11 @@ import java.util.TreeSet;
    *
    * @param id The cache file id.
    * @param key The cache stream key.
-   * @param length The length of the original stream.
    */
-  public CachedContent(int id, String key, long length) {
+  public CachedContent(int id, String key) {
     this.id = id;
     this.key = key;
-    this.length = length;
+    this.metadata = DefaultContentMetadata.EMPTY;
     this.cachedSpans = new TreeSet<>();
   }
 
@@ -78,17 +85,46 @@ import java.util.TreeSet;
   public void writeToStream(DataOutputStream output) throws IOException {
     output.writeInt(id);
     output.writeUTF(key);
-    output.writeLong(length);
+    metadata.writeToStream(output);
   }
 
-  /** Returns the length of the content. */
+  /** Returns the metadata. */
+  public ContentMetadata getMetadata() {
+    return metadata;
+  }
+
+  /**
+   * Applies {@code mutations} to the metadata.
+   *
+   * @return Whether {@code mutations} changed any metadata.
+   */
+  public boolean applyMetadataMutations(ContentMetadataMutations mutations) {
+    DefaultContentMetadata oldMetadata = metadata;
+    metadata = metadata.copyWithMutationsApplied(mutations);
+    return metadata.equals(oldMetadata);
+  }
+
+  /**
+   * Returns the length of the original stream, or {@link C#LENGTH_UNSET} if the length is unknown.
+   */
   public long getLength() {
-    return length;
+    return metadata.get(ContentMetadata.METADATA_NAME_LENGTH, C.LENGTH_UNSET);
   }
 
   /** Sets the length of the content. */
   public void setLength(long length) {
-    this.length = length;
+    applyMetadataMutations(
+        new ContentMetadataMutations().set(ContentMetadata.METADATA_NAME_LENGTH, length));
+  }
+
+  /** Returns whether the content is locked. */
+  public boolean isLocked() {
+    return locked;
+  }
+
+  /** Sets the locked state of the content. */
+  public void setLocked(boolean locked) {
+    this.locked = locked;
   }
 
   /** Adds the given {@link SimpleCacheSpan} which contains a part of the content. */
@@ -125,7 +161,7 @@ import java.util.TreeSet;
    * @param length The maximum length of the data to be returned.
    * @return the length of the cached or not cached data block length.
    */
-  public long getCachedBytes(long position, long length) {
+  public long getCachedBytesLength(long position, long length) {
     SimpleCacheSpan span = getSpan(position);
     if (span.isHoleSpan()) {
       // We don't have a span covering the start of the queried region.
@@ -188,12 +224,41 @@ import java.util.TreeSet;
     return false;
   }
 
-  /** Calculates a hash code for the header of this {@code CachedContent}. */
-  public int headerHashCode() {
+  /**
+   * Calculates a hash code for the header of this {@code CachedContent} which is compatible with
+   * the index file with {@code version}.
+   */
+  public int headerHashCode(int version) {
     int result = id;
     result = 31 * result + key.hashCode();
-    result = 31 * result + (int) (length ^ (length >>> 32));
+    if (version < VERSION_METADATA_INTRODUCED) {
+      long length = getLength();
+      result = 31 * result + (int) (length ^ (length >>> 32));
+    } else {
+      result = 31 * result + metadata.hashCode();
+    }
     return result;
   }
 
+  @Override
+  public int hashCode() {
+    int result = headerHashCode(VERSION_MAX);
+    result = 31 * result + cachedSpans.hashCode();
+    return result;
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    CachedContent that = (CachedContent) o;
+    return id == that.id
+        && key.equals(that.key)
+        && cachedSpans.equals(that.cachedSpans)
+        && metadata.equals(that.metadata);
+  }
 }

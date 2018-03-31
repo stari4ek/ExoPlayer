@@ -32,14 +32,48 @@ import java.util.Random;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
 /**
  * Unit tests for {@link Util}.
  */
 @RunWith(RobolectricTestRunner.class)
-@Config(sdk = Config.TARGET_SDK, manifest = Config.NONE)
 public class UtilTest {
+
+  @Test
+  public void testAddWithOverflowDefault() {
+    long res = Util.addWithOverflowDefault(5, 10, /* overflowResult= */ 0);
+    assertThat(res).isEqualTo(15);
+
+    res = Util.addWithOverflowDefault(Long.MAX_VALUE - 1, 1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(Long.MAX_VALUE);
+
+    res = Util.addWithOverflowDefault(Long.MIN_VALUE + 1, -1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(Long.MIN_VALUE);
+
+    res = Util.addWithOverflowDefault(Long.MAX_VALUE, 1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(12345);
+
+    res = Util.addWithOverflowDefault(Long.MIN_VALUE, -1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(12345);
+  }
+
+  @Test
+  public void testSubtrackWithOverflowDefault() {
+    long res = Util.subtractWithOverflowDefault(5, 10, /* overflowResult= */ 0);
+    assertThat(res).isEqualTo(-5);
+
+    res = Util.subtractWithOverflowDefault(Long.MIN_VALUE + 1, 1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(Long.MIN_VALUE);
+
+    res = Util.subtractWithOverflowDefault(Long.MAX_VALUE - 1, -1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(Long.MAX_VALUE);
+
+    res = Util.subtractWithOverflowDefault(Long.MIN_VALUE, 1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(12345);
+
+    res = Util.subtractWithOverflowDefault(Long.MAX_VALUE, -1, /* overflowResult= */ 12345);
+    assertThat(res).isEqualTo(12345);
+  }
 
   @Test
   public void testInferContentType() {

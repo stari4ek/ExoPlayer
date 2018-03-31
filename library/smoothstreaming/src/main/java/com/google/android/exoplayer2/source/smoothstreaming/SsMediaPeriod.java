@@ -17,10 +17,11 @@ package com.google.android.exoplayer2.source.smoothstreaming;
 
 import android.util.Base64;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.extractor.mp4.TrackEncryptionBox;
-import com.google.android.exoplayer2.source.AdaptiveMediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaPeriod;
+import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.TrackGroup;
@@ -55,6 +56,7 @@ import java.util.ArrayList;
   private SsManifest manifest;
   private ChunkSampleStream<SsChunkSource>[] sampleStreams;
   private SequenceableLoader compositeSequenceableLoader;
+  private boolean notifiedReadingStarted;
 
   public SsMediaPeriod(SsManifest manifest, SsChunkSource.Factory chunkSourceFactory,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
@@ -81,6 +83,7 @@ import java.util.ArrayList;
     sampleStreams = newSampleStreamArray(0);
     compositeSequenceableLoader =
         compositeSequenceableLoaderFactory.createCompositeSequenceableLoader(sampleStreams);
+    eventDispatcher.mediaPeriodCreated();
   }
 
   public void updateManifest(SsManifest manifest) {
@@ -95,6 +98,7 @@ import java.util.ArrayList;
     for (ChunkSampleStream<SsChunkSource> sampleStream : sampleStreams) {
       sampleStream.release();
     }
+    eventDispatcher.mediaPeriodReleased();
   }
 
   @Override
@@ -150,6 +154,11 @@ import java.util.ArrayList;
   }
 
   @Override
+  public void reevaluateBuffer(long positionUs) {
+    compositeSequenceableLoader.reevaluateBuffer(positionUs);
+  }
+
+  @Override
   public boolean continueLoading(long positionUs) {
     return compositeSequenceableLoader.continueLoading(positionUs);
   }
@@ -161,6 +170,10 @@ import java.util.ArrayList;
 
   @Override
   public long readDiscontinuity() {
+    if (!notifiedReadingStarted) {
+      eventDispatcher.readingStarted();
+      notifiedReadingStarted = true;
+    }
     return C.TIME_UNSET;
   }
 
@@ -173,6 +186,16 @@ import java.util.ArrayList;
   public long seekToUs(long positionUs) {
     for (ChunkSampleStream<SsChunkSource> sampleStream : sampleStreams) {
       sampleStream.seekToUs(positionUs);
+    }
+    return positionUs;
+  }
+
+  @Override
+  public long getAdjustedSeekPositionUs(long positionUs, SeekParameters seekParameters) {
+    for (ChunkSampleStream<SsChunkSource> sampleStream : sampleStreams) {
+      if (sampleStream.primaryTrackType == C.TRACK_TYPE_VIDEO) {
+        return sampleStream.getAdjustedSeekPositionUs(positionUs, seekParameters);
+      }
     }
     return positionUs;
   }
@@ -191,8 +214,16 @@ import java.util.ArrayList;
     int streamElementIndex = trackGroups.indexOf(selection.getTrackGroup());
     SsChunkSource chunkSource = chunkSourceFactory.createChunkSource(manifestLoaderErrorThrower,
         manifest, streamElementIndex, selection, trackEncryptionBoxes);
-    return new ChunkSampleStream<>(manifest.streamElements[streamElementIndex].type, null,
-        chunkSource, this, allocator, positionUs, minLoadableRetryCount, eventDispatcher);
+    return new ChunkSampleStream<>(
+        manifest.streamElements[streamElementIndex].type,
+        null,
+        null,
+        chunkSource,
+        this,
+        allocator,
+        positionUs,
+        minLoadableRetryCount,
+        eventDispatcher);
   }
 
   private static TrackGroupArray buildTrackGroups(SsManifest manifest) {

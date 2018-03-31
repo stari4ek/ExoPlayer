@@ -64,7 +64,6 @@ import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import junit.framework.AssertionFailedError;
 
 /** {@link DashHostedTest} builder. */
 public final class DashTestRunner {
@@ -280,7 +279,7 @@ public final class DashTestRunner {
         MediaDrmCallback drmCallback = new HttpMediaDrmCallback(widevineLicenseUrl,
             new DefaultHttpDataSourceFactory(userAgent));
         DefaultDrmSessionManager<FrameworkMediaCrypto> drmSessionManager =
-            DefaultDrmSessionManager.newWidevineInstance(drmCallback, null, null, null);
+            DefaultDrmSessionManager.newWidevineInstance(drmCallback, null);
         if (!useL1Widevine) {
           drmSessionManager.setPropertyString(
               SECURITY_LEVEL_PROPERTY, WIDEVINE_SECURITY_LEVEL_3);
@@ -299,8 +298,9 @@ public final class DashTestRunner {
     protected SimpleExoPlayer buildExoPlayer(HostActivity host, Surface surface,
         MappingTrackSelector trackSelector,
         DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
-      SimpleExoPlayer player = ExoPlayerFactory.newSimpleInstance(
-          new DebugRenderersFactory(host, drmSessionManager), trackSelector);
+      SimpleExoPlayer player =
+          ExoPlayerFactory.newSimpleInstance(
+              new DebugRenderersFactory(host), trackSelector, drmSessionManager);
       player.setVideoSurface(surface);
       return player;
     }
@@ -316,11 +316,10 @@ public final class DashTestRunner {
       Uri manifestUri = Uri.parse(manifestUrl);
       DefaultDashChunkSource.Factory chunkSourceFactory = new DefaultDashChunkSource.Factory(
           mediaDataSourceFactory);
-      return DashMediaSource.Builder
-          .forManifestUri(manifestUri, manifestDataSourceFactory, chunkSourceFactory)
+      return new DashMediaSource.Factory(chunkSourceFactory, manifestDataSourceFactory)
           .setMinLoadableRetryCount(MIN_LOADABLE_RETRY_COUNT)
           .setLivePresentationDelayMs(0)
-          .build();
+          .createMediaSource(manifestUri);
     }
 
     @Override
@@ -363,7 +362,7 @@ public final class DashTestRunner {
         // Assert that consecutive dropped frames were within limit.
         DecoderCountersUtil.assertConsecutiveDroppedBufferLimit(tag + VIDEO_TAG_SUFFIX,
             videoCounters, MAX_CONSECUTIVE_DROPPED_VIDEO_FRAMES);
-      } catch (AssertionFailedError e) {
+      } catch (AssertionError e) {
         if (trackSelector.includedAdditionalVideoFormats) {
           // Retry limiting to CDD mandated formats (b/28220076).
           Log.e(tag, "Too many dropped or consecutive dropped frames.", e);

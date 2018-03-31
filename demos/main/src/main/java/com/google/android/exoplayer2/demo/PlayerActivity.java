@@ -16,14 +16,14 @@
 package com.google.android.exoplayer2.demo;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Parcelable;
 import android.support.annotation.NonNull;
-import android.text.TextUtils;
+import android.support.annotation.Nullable;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -38,6 +38,7 @@ import com.google.android.exoplayer2.C.ContentType;
 import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayerFactory;
+import com.google.android.exoplayer2.PlaybackPreparer;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
@@ -57,31 +58,38 @@ import com.google.android.exoplayer2.source.ads.AdsLoader;
 import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.source.dash.DashMediaSource;
 import com.google.android.exoplayer2.source.dash.DefaultDashChunkSource;
+import com.google.android.exoplayer2.source.dash.manifest.FilteringDashManifestParser;
+import com.google.android.exoplayer2.source.dash.manifest.RepresentationKey;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
+import com.google.android.exoplayer2.source.hls.playlist.FilteringHlsPlaylistParser;
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource;
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource;
+import com.google.android.exoplayer2.source.smoothstreaming.manifest.FilteringSsManifestParser;
+import com.google.android.exoplayer2.source.smoothstreaming.manifest.TrackKey;
 import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector.MappedTrackInfo;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.ui.DebugTextViewHelper;
-import com.google.android.exoplayer2.ui.PlaybackControlView;
-import com.google.android.exoplayer2.ui.SimpleExoPlayerView;
+import com.google.android.exoplayer2.ui.PlayerControlView;
+import com.google.android.exoplayer2.ui.PlayerView;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.upstream.HttpDataSource;
+import com.google.android.exoplayer2.util.EventLogger;
+import com.google.android.exoplayer2.util.ParcelableArray;
 import com.google.android.exoplayer2.util.Util;
+import java.lang.reflect.Constructor;
 import java.net.CookieHandler;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
+import java.util.List;
 import java.util.UUID;
 
-/**
- * An activity that plays media using {@link SimpleExoPlayer}.
- */
-public class PlayerActivity extends Activity implements OnClickListener,
-    PlaybackControlView.VisibilityListener {
+/** An activity that plays media using {@link SimpleExoPlayer}. */
+public class PlayerActivity extends Activity
+    implements OnClickListener, PlaybackPreparer, PlayerControlView.VisibilityListener {
 
   public static final String DRM_SCHEME_EXTRA = "drm_scheme";
   public static final String DRM_LICENSE_URL = "drm_license_url";
@@ -91,11 +99,14 @@ public class PlayerActivity extends Activity implements OnClickListener,
 
   public static final String ACTION_VIEW = "com.google.android.exoplayer.demo.action.VIEW";
   public static final String EXTENSION_EXTRA = "extension";
+  public static final String MANIFEST_FILTER_EXTRA = "manifest_filter";
 
   public static final String ACTION_VIEW_LIST =
       "com.google.android.exoplayer.demo.action.VIEW_LIST";
   public static final String URI_LIST_EXTRA = "uri_list";
   public static final String EXTENSION_LIST_EXTRA = "extension_list";
+  public static final String MANIFEST_FILTER_LIST_EXTRA = "manifest_filter_list";
+
   public static final String AD_TAG_URI_EXTRA = "ad_tag_uri";
 
   // For backwards compatibility.
@@ -111,14 +122,14 @@ public class PlayerActivity extends Activity implements OnClickListener,
   // TVirl: make it package
   /* private */ Handler mainHandler;
   /* private */ EventLogger eventLogger;
-  private SimpleExoPlayerView simpleExoPlayerView;
+  private PlayerView playerView;
   private LinearLayout debugRootView;
   private TextView debugTextView;
-  private Button retryButton;
 
   // TVirl: make it package
   /* private */ DataSource.Factory mediaDataSourceFactory;
   private SimpleExoPlayer player;
+  private MediaSource mediaSource;
   private DefaultTrackSelector trackSelector;
   private TrackSelectionHelper trackSelectionHelper;
   private DebugTextViewHelper debugViewHelper;
@@ -153,12 +164,10 @@ public class PlayerActivity extends Activity implements OnClickListener,
     rootView.setOnClickListener(this);
     debugRootView = findViewById(R.id.controls_root);
     debugTextView = findViewById(R.id.debug_text_view);
-    retryButton = findViewById(R.id.retry_button);
-    retryButton.setOnClickListener(this);
 
-    simpleExoPlayerView = findViewById(R.id.player_view);
-    simpleExoPlayerView.setControllerVisibilityListener(this);
-    simpleExoPlayerView.requestFocus();
+    playerView = findViewById(R.id.player_view);
+    playerView.setControllerVisibilityListener(this);
+    playerView.requestFocus();
   }
 
   @Override
@@ -223,22 +232,27 @@ public class PlayerActivity extends Activity implements OnClickListener,
   @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
     // See whether the player view wants to handle media or DPAD keys events.
-    return simpleExoPlayerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event);
+    return playerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event);
   }
 
   // OnClickListener methods
 
   @Override
   public void onClick(View view) {
-    if (view == retryButton) {
-      initializePlayer();
-    } else if (view.getParent() == debugRootView) {
+    if (view.getParent() == debugRootView) {
       MappedTrackInfo mappedTrackInfo = trackSelector.getCurrentMappedTrackInfo();
       if (mappedTrackInfo != null) {
-        trackSelectionHelper.showSelectionDialog(this, ((Button) view).getText(),
-            trackSelector.getCurrentMappedTrackInfo(), (int) view.getTag());
+        trackSelectionHelper.showSelectionDialog(
+            this, ((Button) view).getText(), mappedTrackInfo, (int) view.getTag());
       }
     }
+  }
+
+  // PlaybackControlView.PlaybackPreparer implementation
+
+  @Override
+  public void preparePlayback() {
+    initializePlayer();
   }
 
   // PlaybackControlView.VisibilityListener implementation
@@ -251,15 +265,38 @@ public class PlayerActivity extends Activity implements OnClickListener,
   // Internal methods
 
   private void initializePlayer() {
-    Intent intent = getIntent();
-    boolean needNewPlayer = player == null;
-    if (needNewPlayer) {
-      TrackSelection.Factory adaptiveTrackSelectionFactory =
-          new AdaptiveTrackSelection.Factory(BANDWIDTH_METER);
-      trackSelector = new DefaultTrackSelector(adaptiveTrackSelectionFactory);
-      trackSelectionHelper = new TrackSelectionHelper(trackSelector, adaptiveTrackSelectionFactory);
-      lastSeenTrackGroupArray = null;
-      eventLogger = new EventLogger(trackSelector);
+    if (player == null) {
+      Intent intent = getIntent();
+      String action = intent.getAction();
+      Uri[] uris;
+      String[] extensions;
+      Parcelable[] manifestFilters;
+      if (ACTION_VIEW.equals(action)) {
+        uris = new Uri[] {intent.getData()};
+        extensions = new String[] {intent.getStringExtra(EXTENSION_EXTRA)};
+        manifestFilters = new Parcelable[] {intent.getParcelableExtra(MANIFEST_FILTER_EXTRA)};
+      } else if (ACTION_VIEW_LIST.equals(action)) {
+        String[] uriStrings = intent.getStringArrayExtra(URI_LIST_EXTRA);
+        uris = new Uri[uriStrings.length];
+        for (int i = 0; i < uriStrings.length; i++) {
+          uris[i] = Uri.parse(uriStrings[i]);
+        }
+        extensions = intent.getStringArrayExtra(EXTENSION_LIST_EXTRA);
+        if (extensions == null) {
+          extensions = new String[uriStrings.length];
+        }
+        manifestFilters = intent.getParcelableArrayExtra(MANIFEST_FILTER_LIST_EXTRA);
+        if (manifestFilters == null) {
+          manifestFilters = new Parcelable[uriStrings.length];
+        }
+      } else {
+        showToast(getString(R.string.unexpected_intent_action, action));
+        return;
+      }
+      if (Util.maybeRequestReadExternalStoragePermission(this, uris)) {
+        // The player will be reinitialized if the permission is granted.
+        return;
+      }
 
       DrmSessionManager<FrameworkMediaCrypto> drmSessionManager = null;
       if (intent.hasExtra(DRM_SCHEME_EXTRA) || intent.hasExtra(DRM_SCHEME_UUID_EXTRA)) {
@@ -273,9 +310,14 @@ public class PlayerActivity extends Activity implements OnClickListener,
           try {
             String drmSchemeExtra = intent.hasExtra(DRM_SCHEME_EXTRA) ? DRM_SCHEME_EXTRA
                 : DRM_SCHEME_UUID_EXTRA;
-            UUID drmSchemeUuid = DemoUtil.getDrmUuid(intent.getStringExtra(drmSchemeExtra));
-            drmSessionManager = buildDrmSessionManagerV18(drmSchemeUuid, drmLicenseUrl,
-                keyRequestPropertiesArray, multiSession);
+            UUID drmSchemeUuid = Util.getDrmUuid(intent.getStringExtra(drmSchemeExtra));
+            if (drmSchemeUuid == null) {
+              errorStringId = R.string.error_drm_unsupported_scheme;
+            } else {
+              drmSessionManager =
+                  buildDrmSessionManagerV18(
+                      drmSchemeUuid, drmLicenseUrl, keyRequestPropertiesArray, multiSession);
+            }
           } catch (UnsupportedDrmException e) {
             errorStringId = e.reason == UnsupportedDrmException.REASON_UNSUPPORTED_SCHEME
                 ? R.string.error_drm_unsupported_scheme : R.string.error_drm_unknown;
@@ -293,65 +335,55 @@ public class PlayerActivity extends Activity implements OnClickListener,
               ? (preferExtensionDecoders ? DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
               : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
               : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF;
-      DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this,
-          drmSessionManager, extensionRendererMode);
+      DefaultRenderersFactory renderersFactory =
+          new DefaultRenderersFactory(this, extensionRendererMode);
 
-      player = ExoPlayerFactory.newSimpleInstance(renderersFactory, trackSelector);
+      TrackSelection.Factory adaptiveTrackSelectionFactory =
+          new AdaptiveTrackSelection.Factory(BANDWIDTH_METER);
+      trackSelector = new DefaultTrackSelector(adaptiveTrackSelectionFactory);
+      trackSelectionHelper = new TrackSelectionHelper(trackSelector, adaptiveTrackSelectionFactory);
+      lastSeenTrackGroupArray = null;
+      eventLogger = new EventLogger(trackSelector);
+
+      player =
+          ExoPlayerFactory.newSimpleInstance(renderersFactory, trackSelector, drmSessionManager);
       player.addListener(new PlayerEventListener());
       player.addListener(eventLogger);
       player.addMetadataOutput(eventLogger);
-      player.setAudioDebugListener(eventLogger);
-      player.setVideoDebugListener(eventLogger);
-
-      simpleExoPlayerView.setPlayer(player);
+      player.addAudioDebugListener(eventLogger);
+      player.addVideoDebugListener(eventLogger);
       player.setPlayWhenReady(shouldAutoPlay);
+
+      playerView.setPlayer(player);
+      playerView.setPlaybackPreparer(this);
       debugViewHelper = new DebugTextViewHelper(player, debugTextView);
       debugViewHelper.start();
-    }
-    String action = intent.getAction();
-    Uri[] uris;
-    String[] extensions;
-    if (ACTION_VIEW.equals(action)) {
-      uris = new Uri[]{intent.getData()};
-      extensions = new String[]{intent.getStringExtra(EXTENSION_EXTRA)};
-    } else if (ACTION_VIEW_LIST.equals(action)) {
-      String[] uriStrings = intent.getStringArrayExtra(URI_LIST_EXTRA);
-      uris = new Uri[uriStrings.length];
-      for (int i = 0; i < uriStrings.length; i++) {
-        uris[i] = Uri.parse(uriStrings[i]);
+
+      MediaSource[] mediaSources = new MediaSource[uris.length];
+      for (int i = 0; i < uris.length; i++) {
+        ParcelableArray<?> manifestFilter = (ParcelableArray<?>) manifestFilters[i];
+        List<?> filter = manifestFilter != null ? manifestFilter.asList() : null;
+        mediaSources[i] = buildMediaSource(uris[i], extensions[i], filter);
       }
-      extensions = intent.getStringArrayExtra(EXTENSION_LIST_EXTRA);
-      if (extensions == null) {
-        extensions = new String[uriStrings.length];
-      }
-    } else {
-      showToast(getString(R.string.unexpected_intent_action, action));
-      return;
-    }
-    if (Util.maybeRequestReadExternalStoragePermission(this, uris)) {
-      // The player will be reinitialized if the permission is granted.
-      return;
-    }
-    MediaSource[] mediaSources = new MediaSource[uris.length];
-    for (int i = 0; i < uris.length; i++) {
-      mediaSources[i] = buildMediaSource(uris[i], extensions[i]);
-    }
-    MediaSource mediaSource = mediaSources.length == 1 ? mediaSources[0]
-        : new ConcatenatingMediaSource(mediaSources);
-    String adTagUriString = intent.getStringExtra(AD_TAG_URI_EXTRA);
-    if (adTagUriString != null) {
-      Uri adTagUri = Uri.parse(adTagUriString);
-      if (!adTagUri.equals(loadedAdTagUri)) {
+      mediaSource =
+          mediaSources.length == 1 ? mediaSources[0] : new ConcatenatingMediaSource(mediaSources);
+      String adTagUriString = intent.getStringExtra(AD_TAG_URI_EXTRA);
+      if (adTagUriString != null) {
+        Uri adTagUri = Uri.parse(adTagUriString);
+        if (!adTagUri.equals(loadedAdTagUri)) {
+          releaseAdsLoader();
+          loadedAdTagUri = adTagUri;
+        }
+        MediaSource adsMediaSource = createAdsMediaSource(mediaSource, Uri.parse(adTagUriString));
+        if (adsMediaSource != null) {
+          mediaSource = adsMediaSource;
+        } else {
+          showToast(R.string.ima_not_loaded);
+        }
+      } else {
         releaseAdsLoader();
-        loadedAdTagUri = adTagUri;
       }
-      try {
-        mediaSource = createAdsMediaSource(mediaSource, Uri.parse(adTagUriString));
-      } catch (Exception e) {
-        showToast(R.string.ima_not_loaded);
-      }
-    } else {
-      releaseAdsLoader();
+      mediaSource.addEventListener(mainHandler, eventLogger);
     }
     boolean haveResumePosition = resumeWindow != C.INDEX_UNSET;
     if (haveResumePosition) {
@@ -362,32 +394,35 @@ public class PlayerActivity extends Activity implements OnClickListener,
     updateButtonVisibilities();
   }
 
+  private MediaSource buildMediaSource(Uri uri) {
+    return buildMediaSource(uri, null, null);
+  }
+
+  @SuppressWarnings("unchecked")
   // TVirl: make it package
-  /* private */ MediaSource buildMediaSource(Uri uri, String overrideExtension) {
-    @ContentType int type = TextUtils.isEmpty(overrideExtension) ? Util.inferContentType(uri)
-        : Util.inferContentType("." + overrideExtension);
+  /* private */ MediaSource buildMediaSource(
+      Uri uri, @Nullable String overrideExtension, @Nullable List<?> manifestFilter) {
+    @ContentType int type = Util.inferContentType(uri, overrideExtension);
     switch (type) {
-      case C.TYPE_SS:
-        return SsMediaSource.Builder
-            .forManifestUri(uri, buildDataSourceFactory(false),
-                new DefaultSsChunkSource.Factory(mediaDataSourceFactory))
-            .setEventListener(mainHandler, eventLogger)
-            .build();
       case C.TYPE_DASH:
-        return DashMediaSource.Builder
-            .forManifestUri(uri, buildDataSourceFactory(false),
-                new DefaultDashChunkSource.Factory(mediaDataSourceFactory))
-            .setEventListener(mainHandler, eventLogger)
-            .build();
+        return new DashMediaSource.Factory(
+                new DefaultDashChunkSource.Factory(mediaDataSourceFactory),
+                buildDataSourceFactory(false))
+            .setManifestParser(
+                new FilteringDashManifestParser((List<RepresentationKey>) manifestFilter))
+            .createMediaSource(uri);
+      case C.TYPE_SS:
+        return new SsMediaSource.Factory(
+                new DefaultSsChunkSource.Factory(mediaDataSourceFactory),
+                buildDataSourceFactory(false))
+            .setManifestParser(new FilteringSsManifestParser((List<TrackKey>) manifestFilter))
+            .createMediaSource(uri);
       case C.TYPE_HLS:
-        return HlsMediaSource.Builder
-            .forDataSource(uri, mediaDataSourceFactory)
-            .setEventListener(mainHandler, eventLogger)
-            .build();
+        return new HlsMediaSource.Factory(mediaDataSourceFactory)
+            .setPlaylistParser(new FilteringHlsPlaylistParser((List<String>) manifestFilter))
+            .createMediaSource(uri);
       case C.TYPE_OTHER:
-        return new ExtractorMediaSource.Builder(uri, mediaDataSourceFactory)
-            .setEventListener(mainHandler, eventLogger)
-            .build();
+        return new ExtractorMediaSource.Factory(mediaDataSourceFactory).createMediaSource(uri);
       default: {
         throw new IllegalStateException("Unsupported type: " + type);
       }
@@ -405,8 +440,11 @@ public class PlayerActivity extends Activity implements OnClickListener,
             keyRequestPropertiesArray[i + 1]);
       }
     }
-    return new DefaultDrmSessionManager<>(uuid, FrameworkMediaDrm.newInstance(uuid), drmCallback,
-        null, mainHandler, eventLogger, multiSession);
+    DefaultDrmSessionManager<FrameworkMediaCrypto> drmSessionManager =
+        new DefaultDrmSessionManager<>(
+            uuid, FrameworkMediaDrm.newInstance(uuid), drmCallback, null, multiSession);
+    drmSessionManager.addListener(mainHandler, eventLogger);
+    return drmSessionManager;
   }
 
   private void releasePlayer() {
@@ -417,6 +455,7 @@ public class PlayerActivity extends Activity implements OnClickListener,
       updateResumePosition();
       player.release();
       player = null;
+      mediaSource = null;
       trackSelector = null;
       trackSelectionHelper = null;
       eventLogger = null;
@@ -457,24 +496,45 @@ public class PlayerActivity extends Activity implements OnClickListener,
         .buildHttpDataSourceFactory(useBandwidthMeter ? BANDWIDTH_METER : null);
   }
 
-  /**
-   * Returns an ads media source, reusing the ads loader if one exists.
-   *
-   * @throws Exception Thrown if it was not possible to create an ads media source, for example, due
-   *     to a missing dependency.
-   */
-  private MediaSource createAdsMediaSource(MediaSource mediaSource, Uri adTagUri) throws Exception {
+  /** Returns an ads media source, reusing the ads loader if one exists. */
+  private @Nullable MediaSource createAdsMediaSource(MediaSource mediaSource, Uri adTagUri) {
     // Load the extension source using reflection so the demo app doesn't have to depend on it.
     // The ads loader is reused for multiple playbacks, so that ad playback can resume.
-    Class<?> loaderClass = Class.forName("com.google.android.exoplayer2.ext.ima.ImaAdsLoader");
-    if (adsLoader == null) {
-      adsLoader = (AdsLoader) loaderClass.getConstructor(Context.class, Uri.class)
-          .newInstance(this, adTagUri);
-      adUiViewGroup = new FrameLayout(this);
-      // The demo app has a non-null overlay frame layout.
-      simpleExoPlayerView.getOverlayFrameLayout().addView(adUiViewGroup);
+    try {
+      Class<?> loaderClass = Class.forName("com.google.android.exoplayer2.ext.ima.ImaAdsLoader");
+      if (adsLoader == null) {
+        // Full class names used so the LINT.IfChange rule triggers should any of the classes move.
+        // LINT.IfChange
+        Constructor<? extends AdsLoader> loaderConstructor =
+            loaderClass
+                .asSubclass(AdsLoader.class)
+                .getConstructor(android.content.Context.class, android.net.Uri.class);
+        // LINT.ThenChange(../../../../../../../../proguard-rules.txt)
+        adsLoader = loaderConstructor.newInstance(this, adTagUri);
+        adUiViewGroup = new FrameLayout(this);
+        // The demo app has a non-null overlay frame layout.
+        playerView.getOverlayFrameLayout().addView(adUiViewGroup);
+      }
+      AdsMediaSource.MediaSourceFactory adMediaSourceFactory =
+          new AdsMediaSource.MediaSourceFactory() {
+            @Override
+            public MediaSource createMediaSource(Uri uri) {
+              return PlayerActivity.this.buildMediaSource(uri);
+            }
+
+            @Override
+            public int[] getSupportedTypes() {
+              return new int[] {C.TYPE_DASH, C.TYPE_SS, C.TYPE_HLS, C.TYPE_OTHER};
+            }
+          };
+      return new AdsMediaSource(
+          mediaSource, adMediaSourceFactory, adsLoader, adUiViewGroup, mainHandler, eventLogger);
+    } catch (ClassNotFoundException e) {
+      // IMA extension not loaded.
+      return null;
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
-    return new AdsMediaSource(mediaSource, mediaDataSourceFactory, adsLoader, adUiViewGroup);
   }
 
   private void releaseAdsLoader() {
@@ -482,7 +542,7 @@ public class PlayerActivity extends Activity implements OnClickListener,
       adsLoader.release();
       adsLoader = null;
       loadedAdTagUri = null;
-      simpleExoPlayerView.getOverlayFrameLayout().removeAllViews();
+      playerView.getOverlayFrameLayout().removeAllViews();
     }
   }
 
@@ -490,10 +550,6 @@ public class PlayerActivity extends Activity implements OnClickListener,
 
   private void updateButtonVisibilities() {
     debugRootView.removeAllViews();
-
-    retryButton.setVisibility(inErrorState ? View.VISIBLE : View.GONE);
-    debugRootView.addView(retryButton);
-
     if (player == null) {
       return;
     }

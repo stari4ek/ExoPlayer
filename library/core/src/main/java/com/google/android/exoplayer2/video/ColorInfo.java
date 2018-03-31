@@ -19,6 +19,8 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.util.Util;
+
 import java.util.Arrays;
 
 /**
@@ -77,7 +79,7 @@ public final class ColorInfo implements Parcelable {
     colorSpace = in.readInt();
     colorRange = in.readInt();
     colorTransfer = in.readInt();
-    boolean hasHdrStaticInfo = in.readInt() != 0;
+    boolean hasHdrStaticInfo = Util.readBoolean(in);
     hdrStaticInfo = hasHdrStaticInfo ? in.createByteArray() : null;
   }
 
@@ -91,12 +93,10 @@ public final class ColorInfo implements Parcelable {
       return false;
     }
     ColorInfo other = (ColorInfo) obj;
-    if (colorSpace != other.colorSpace || colorRange != other.colorRange
-        || colorTransfer != other.colorTransfer
-        || !Arrays.equals(hdrStaticInfo, other.hdrStaticInfo)) {
-      return false;
-    }
-    return true;
+    return colorSpace == other.colorSpace
+        && colorRange == other.colorRange
+        && colorTransfer == other.colorTransfer
+        && Arrays.equals(hdrStaticInfo, other.hdrStaticInfo);
   }
 
   @Override
@@ -128,7 +128,7 @@ public final class ColorInfo implements Parcelable {
     dest.writeInt(colorSpace);
     dest.writeInt(colorRange);
     dest.writeInt(colorTransfer);
-    dest.writeInt(hdrStaticInfo != null ? 1 : 0);
+    Util.writeBoolean(dest, hdrStaticInfo != null);
     if (hdrStaticInfo != null) {
       dest.writeByteArray(hdrStaticInfo);
     }

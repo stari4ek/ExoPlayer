@@ -91,6 +91,8 @@ public final class CastPlayer implements Player {
   private static final long[] EMPTY_TRACK_ID_ARRAY = new long[0];
 
   private final CastContext castContext;
+  // TODO: Allow custom implementations of CastTimelineTracker.
+  private final CastTimelineTracker timelineTracker;
   private final Timeline.Window window;
   private final Timeline.Period period;
 
@@ -123,6 +125,7 @@ public final class CastPlayer implements Player {
    */
   public CastPlayer(CastContext castContext) {
     this.castContext = castContext;
+    timelineTracker = new CastTimelineTracker();
     window = new Timeline.Window();
     period = new Timeline.Period();
     statusListener = new StatusListener();
@@ -151,7 +154,8 @@ public final class CastPlayer implements Player {
    *
    * @param item The item to load.
    * @param positionMs The position at which the playback should start in milliseconds relative to
-   *     the start of the item at {@code startIndex}.
+   *     the start of the item at {@code startIndex}. If {@link C#TIME_UNSET} is passed, playback
+   *     starts at position 0.
    * @return The Cast {@code PendingResult}, or null if no session is available.
    */
   public PendingResult<MediaChannelResult> loadItem(MediaQueueItem item, long positionMs) {
@@ -164,13 +168,15 @@ public final class CastPlayer implements Player {
    * @param items The items to load.
    * @param startIndex The index of the item at which playback should start.
    * @param positionMs The position at which the playback should start in milliseconds relative to
-   *     the start of the item at {@code startIndex}.
+   *     the start of the item at {@code startIndex}. If {@link C#TIME_UNSET} is passed, playback
+   *     starts at position 0.
    * @param repeatMode The repeat mode for the created media queue.
    * @return The Cast {@code PendingResult}, or null if no session is available.
    */
   public PendingResult<MediaChannelResult> loadItems(MediaQueueItem[] items, int startIndex,
       long positionMs, @RepeatMode int repeatMode) {
     if (remoteMediaClient != null) {
+      positionMs = positionMs != C.TIME_UNSET ? positionMs : 0;
       waitingForInitialTimeline = true;
       return remoteMediaClient.queueLoad(items, startIndex, getCastRepeatMode(repeatMode),
           positionMs, null);
@@ -189,14 +195,14 @@ public final class CastPlayer implements Player {
   }
 
   /**
-   * Inserts a sequence of items into the media queue. If no media queue or period with id
-   * {@code periodId} exist, does nothing.
+   * Inserts a sequence of items into the media queue. If no media queue or period with id {@code
+   * periodId} exist, does nothing.
    *
-   * @param periodId The id of the period ({@see #getCurrentTimeline}) that corresponds to the item
+   * @param periodId The id of the period ({@link #getCurrentTimeline}) that corresponds to the item
    *     that will follow immediately after the inserted items.
    * @param items The items to insert.
-   * @return The Cast {@code PendingResult}, or null if no media queue or no period with id
-   *     {@code periodId} exist.
+   * @return The Cast {@code PendingResult}, or null if no media queue or no period with id {@code
+   *     periodId} exist.
    */
   public PendingResult<MediaChannelResult> addItems(int periodId, MediaQueueItem... items) {
     if (getMediaStatus() != null && (periodId == MediaQueueItem.INVALID_ITEM_ID
@@ -210,10 +216,10 @@ public final class CastPlayer implements Player {
    * Removes an item from the media queue. If no media queue or period with id {@code periodId}
    * exist, does nothing.
    *
-   * @param periodId The id of the period ({@see #getCurrentTimeline}) that corresponds to the item
+   * @param periodId The id of the period ({@link #getCurrentTimeline}) that corresponds to the item
    *     to remove.
-   * @return The Cast {@code PendingResult}, or null if no media queue or no period with id
-   *     {@code periodId} exist.
+   * @return The Cast {@code PendingResult}, or null if no media queue or no period with id {@code
+   *     periodId} exist.
    */
   public PendingResult<MediaChannelResult> removeItem(int periodId) {
     if (getMediaStatus() != null && currentTimeline.getIndexOfPeriod(periodId) != C.INDEX_UNSET) {
@@ -223,16 +229,15 @@ public final class CastPlayer implements Player {
   }
 
   /**
-   * Moves an existing item within the media queue. If no media queue or period with id
-   * {@code periodId} exist, does nothing.
+   * Moves an existing item within the media queue. If no media queue or period with id {@code
+   * periodId} exist, does nothing.
    *
-   * @param periodId The id of the period ({@see #getCurrentTimeline}) that corresponds to the item
+   * @param periodId The id of the period ({@link #getCurrentTimeline}) that corresponds to the item
    *     to move.
-   * @param newIndex The target index of the item in the media queue. Must be in the range
-   *     0 &lt;= index &lt; {@link Timeline#getPeriodCount()}, as provided by
-   *     {@link #getCurrentTimeline()}.
-   * @return The Cast {@code PendingResult}, or null if no media queue or no period with id
-   *     {@code periodId} exist.
+   * @param newIndex The target index of the item in the media queue. Must be in the range 0 &lt;=
+   *     index &lt; {@link Timeline#getPeriodCount()}, as provided by {@link #getCurrentTimeline()}.
+   * @return The Cast {@code PendingResult}, or null if no media queue or no period with id {@code
+   *     periodId} exist.
    */
   public PendingResult<MediaChannelResult> moveItem(int periodId, int newIndex) {
     Assertions.checkArgument(newIndex >= 0 && newIndex < currentTimeline.getPeriodCount());
@@ -246,7 +251,7 @@ public final class CastPlayer implements Player {
    * Returns the item that corresponds to the period with the given id, or null if no media queue or
    * period with id {@code periodId} exist.
    *
-   * @param periodId The id of the period ({@see #getCurrentTimeline}) that corresponds to the item
+   * @param periodId The id of the period ({@link #getCurrentTimeline}) that corresponds to the item
    *     to get.
    * @return The item that corresponds to the period with the given id, or null if no media queue or
    *     period with id {@code periodId} exist.
@@ -276,6 +281,16 @@ public final class CastPlayer implements Player {
   }
 
   // Player implementation.
+
+  @Override
+  public VideoComponent getVideoComponent() {
+    return null;
+  }
+
+  @Override
+  public TextComponent getTextComponent() {
+    return null;
+  }
 
   @Override
   public void addListener(EventListener listener) {
@@ -327,6 +342,9 @@ public final class CastPlayer implements Player {
   @Override
   public void seekTo(int windowIndex, long positionMs) {
     MediaStatus mediaStatus = getMediaStatus();
+    // We assume the default position is 0. There is no support for seeking to the default position
+    // in RemoteMediaClient.
+    positionMs = positionMs != C.TIME_UNSET ? positionMs : 0;
     if (mediaStatus != null) {
       if (getCurrentWindowIndex() != windowIndex) {
         remoteMediaClient.queueJumpToItem((int) currentTimeline.getPeriod(windowIndex, period).uid,
@@ -359,14 +377,23 @@ public final class CastPlayer implements Player {
 
   @Override
   public void stop() {
+    stop(/* reset= */ false);
+  }
+
+  @Override
+  public void stop(boolean reset) {
+    playbackState = STATE_IDLE;
     if (remoteMediaClient != null) {
+      // TODO(b/69792021): Support or emulate stop without position reset.
       remoteMediaClient.stop();
     }
   }
 
   @Override
   public void release() {
-    castContext.getSessionManager().removeSessionManagerListener(statusListener, CastSession.class);
+    SessionManager sessionManager = castContext.getSessionManager();
+    sessionManager.removeSessionManagerListener(statusListener, CastSession.class);
+    sessionManager.endCurrentSession(false);
   }
 
   @Override
@@ -444,14 +471,18 @@ public final class CastPlayer implements Player {
 
   @Override
   public int getNextWindowIndex() {
-    return C.INDEX_UNSET;
+    return currentTimeline.isEmpty() ? C.INDEX_UNSET
+        : currentTimeline.getNextWindowIndex(getCurrentWindowIndex(), repeatMode, false);
   }
 
   @Override
   public int getPreviousWindowIndex() {
-    return C.INDEX_UNSET;
+    return currentTimeline.isEmpty() ? C.INDEX_UNSET
+        : currentTimeline.getPreviousWindowIndex(getCurrentWindowIndex(), repeatMode, false);
   }
 
+  // TODO: Fill the cast timeline information with ProgressListener's duration updates.
+  // See [Internal: b/65152553].
   @Override
   public long getDuration() {
     return currentTimeline.isEmpty() ? C.TIME_UNSET
@@ -460,9 +491,11 @@ public final class CastPlayer implements Player {
 
   @Override
   public long getCurrentPosition() {
-    return pendingSeekPositionMs != C.TIME_UNSET ? pendingSeekPositionMs
-        : remoteMediaClient != null ? remoteMediaClient.getApproximateStreamPosition()
-        : lastReportedPositionMs;
+    return pendingSeekPositionMs != C.TIME_UNSET
+        ? pendingSeekPositionMs
+        : remoteMediaClient != null
+            ? remoteMediaClient.getApproximateStreamPosition()
+            : lastReportedPositionMs;
   }
 
   @Override
@@ -474,9 +507,9 @@ public final class CastPlayer implements Player {
   public int getBufferedPercentage() {
     long position = getBufferedPosition();
     long duration = getDuration();
-    return position == C.TIME_UNSET || duration == C.TIME_UNSET ? 0
-        : duration == 0 ? 100
-        : Util.constrainValue((int) ((position * 100) / duration), 0, 100);
+    return position == C.TIME_UNSET || duration == C.TIME_UNSET
+        ? 0
+        : duration == 0 ? 100 : Util.constrainValue((int) ((position * 100) / duration), 0, 100);
   }
 
   @Override
@@ -571,20 +604,11 @@ public final class CastPlayer implements Player {
    * Updates the current timeline and returns whether it has changed.
    */
   private boolean updateTimeline() {
-    MediaStatus mediaStatus = getMediaStatus();
-    if (mediaStatus == null) {
-      boolean hasChanged = currentTimeline != CastTimeline.EMPTY_CAST_TIMELINE;
-      currentTimeline = CastTimeline.EMPTY_CAST_TIMELINE;
-      return hasChanged;
-    }
-
-    List<MediaQueueItem> items = mediaStatus.getQueueItems();
-    if (!currentTimeline.represents(items)) {
-      currentTimeline = !items.isEmpty() ? new CastTimeline(mediaStatus.getQueueItems())
-          : CastTimeline.EMPTY_CAST_TIMELINE;
-      return true;
-    }
-    return false;
+    CastTimeline oldTimeline = currentTimeline;
+    MediaStatus status = getMediaStatus();
+    currentTimeline =
+        status != null ? timelineTracker.getCastTimeline(status) : CastTimeline.EMPTY_CAST_TIMELINE;
+    return !oldTimeline.equals(currentTimeline);
   }
 
   /**
@@ -728,10 +752,11 @@ public final class CastPlayer implements Player {
   }
 
   private static int getRendererIndexForTrackType(int trackType) {
-    return trackType == C.TRACK_TYPE_VIDEO ? RENDERER_INDEX_VIDEO
-        : trackType == C.TRACK_TYPE_AUDIO ? RENDERER_INDEX_AUDIO
-        : trackType == C.TRACK_TYPE_TEXT ? RENDERER_INDEX_TEXT
-        : C.INDEX_UNSET;
+    return trackType == C.TRACK_TYPE_VIDEO
+        ? RENDERER_INDEX_VIDEO
+        : trackType == C.TRACK_TYPE_AUDIO
+            ? RENDERER_INDEX_AUDIO
+            : trackType == C.TRACK_TYPE_TEXT ? RENDERER_INDEX_TEXT : C.INDEX_UNSET;
   }
 
   private static int getCastRepeatMode(@RepeatMode int repeatMode) {

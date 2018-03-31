@@ -15,18 +15,13 @@
  */
 package com.google.android.exoplayer2;
 
-import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
-import android.media.MediaFormat;
 import android.os.Parcel;
 import android.os.Parcelable;
 import com.google.android.exoplayer2.drm.DrmInitData;
-import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.ColorInfo;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -110,14 +105,10 @@ public final class Format implements Parcelable {
   public final float frameRate;
   /**
    * The clockwise rotation that should be applied to the video for it to be rendered in the correct
-   * orientation, or {@link #NO_VALUE} if unknown or not applicable. Only 0, 90, 180 and 270 are
-   * supported.
+   * orientation, or 0 if unknown or not applicable. Only 0, 90, 180 and 270 are supported.
    */
   public final int rotationDegrees;
-  /**
-   * The width to height ratio of pixels in the video, or {@link #NO_VALUE} if unknown or not
-   * applicable.
-   */
+  /** The width to height ratio of pixels in the video, or 1.0 if unknown or not applicable. */
   public final float pixelWidthHeightRatio;
   /**
    * The stereo layout for 360/3D/VR video, or {@link #NO_VALUE} if not applicable. Valid stereo
@@ -154,11 +145,12 @@ public final class Format implements Parcelable {
   @C.PcmEncoding
   public final int pcmEncoding;
   /**
-   * The number of samples to trim from the start of the decoded audio stream.
+   * The number of samples to trim from the start of the decoded audio stream, or 0 if not
+   * applicable.
    */
   public final int encoderDelay;
   /**
-   * The number of samples to trim from the end of the decoded audio stream.
+   * The number of samples to trim from the end of the decoded audio stream, or 0 if not applicable.
    */
   public final int encoderPadding;
 
@@ -324,11 +316,41 @@ public final class Format implements Parcelable {
 
   // Image.
 
-  public static Format createImageSampleFormat(String id, String sampleMimeType, String codecs,
-      int bitrate, List<byte[]> initializationData, String language, DrmInitData drmInitData) {
-    return new Format(id, null, sampleMimeType, codecs, bitrate, NO_VALUE, NO_VALUE, NO_VALUE,
-        NO_VALUE, NO_VALUE, NO_VALUE, null, NO_VALUE, null, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE,
-        NO_VALUE, 0, language, NO_VALUE, OFFSET_SAMPLE_RELATIVE, initializationData, drmInitData,
+  public static Format createImageSampleFormat(
+      String id,
+      String sampleMimeType,
+      String codecs,
+      int bitrate,
+      @C.SelectionFlags int selectionFlags,
+      List<byte[]> initializationData,
+      String language,
+      DrmInitData drmInitData) {
+    return new Format(
+        id,
+        null,
+        sampleMimeType,
+        codecs,
+        bitrate,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        null,
+        NO_VALUE,
+        null,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        NO_VALUE,
+        selectionFlags,
+        language,
+        NO_VALUE,
+        OFFSET_SAMPLE_RELATIVE,
+        initializationData,
+        drmInitData,
         null);
   }
 
@@ -373,16 +395,17 @@ public final class Format implements Parcelable {
     this.width = width;
     this.height = height;
     this.frameRate = frameRate;
-    this.rotationDegrees = rotationDegrees;
-    this.pixelWidthHeightRatio = pixelWidthHeightRatio;
+    this.rotationDegrees = rotationDegrees == Format.NO_VALUE ? 0 : rotationDegrees;
+    this.pixelWidthHeightRatio =
+        pixelWidthHeightRatio == Format.NO_VALUE ? 1 : pixelWidthHeightRatio;
     this.projectionData = projectionData;
     this.stereoMode = stereoMode;
     this.colorInfo = colorInfo;
     this.channelCount = channelCount;
     this.sampleRate = sampleRate;
     this.pcmEncoding = pcmEncoding;
-    this.encoderDelay = encoderDelay;
-    this.encoderPadding = encoderPadding;
+    this.encoderDelay = encoderDelay == Format.NO_VALUE ? 0 : encoderDelay;
+    this.encoderPadding = encoderPadding == Format.NO_VALUE ? 0 : encoderPadding;
     this.selectionFlags = selectionFlags;
     this.language = language;
     this.accessibilityChannel = accessibilityChannel;
@@ -406,7 +429,7 @@ public final class Format implements Parcelable {
     frameRate = in.readFloat();
     rotationDegrees = in.readInt();
     pixelWidthHeightRatio = in.readFloat();
-    boolean hasProjectionData = in.readInt() != 0;
+    boolean hasProjectionData = Util.readBoolean(in);
     projectionData = hasProjectionData ? in.createByteArray() : null;
     stereoMode = in.readInt();
     colorInfo = in.readParcelable(ColorInfo.class.getClassLoader());
@@ -444,8 +467,15 @@ public final class Format implements Parcelable {
         drmInitData, metadata);
   }
 
-  public Format copyWithContainerInfo(String id, String codecs, int bitrate, int width, int height,
-      @C.SelectionFlags int selectionFlags, String language) {
+  public Format copyWithContainerInfo(
+      String id,
+      String sampleMimeType,
+      String codecs,
+      int bitrate,
+      int width,
+      int height,
+      @C.SelectionFlags int selectionFlags,
+      String language) {
     return new Format(id, containerMimeType, sampleMimeType, codecs, bitrate, maxInputSize, width,
         height, frameRate, rotationDegrees, pixelWidthHeightRatio, projectionData, stereoMode,
         colorInfo, channelCount, sampleRate, pcmEncoding, encoderDelay, encoderPadding,
@@ -465,8 +495,8 @@ public final class Format implements Parcelable {
     float frameRate = this.frameRate == NO_VALUE ? manifestFormat.frameRate : this.frameRate;
     @C.SelectionFlags int selectionFlags = this.selectionFlags |  manifestFormat.selectionFlags;
     String language = this.language == null ? manifestFormat.language : this.language;
-    DrmInitData drmInitData = manifestFormat.drmInitData != null
-        ? getFilledManifestDrmData(manifestFormat.drmInitData) : this.drmInitData;
+    DrmInitData drmInitData =
+        DrmInitData.createSessionCreationData(manifestFormat.drmInitData, this.drmInitData);
     return new Format(id, containerMimeType, sampleMimeType, codecs, bitrate, maxInputSize, width,
         height, frameRate, rotationDegrees, pixelWidthHeightRatio, projectionData, stereoMode,
         colorInfo, channelCount, sampleRate, pcmEncoding, encoderDelay, encoderPadding,
@@ -514,29 +544,6 @@ public final class Format implements Parcelable {
     return width == NO_VALUE || height == NO_VALUE ? NO_VALUE : (width * height);
   }
 
-  /**
-   * Returns a {@link MediaFormat} representation of this format.
-   */
-  @SuppressLint("InlinedApi")
-  @TargetApi(16)
-  public final MediaFormat getFrameworkMediaFormatV16() {
-    MediaFormat format = new MediaFormat();
-    format.setString(MediaFormat.KEY_MIME, sampleMimeType);
-    maybeSetStringV16(format, MediaFormat.KEY_LANGUAGE, language);
-    maybeSetIntegerV16(format, MediaFormat.KEY_MAX_INPUT_SIZE, maxInputSize);
-    maybeSetIntegerV16(format, MediaFormat.KEY_WIDTH, width);
-    maybeSetIntegerV16(format, MediaFormat.KEY_HEIGHT, height);
-    maybeSetFloatV16(format, MediaFormat.KEY_FRAME_RATE, frameRate);
-    maybeSetIntegerV16(format, "rotation-degrees", rotationDegrees);
-    maybeSetIntegerV16(format, MediaFormat.KEY_CHANNEL_COUNT, channelCount);
-    maybeSetIntegerV16(format, MediaFormat.KEY_SAMPLE_RATE, sampleRate);
-    for (int i = 0; i < initializationData.size(); i++) {
-      format.setByteBuffer("csd-" + i, ByteBuffer.wrap(initializationData.get(i)));
-    }
-    maybeSetColorInfoV24(format, colorInfo);
-    return format;
-  }
-
   @Override
   public String toString() {
     return "Format(" + id + ", " + containerMimeType + ", " + sampleMimeType + ", " + bitrate + ", "
@@ -575,24 +582,44 @@ public final class Format implements Parcelable {
       return false;
     }
     Format other = (Format) obj;
-    if (bitrate != other.bitrate || maxInputSize != other.maxInputSize
-        || width != other.width || height != other.height || frameRate != other.frameRate
-        || rotationDegrees != other.rotationDegrees
-        || pixelWidthHeightRatio != other.pixelWidthHeightRatio || stereoMode != other.stereoMode
-        || channelCount != other.channelCount || sampleRate != other.sampleRate
-        || pcmEncoding != other.pcmEncoding || encoderDelay != other.encoderDelay
-        || encoderPadding != other.encoderPadding || subsampleOffsetUs != other.subsampleOffsetUs
-        || selectionFlags != other.selectionFlags || !Util.areEqual(id, other.id)
-        || !Util.areEqual(language, other.language)
-        || accessibilityChannel != other.accessibilityChannel
-        || !Util.areEqual(containerMimeType, other.containerMimeType)
-        || !Util.areEqual(sampleMimeType, other.sampleMimeType)
-        || !Util.areEqual(codecs, other.codecs)
-        || !Util.areEqual(drmInitData, other.drmInitData)
-        || !Util.areEqual(metadata, other.metadata)
-        || !Util.areEqual(colorInfo, other.colorInfo)
-        || !Arrays.equals(projectionData, other.projectionData)
-        || initializationData.size() != other.initializationData.size()) {
+    return bitrate == other.bitrate
+        && maxInputSize == other.maxInputSize
+        && width == other.width
+        && height == other.height
+        && frameRate == other.frameRate
+        && rotationDegrees == other.rotationDegrees
+        && pixelWidthHeightRatio == other.pixelWidthHeightRatio
+        && stereoMode == other.stereoMode
+        && channelCount == other.channelCount
+        && sampleRate == other.sampleRate
+        && pcmEncoding == other.pcmEncoding
+        && encoderDelay == other.encoderDelay
+        && encoderPadding == other.encoderPadding
+        && subsampleOffsetUs == other.subsampleOffsetUs
+        && selectionFlags == other.selectionFlags
+        && Util.areEqual(id, other.id)
+        && Util.areEqual(language, other.language)
+        && accessibilityChannel == other.accessibilityChannel
+        && Util.areEqual(containerMimeType, other.containerMimeType)
+        && Util.areEqual(sampleMimeType, other.sampleMimeType)
+        && Util.areEqual(codecs, other.codecs)
+        && Util.areEqual(drmInitData, other.drmInitData)
+        && Util.areEqual(metadata, other.metadata)
+        && Util.areEqual(colorInfo, other.colorInfo)
+        && Arrays.equals(projectionData, other.projectionData)
+        && initializationDataEquals(other);
+  }
+
+  /**
+   * Returns whether the {@link #initializationData}s belonging to this format and {@code other} are
+   * equal.
+   *
+   * @param other The other format whose {@link #initializationData} is being compared.
+   * @return Whether the {@link #initializationData}s belonging to this format and {@code other} are
+   *     equal.
+   */
+  public boolean initializationDataEquals(Format other) {
+    if (initializationData.size() != other.initializationData.size()) {
       return false;
     }
     for (int i = 0; i < initializationData.size(); i++) {
@@ -601,45 +628,6 @@ public final class Format implements Parcelable {
       }
     }
     return true;
-  }
-
-  @TargetApi(24)
-  private static void maybeSetColorInfoV24(MediaFormat format, ColorInfo colorInfo) {
-    if (colorInfo == null) {
-      return;
-    }
-    maybeSetIntegerV16(format, MediaFormat.KEY_COLOR_TRANSFER, colorInfo.colorTransfer);
-    maybeSetIntegerV16(format, MediaFormat.KEY_COLOR_STANDARD, colorInfo.colorSpace);
-    maybeSetIntegerV16(format, MediaFormat.KEY_COLOR_RANGE, colorInfo.colorRange);
-    maybeSetByteBufferV16(format, MediaFormat.KEY_HDR_STATIC_INFO, colorInfo.hdrStaticInfo);
-  }
-
-  @TargetApi(16)
-  private static void maybeSetStringV16(MediaFormat format, String key, String value) {
-    if (value != null) {
-      format.setString(key, value);
-    }
-  }
-
-  @TargetApi(16)
-  private static void maybeSetIntegerV16(MediaFormat format, String key, int value) {
-    if (value != NO_VALUE) {
-      format.setInteger(key, value);
-    }
-  }
-
-  @TargetApi(16)
-  private static void maybeSetFloatV16(MediaFormat format, String key, float value) {
-    if (value != NO_VALUE) {
-      format.setFloat(key, value);
-    }
-  }
-
-  @TargetApi(16)
-  private static void maybeSetByteBufferV16(MediaFormat format, String key, byte[] value) {
-    if (value != null) {
-      format.setByteBuffer(key, ByteBuffer.wrap(value));
-    }
   }
 
   // Utility methods
@@ -694,7 +682,7 @@ public final class Format implements Parcelable {
     dest.writeFloat(frameRate);
     dest.writeInt(rotationDegrees);
     dest.writeFloat(pixelWidthHeightRatio);
-    dest.writeInt(projectionData != null ? 1 : 0);
+    Util.writeBoolean(dest, projectionData != null);
     if (projectionData != null) {
       dest.writeByteArray(projectionData);
     }
@@ -731,43 +719,4 @@ public final class Format implements Parcelable {
     }
 
   };
-
-  private DrmInitData getFilledManifestDrmData(DrmInitData manifestDrmData) {
-    // All exposed SchemeDatas must include key request information.
-    ArrayList<SchemeData> exposedSchemeDatas = new ArrayList<>();
-    ArrayList<SchemeData> emptySchemeDatas = new ArrayList<>();
-    for (int i = 0; i < manifestDrmData.schemeDataCount; i++) {
-      SchemeData schemeData = manifestDrmData.get(i);
-      if (schemeData.hasData()) {
-        exposedSchemeDatas.add(schemeData);
-      } else /* needs initialization data filling */ {
-        emptySchemeDatas.add(schemeData);
-      }
-    }
-
-    if (emptySchemeDatas.isEmpty()) {
-      // Manifest DRM information is complete.
-      return manifestDrmData;
-    } else if (drmInitData == null) {
-      // The manifest DRM data needs filling but this format does not include enough information to
-      // do it. A subset of the manifest's scheme datas should not be exposed because a
-      // DrmSessionManager could decide it does not support the format, while the missing
-      // information comes in a format feed immediately after.
-      return null;
-    }
-
-    int needFillingCount = emptySchemeDatas.size();
-    for (int i = 0; i < drmInitData.schemeDataCount; i++) {
-      SchemeData mediaSchemeData = drmInitData.get(i);
-      for (int j = 0; j < needFillingCount; j++) {
-        if (mediaSchemeData.canReplace(emptySchemeDatas.get(j))) {
-          exposedSchemeDatas.add(mediaSchemeData);
-          break;
-        }
-      }
-    }
-    return exposedSchemeDatas.isEmpty() ? null : new DrmInitData(manifestDrmData.schemeType,
-        exposedSchemeDatas.toArray(new SchemeData[exposedSchemeDatas.size()]));
-  }
-
 }

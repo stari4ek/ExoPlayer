@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.util;
 
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import com.google.android.exoplayer2.C;
 
@@ -36,6 +37,7 @@ public final class MimeTypes {
   public static final String VIDEO_VP8 = BASE_TYPE_VIDEO + "/x-vnd.on2.vp8";
   public static final String VIDEO_VP9 = BASE_TYPE_VIDEO + "/x-vnd.on2.vp9";
   public static final String VIDEO_MP4V = BASE_TYPE_VIDEO + "/mp4v-es";
+  public static final String VIDEO_MPEG = BASE_TYPE_VIDEO + "/mpeg";
   public static final String VIDEO_MPEG2 = BASE_TYPE_VIDEO + "/mpeg2";
   public static final String VIDEO_VC1 = BASE_TYPE_VIDEO + "/wvc1";
   public static final String VIDEO_UNKNOWN = BASE_TYPE_VIDEO + "/x-unknown";
@@ -51,7 +53,7 @@ public final class MimeTypes {
   public static final String AUDIO_MLAW = BASE_TYPE_AUDIO + "/g711-mlaw";
   public static final String AUDIO_AC3 = BASE_TYPE_AUDIO + "/ac3";
   public static final String AUDIO_E_AC3 = BASE_TYPE_AUDIO + "/eac3";
-  public static final String AUDIO_ATMOS = BASE_TYPE_AUDIO + "/eac3-joc";
+  public static final String AUDIO_E_AC3_JOC = BASE_TYPE_AUDIO + "/eac3-joc";
   public static final String AUDIO_TRUEHD = BASE_TYPE_AUDIO + "/true-hd";
   public static final String AUDIO_DTS = BASE_TYPE_AUDIO + "/vnd.dts";
   public static final String AUDIO_DTS_HD = BASE_TYPE_AUDIO + "/vnd.dts.hd";
@@ -70,7 +72,9 @@ public final class MimeTypes {
 
   public static final String APPLICATION_MP4 = BASE_TYPE_APPLICATION + "/mp4";
   public static final String APPLICATION_WEBM = BASE_TYPE_APPLICATION + "/webm";
+  public static final String APPLICATION_MPD = BASE_TYPE_APPLICATION + "/dash+xml";
   public static final String APPLICATION_M3U8 = BASE_TYPE_APPLICATION + "/x-mpegURL";
+  public static final String APPLICATION_SS = BASE_TYPE_APPLICATION + "/vnd.ms-sstr+xml";
   public static final String APPLICATION_ID3 = BASE_TYPE_APPLICATION + "/id3";
   public static final String APPLICATION_CEA608 = BASE_TYPE_APPLICATION + "/cea-608";
   public static final String APPLICATION_CEA708 = BASE_TYPE_APPLICATION + "/cea-708";
@@ -191,13 +195,26 @@ public final class MimeTypes {
     } else if (codec.startsWith("vp8") || codec.startsWith("vp08")) {
       return MimeTypes.VIDEO_VP8;
     } else if (codec.startsWith("mp4a")) {
-      return MimeTypes.AUDIO_AAC;
+      String mimeType = null;
+      if (codec.startsWith("mp4a.")) {
+        String objectTypeString = codec.substring(5); // remove the 'mp4a.' prefix
+        if (objectTypeString.length() >= 2) {
+          try {
+            String objectTypeHexString = Util.toUpperInvariant(objectTypeString.substring(0, 2));
+            int objectTypeInt = Integer.parseInt(objectTypeHexString, 16);
+            mimeType = getMimeTypeFromMp4ObjectType(objectTypeInt);
+          } catch (NumberFormatException ignored) {
+            // ignored
+          }
+        }
+      }
+      return mimeType == null ? MimeTypes.AUDIO_AAC : mimeType;
     } else if (codec.startsWith("ac-3") || codec.startsWith("dac3")) {
       return MimeTypes.AUDIO_AC3;
     } else if (codec.startsWith("ec-3") || codec.startsWith("dec3")) {
       return MimeTypes.AUDIO_E_AC3;
     } else if (codec.startsWith("ec+3")) {
-      return MimeTypes.AUDIO_ATMOS;
+      return MimeTypes.AUDIO_E_AC3_JOC;
     } else if (codec.startsWith("dtsc") || codec.startsWith("dtse")) {
       return MimeTypes.AUDIO_DTS;
     } else if (codec.startsWith("dtsh") || codec.startsWith("dtsl")) {
@@ -208,6 +225,50 @@ public final class MimeTypes {
       return MimeTypes.AUDIO_VORBIS;
     }
     return null;
+  }
+
+  /**
+   * Derives a mimeType from MP4 object type identifier, as defined in RFC 6381 and
+   * http://www.mp4ra.org/object.html.
+   *
+   * @param objectType The objectType identifier to derive.
+   * @return The mimeType, or null if it could not be derived.
+   */
+  @Nullable
+  public static String getMimeTypeFromMp4ObjectType(int objectType) {
+    switch (objectType) {
+      case 0x60:
+      case 0x61:
+        return MimeTypes.VIDEO_MPEG2;
+      case 0x20:
+        return MimeTypes.VIDEO_MP4V;
+      case 0x21:
+        return MimeTypes.VIDEO_H264;
+      case 0x23:
+        return MimeTypes.VIDEO_H265;
+      case 0x69:
+      case 0x6B:
+        return MimeTypes.AUDIO_MPEG;
+      case 0x40:
+      case 0x66:
+      case 0x67:
+      case 0x68:
+        return MimeTypes.AUDIO_AAC;
+      case 0xA5:
+        return MimeTypes.AUDIO_AC3;
+      case 0xA6:
+        return MimeTypes.AUDIO_E_AC3;
+      case 0xA9:
+      case 0xAC:
+        return MimeTypes.AUDIO_DTS;
+      case 0xAA:
+      case 0xAB:
+        return MimeTypes.AUDIO_DTS_HD;
+      case 0xAD:
+        return MimeTypes.AUDIO_OPUS;
+      default:
+        return null;
+    }
   }
 
   /**
@@ -255,12 +316,14 @@ public final class MimeTypes {
       case MimeTypes.AUDIO_AC3:
         return C.ENCODING_AC3;
       case MimeTypes.AUDIO_E_AC3:
-      case MimeTypes.AUDIO_ATMOS:
+      case MimeTypes.AUDIO_E_AC3_JOC:
         return C.ENCODING_E_AC3;
       case MimeTypes.AUDIO_DTS:
         return C.ENCODING_DTS;
       case MimeTypes.AUDIO_DTS_HD:
         return C.ENCODING_DTS_HD;
+      case MimeTypes.AUDIO_TRUEHD:
+        return C.ENCODING_DOLBY_TRUEHD;
       default:
         return C.ENCODING_INVALID;
     }
