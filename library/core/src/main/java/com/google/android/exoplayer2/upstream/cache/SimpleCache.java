@@ -93,10 +93,6 @@ public final class SimpleCache implements Cache {
    * @param index The CachedContentIndex to be used.
    */
   /*package*/ SimpleCache(File cacheDir, CacheEvictor evictor, CachedContentIndex index) {
-    if (!lockFolder(cacheDir)) {
-      throw new IllegalStateException("Another SimpleCache instance uses the folder: " + cacheDir);
-    }
-
     this.cacheDir = cacheDir;
     this.evictor = evictor;
     this.index = index;
@@ -310,14 +306,16 @@ public final class SimpleCache implements Cache {
   }
 
   @Override
-  public void applyContentMetadataMutations(String key, ContentMetadataMutations mutations)
-      throws CacheException {
+  public synchronized void applyContentMetadataMutations(
+      String key, ContentMetadataMutations mutations) throws CacheException {
+    Assertions.checkState(!released);
     index.applyContentMetadataMutations(key, mutations);
     index.store();
   }
 
   @Override
-  public ContentMetadata getContentMetadata(String key) {
+  public synchronized ContentMetadata getContentMetadata(String key) {
+    Assertions.checkState(!released);
     return index.getContentMetadata(key);
   }
 
