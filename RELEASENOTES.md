@@ -4,7 +4,6 @@
 
 * Optimize seeking in FMP4 by enabling seeking to the nearest sync sample within
   a fragment. This benefits standalone FMP4 playbacks, DASH and SmoothStreaming.
-* Optimize seeking in FMP4.
 * Moved initial bitrate estimate from `AdaptiveTrackSelection` to
   `DefaultBandwidthMeter`.
 * Updated default max buffer length in `DefaultLoadControl`.
@@ -28,6 +27,8 @@
   * Added callbacks to `MediaSourceEventListener` to get notified when media
     periods are created, released and being read from.
   * Support live stream clipping with `ClippingMediaSource`.
+  * Allow setting custom tags for all media sources in their factories. The tag
+    of the current window can be retrieved with `ExoPlayer.getCurrentTag`.
 * Audio:
   * Factor out `AudioTrack` position tracking from `DefaultAudioSink`.
   * Fix an issue where the playback position would pause just after playback
@@ -35,6 +36,9 @@
     advancing ([#3841](https://github.com/google/ExoPlayer/issues/3841)).
   * Add an option to skip silent audio in `PlaybackParameters`
     ((#2635)[https://github.com/google/ExoPlayer/issues/2635]).
+  * Fix an issue where playback of TrueHD streams would get stuck after seeking
+    due to not finding a syncframe
+    ((#3845)[https://github.com/google/ExoPlayer/issues/3845]).
 * Caching:
   * Add release method to Cache interface.
   * Prevent multiple instances of SimpleCache in the same folder.
@@ -49,6 +53,15 @@
   `BaseRenderer.onStreamChanged`.
 * HLS: Fix playlist loading error propagation when the current selection does
   not include all of the playlist's variants.
+* Fix ClearKey decryption error if the key contains a forward slash
+  ([#4075](https://github.com/google/ExoPlayer/issues/4075)).
+* Fix IllegalStateException when switching surface on Huawei P9 Lite
+  ([#4084](https://github.com/google/ExoPlayer/issues/4084)).
+
+### 2.7.3 ###
+
+* Fix ProGuard configuration for Cast, IMA and OkHttp extensions.
+* Update OkHttp extension to depend on OkHttp 3.10.0.
 
 ### 2.7.2 ###
 

@@ -162,7 +162,7 @@ public final class DefaultAudioSink implements AudioSink {
   private boolean canApplyPlaybackParameters;
   private int bufferSize;
 
-  @Nullable private PlaybackParameters drainingPlaybackParameters;
+  @Nullable private PlaybackParameters afterDrainPlaybackParameters;
   private PlaybackParameters playbackParameters;
   private long playbackParametersOffsetUs;
   private long playbackParametersPositionUs;
@@ -278,9 +278,15 @@ public final class DefaultAudioSink implements AudioSink {
   }
 
   @Override
-  public void configure(@C.Encoding int inputEncoding, int inputChannelCount, int inputSampleRate,
-      int specifiedBufferSize, @Nullable int[] outputChannels, int trimStartSamples,
-      int trimEndSamples) throws ConfigurationException {
+  public void configure(
+      @C.Encoding int inputEncoding,
+      int inputChannelCount,
+      int inputSampleRate,
+      int specifiedBufferSize,
+      @Nullable int[] outputChannels,
+      int trimStartFrames,
+      int trimEndFrames)
+      throws ConfigurationException {
     boolean flush = false;
     this.inputSampleRate = inputSampleRate;
     int channelCount = inputChannelCount;
@@ -297,7 +303,7 @@ public final class DefaultAudioSink implements AudioSink {
     boolean processingEnabled = isInputPcm && inputEncoding != C.ENCODING_PCM_FLOAT;
     canApplyPlaybackParameters = processingEnabled && !shouldConvertHighResIntPcmToFloat;
     if (processingEnabled) {
-      trimmingAudioProcessor.setTrimSampleCount(trimStartSamples, trimEndSamples);
+      trimmingAudioProcessor.setTrimFrameCount(trimStartFrames, trimEndFrames);
       channelMappingAudioProcessor.setChannelMap(outputChannels);
       for (AudioProcessor audioProcessor : getAvailableAudioProcessors()) {
         try {
@@ -521,22 +527,21 @@ public final class DefaultAudioSink implements AudioSink {
         }
       }
 
-      if (drainingPlaybackParameters != null) {
+      if (afterDrainPlaybackParameters != null) {
         if (!drainAudioProcessorsToEndOfStream()) {
           // Don't process any more input until draining completes.
           return false;
         }
+        PlaybackParameters newPlaybackParameters = afterDrainPlaybackParameters;
+        afterDrainPlaybackParameters = null;
+        newPlaybackParameters = applyPlaybackParameters(newPlaybackParameters);
         // Store the position and corresponding media time from which the parameters will apply.
-        playbackParametersCheckpoints.add(new PlaybackParametersCheckpoint(
-            drainingPlaybackParameters, Math.max(0, presentationTimeUs),
-            framesToDurationUs(getWrittenFrames())));
-        drainingPlaybackParameters = null;
-
-        // Flush the audio processors so that any new parameters take effect.
-        // TODO: Move parameter setting from setPlaybackParameters to here, so that it's not
-        // necessary to flush the processors twice.
-        sonicAudioProcessor.flush();
-        silenceSkippingAudioProcessor.flush();
+        playbackParametersCheckpoints.add(
+            new PlaybackParametersCheckpoint(
+                newPlaybackParameters,
+                Math.max(0, presentationTimeUs),
+                framesToDurationUs(getWrittenFrames())));
+        // Update the set of active audio processors to take into account the new parameters.
         setupAudioProcessors();
       }
 
@@ -742,14 +747,9 @@ public final class DefaultAudioSink implements AudioSink {
       this.playbackParameters = PlaybackParameters.DEFAULT;
       return this.playbackParameters;
     }
-    playbackParameters =
-        new PlaybackParameters(
-            sonicAudioProcessor.setSpeed(playbackParameters.speed),
-            sonicAudioProcessor.setPitch(playbackParameters.pitch),
-            playbackParameters.skipSilence);
-    silenceSkippingAudioProcessor.setEnabled(playbackParameters.skipSilence);
     PlaybackParameters lastSetPlaybackParameters =
-        drainingPlaybackParameters != null ? drainingPlaybackParameters
+        afterDrainPlaybackParameters != null
+            ? afterDrainPlaybackParameters
             : !playbackParametersCheckpoints.isEmpty()
                 ? playbackParametersCheckpoints.getLast().playbackParameters
                 : this.playbackParameters;
@@ -757,9 +757,10 @@ public final class DefaultAudioSink implements AudioSink {
       if (isInitialized()) {
         // Drain the audio processors so we can determine the frame position at which the new
         // parameters apply.
-        drainingPlaybackParameters = playbackParameters;
+        afterDrainPlaybackParameters = playbackParameters;
       } else {
-        this.playbackParameters = playbackParameters;
+        // Update the playback parameters now.
+        this.playbackParameters = applyPlaybackParameters(playbackParameters);
       }
     }
     return this.playbackParameters;
@@ -845,9 +846,9 @@ public final class DefaultAudioSink implements AudioSink {
       writtenPcmBytes = 0;
       writtenEncodedFrames = 0;
       framesPerEncodedSample = 0;
-      if (drainingPlaybackParameters != null) {
-        playbackParameters = drainingPlaybackParameters;
-        drainingPlaybackParameters = null;
+      if (afterDrainPlaybackParameters != null) {
+        playbackParameters = afterDrainPlaybackParameters;
+        afterDrainPlaybackParameters = null;
       } else if (!playbackParametersCheckpoints.isEmpty()) {
         playbackParameters = playbackParametersCheckpoints.getLast().playbackParameters;
       }
@@ -915,6 +916,21 @@ public final class DefaultAudioSink implements AudioSink {
         toRelease.release();
       }
     }.start();
+  }
+
+  /**
+   * Configures audio processors to apply the specified playback parameters, returning the new
+   * parameters, which may differ from those passed in.
+   *
+   * @param playbackParameters The playback parameters to try to apply.
+   * @return The playback parameters that were actually applied.
+   */
+  private PlaybackParameters applyPlaybackParameters(PlaybackParameters playbackParameters) {
+    silenceSkippingAudioProcessor.setEnabled(playbackParameters.skipSilence);
+    return new PlaybackParameters(
+        sonicAudioProcessor.setSpeed(playbackParameters.speed),
+        sonicAudioProcessor.setPitch(playbackParameters.pitch),
+        playbackParameters.skipSilence);
   }
 
   /**
@@ -1060,8 +1076,11 @@ public final class DefaultAudioSink implements AudioSink {
     } else if (encoding == C.ENCODING_E_AC3) {
       return Ac3Util.parseEAc3SyncframeAudioSampleCount(buffer);
     } else if (encoding == C.ENCODING_DOLBY_TRUEHD) {
-      return Ac3Util.parseTrueHdSyncframeAudioSampleCount(buffer)
-          * Ac3Util.TRUEHD_RECHUNK_SAMPLE_COUNT;
+      int syncframeOffset = Ac3Util.findTrueHdSyncframeOffset(buffer);
+      return syncframeOffset == C.INDEX_UNSET
+          ? 0
+          : (Ac3Util.parseTrueHdSyncframeAudioSampleCount(buffer, syncframeOffset)
+              * Ac3Util.TRUEHD_RECHUNK_SAMPLE_COUNT);
     } else {
       throw new IllegalStateException("Unexpected audio encoding: " + encoding);
     }
