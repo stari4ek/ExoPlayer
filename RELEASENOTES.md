@@ -7,6 +7,8 @@
 * Moved initial bitrate estimate from `AdaptiveTrackSelection` to
   `DefaultBandwidthMeter`.
 * Updated default max buffer length in `DefaultLoadControl`.
+* Added `AnalyticsListener` interface which can be registered in
+  `SimpleExoPlayer` to receive detailed meta data for each ExoPlayer event.
 * UI components:
   * Add support for listening to `AspectRatioFrameLayout`'s aspect ratio update
     ([#3736](https://github.com/google/ExoPlayer/issues/3736)).
@@ -29,9 +31,14 @@
   * Support live stream clipping with `ClippingMediaSource`.
   * Allow setting tags for all media sources in their factories. The tag of the
     current window can be retrieved with `ExoPlayer.getCurrentTag`.
+* IMA: Allow setting the ad media load timeout
+  ([#3691](https://github.com/google/ExoPlayer/issues/3691)).
 * Audio:
-  * FLAC: Sniff FLAC files correctly if they have ID3 headers
-    ([#4055](https://github.com/google/ExoPlayer/issues/4055)).
+  * FLAC:
+    * Sniff FLAC files correctly if they have ID3 headers
+      ([#4055](https://github.com/google/ExoPlayer/issues/4055)).
+    * Supports FLAC files with high sample rate (176400 and 192000)
+      ([#3769](https://github.com/google/ExoPlayer/issues/3769)).
   * Factor out `AudioTrack` position tracking from `DefaultAudioSink`.
   * Fix an issue where the playback position would pause just after playback
     begins, and poll the audio timestamp less frequently once it starts
@@ -41,26 +48,34 @@
   * Fix an issue where playback of TrueHD streams would get stuck after seeking
     due to not finding a syncframe
     ((#3845)[https://github.com/google/ExoPlayer/issues/3845]).
+  * Handle non-empty end-of-stream buffers, to fix gapless playback of streams
+    with encoder padding when the decoder returns a non-empty final buffer.
+  * Allow trimming more than one sample when applying an elst audio edit via
+    gapless playback info.
 * Caching:
   * Add release method to Cache interface.
   * Prevent multiple instances of SimpleCache in the same folder.
     Previous instance must be released.
-  * Store redirected URI
-  ([#2360](https://github.com/google/ExoPlayer/issues/2360)).
+  * Cache redirect URLs
+    ([#2360](https://github.com/google/ExoPlayer/issues/2360)).
 * DRM:
   * Allow multiple listeners for `DefaultDrmSessionManager`.
   * Pass `DrmSessionManager` to `ExoPlayerFactory` instead of `RendererFactory`.
   * Change minimum API requirement for CBC and pattern encryption from 24 to 25
     ([#4022][https://github.com/google/ExoPlayer/issues/4022]).
-* Removed default renderer time offset of 60000000 from internal player. The
-  actual renderer timestamp offset can be obtained by listening to
-  `BaseRenderer.onStreamChanged`.
+  * Fix handling of 307/308 redirects when making license requests
+    ([#4108](https://github.com/google/ExoPlayer/issues/4108)).
 * HLS: Fix playlist loading error propagation when the current selection does
   not include all of the playlist's variants.
 * Fix ClearKey decryption error if the key contains a forward slash
   ([#4075](https://github.com/google/ExoPlayer/issues/4075)).
-* Fix IllegalStateException when switching surface on Huawei P9 Lite
-  ([#4084](https://github.com/google/ExoPlayer/issues/4084)).
+* Fix crash when switching surface on Huawei P9 Lite
+  ([#4084](https://github.com/google/ExoPlayer/issues/4084)), and Philips QM163E
+  ([#4104](https://github.com/google/ExoPlayer/issues/4104)).
+* Support ZLIB compressed PGS subtitles.
+* Removed default renderer time offset of 60000000 from internal player. The
+  actual renderer timestamp offset can be obtained by listening to
+  `BaseRenderer.onStreamChanged`.
 
 ### 2.7.3 ###
 

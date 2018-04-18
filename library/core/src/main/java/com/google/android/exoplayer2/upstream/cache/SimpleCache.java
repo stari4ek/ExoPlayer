@@ -93,10 +93,6 @@ public final class SimpleCache implements Cache {
    * @param index The CachedContentIndex to be used.
    */
   /*package*/ SimpleCache(File cacheDir, CacheEvictor evictor, CachedContentIndex index) {
-    if (!lockFolder(cacheDir)) {
-      throw new IllegalStateException("Another SimpleCache instance uses the folder: " + cacheDir);
-    }
-
     this.cacheDir = cacheDir;
     this.evictor = evictor;
     this.index = index;
@@ -256,7 +252,7 @@ public final class SimpleCache implements Cache {
       return;
     }
     // Check if the span conflicts with the set content length
-    long length = cachedContent.getLength();
+    long length = ContentMetadataInternal.getContentLength(cachedContent.getMetadata());
     if (length != C.LENGTH_UNSET) {
       Assertions.checkState((span.position + span.length) <= length);
     }
@@ -298,15 +294,14 @@ public final class SimpleCache implements Cache {
 
   @Override
   public synchronized void setContentLength(String key, long length) throws CacheException {
-    Assertions.checkState(!released);
-    index.setContentLength(key, length);
-    index.store();
+    ContentMetadataMutations mutations = new ContentMetadataMutations();
+    ContentMetadataInternal.setContentLength(mutations, length);
+    applyContentMetadataMutations(key, mutations);
   }
 
   @Override
   public synchronized long getContentLength(String key) {
-    Assertions.checkState(!released);
-    return index.getContentLength(key);
+    return ContentMetadataInternal.getContentLength(getContentMetadata(key));
   }
 
   @Override
