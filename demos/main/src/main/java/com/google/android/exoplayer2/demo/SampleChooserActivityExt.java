@@ -2,6 +2,7 @@ package com.google.android.exoplayer2.demo;
 
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
@@ -9,6 +10,8 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Environment;
 import android.support.annotation.NonNull;
+import android.view.View;
+import android.widget.ExpandableListView;
 import android.widget.Toast;
 
 import com.google.android.exoplayer2.util.Assertions;
@@ -26,7 +29,8 @@ import java.util.List;
  */
 public class SampleChooserActivityExt extends SampleChooserActivity {
 
-    private final Sample logcatSample = new Sample("Save logcat", false, null) {
+    private final Sample logcatSample = new Sample(
+        "Save logcat", false, null, null) {
         @Override
         public Intent buildIntent(Context context) {
             Assertions.checkState(false, "Should not be called");
@@ -45,17 +49,22 @@ public class SampleChooserActivityExt extends SampleChooserActivity {
         super.onSampleGroups(groups, sawError);
     }
 
-   /* private */  void onSampleSelected(Sample sample) {
+    @Override
+    public boolean onChildClick(
+        ExpandableListView parent, View view, int groupPosition, int childPosition, long id) {
+        Sample sample = (Sample) view.getTag();
+
         // intercept own sample
         if (sample == logcatSample) {
             tryToSaveLogcat();
+            return true;
         } else {
-            super.onSampleSelected(sample);
+            return super.onChildClick(parent, view, groupPosition, childPosition, id);
         }
     }
 
-
     private static final int MY_PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE = 4321;
+    @SuppressLint("NewApi")
     private void tryToSaveLogcat() {
 
         // for versions before 6.0 - we don't have new permission model. So it means - permission

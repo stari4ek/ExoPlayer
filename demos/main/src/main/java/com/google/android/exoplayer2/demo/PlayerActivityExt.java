@@ -28,8 +28,7 @@ public class PlayerActivityExt extends PlayerActivity {
 
 
     @Override
-    MediaSource buildMediaSource(
-            Uri uri, @Nullable String overrideExtension, @Nullable List<?> manifestFilter) {
+    MediaSource buildMediaSource(Uri uri, @Nullable String overrideExtension) {
 
         int type = Util
             .inferContentType(!TextUtils.isEmpty(overrideExtension) ? "." + overrideExtension
@@ -63,6 +62,6 @@ public class PlayerActivityExt extends PlayerActivity {
                 .createMediaSource(uri);
         }
 
-        return super.buildMediaSource(uri, overrideExtension, manifestFilter);
+        return super.buildMediaSource(uri, overrideExtension);
     }
 }
