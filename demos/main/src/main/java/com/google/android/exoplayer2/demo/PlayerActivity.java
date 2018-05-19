@@ -119,9 +119,8 @@ public class PlayerActivity extends Activity
     DEFAULT_COOKIE_MANAGER.setCookiePolicy(CookiePolicy.ACCEPT_ORIGINAL_SERVER);
   }
 
-  // TVirl: make it package
-  /* private */ Handler mainHandler;
-  /* private */ EventLogger eventLogger;
+  private Handler mainHandler;
+  private EventLogger eventLogger;
   private PlayerView playerView;
   private LinearLayout debugRootView;
   private TextView debugTextView;
