@@ -27,7 +27,7 @@ import java.nio.ByteOrder;
  * An {@link AudioProcessor} that skips silence in the input stream. Input and output are 16-bit
  * PCM.
  */
-/* package */ final class SilenceSkippingAudioProcessor implements AudioProcessor {
+public final class SilenceSkippingAudioProcessor implements AudioProcessor {
 
   /**
    * The minimum duration of audio that must be below {@link #SILENCE_THRESHOLD_LEVEL} to classify
@@ -107,13 +107,14 @@ import java.nio.ByteOrder;
   }
 
   /**
-   * Sets whether to skip silence in the input. The new setting will take effect after calling
-   * {@link #flush()}.
+   * Sets whether to skip silence in the input. Calling this method will discard any data buffered
+   * within the processor, and may update the value returned by {@link #isActive()}.
    *
    * @param enabled Whether to skip silence in the input.
    */
   public void setEnabled(boolean enabled) {
     this.enabled = enabled;
+    flush();
   }
 
   /**
@@ -143,7 +144,7 @@ import java.nio.ByteOrder;
 
   @Override
   public boolean isActive() {
-    return enabled;
+    return sampleRateHz != Format.NO_VALUE && enabled;
   }
 
   @Override

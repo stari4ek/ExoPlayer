@@ -61,6 +61,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   private boolean hasPendingPrepare;
   private boolean hasPendingSeek;
   private PlaybackParameters playbackParameters;
+  private @Nullable ExoPlaybackException playbackError;
 
   // Playback information when there is no pending seek/set source operation.
   private PlaybackInfo playbackInfo;
@@ -92,10 +93,9 @@ import java.util.concurrent.CopyOnWriteArraySet;
     this.listeners = new CopyOnWriteArraySet<>();
     emptyTrackSelectorResult =
         new TrackSelectorResult(
-            new boolean[renderers.length],
-            new TrackSelectionArray(new TrackSelection[renderers.length]),
-            null,
-            new RendererConfiguration[renderers.length]);
+            new RendererConfiguration[renderers.length],
+            new TrackSelection[renderers.length],
+            null);
     window = new Timeline.Window();
     period = new Timeline.Period();
     playbackParameters = PlaybackParameters.DEFAULT;
@@ -158,12 +158,18 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  public @Nullable ExoPlaybackException getPlaybackError() {
+    return playbackError;
+  }
+
+  @Override
   public void prepare(MediaSource mediaSource) {
     prepare(mediaSource, true, true);
   }
 
   @Override
   public void prepare(MediaSource mediaSource, boolean resetPosition, boolean resetState) {
+    playbackError = null;
     PlaybackInfo playbackInfo =
         getResetPlaybackInfo(
             resetPosition, resetState, /* playbackState= */ Player.STATE_BUFFERING);
@@ -187,6 +193,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
     if (this.playWhenReady != playWhenReady) {
       this.playWhenReady = playWhenReady;
       internalPlayer.setPlayWhenReady(playWhenReady);
+      PlaybackInfo playbackInfo = this.playbackInfo;
       for (Player.EventListener listener : listeners) {
         listener.onPlayerStateChanged(playWhenReady, playbackInfo.playbackState);
       }
@@ -312,12 +319,23 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  public @Nullable Object getCurrentTag() {
+    int windowIndex = getCurrentWindowIndex();
+    return windowIndex > playbackInfo.timeline.getWindowCount()
+        ? null
+        : playbackInfo.timeline.getWindow(windowIndex, window, /* setTag= */ true).tag;
+  }
+
+  @Override
   public void stop() {
     stop(/* reset= */ false);
   }
 
   @Override
   public void stop(boolean reset) {
+    if (reset) {
+      playbackError = null;
+    }
     PlaybackInfo playbackInfo =
         getResetPlaybackInfo(
             /* resetPosition= */ reset,
@@ -553,9 +571,10 @@ import java.util.concurrent.CopyOnWriteArraySet;
         }
         break;
       case ExoPlayerImplInternal.MSG_ERROR:
-        ExoPlaybackException exception = (ExoPlaybackException) msg.obj;
+        ExoPlaybackException playbackError = (ExoPlaybackException) msg.obj;
+        this.playbackError = playbackError;
         for (Player.EventListener listener : listeners) {
-          listener.onPlayerError(exception);
+          listener.onPlayerError(playbackError);
         }
         break;
       default:
@@ -635,7 +654,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
     boolean playbackStateChanged = playbackInfo.playbackState != newPlaybackInfo.playbackState;
     boolean isLoadingChanged = playbackInfo.isLoading != newPlaybackInfo.isLoading;
     boolean trackSelectorResultChanged =
-        this.playbackInfo.trackSelectorResult != newPlaybackInfo.trackSelectorResult;
+        playbackInfo.trackSelectorResult != newPlaybackInfo.trackSelectorResult;
     playbackInfo = newPlaybackInfo;
     if (timelineOrManifestChanged || timelineChangeReason == TIMELINE_CHANGE_REASON_PREPARED) {
       for (Player.EventListener listener : listeners) {

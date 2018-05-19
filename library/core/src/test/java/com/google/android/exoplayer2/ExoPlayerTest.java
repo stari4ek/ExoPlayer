@@ -51,6 +51,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
@@ -668,7 +669,7 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
 
-    List<FakeTrackSelection> createdTrackSelections = trackSelector.getSelectedTrackSelections();
+    List<FakeTrackSelection> createdTrackSelections = trackSelector.getAllTrackSelections();
     int numSelectionsEnabled = 0;
     // Assert that all tracks selection are disabled at the end of the playback.
     for (FakeTrackSelection trackSelection : createdTrackSelections) {
@@ -676,9 +677,7 @@ public final class ExoPlayerTest {
       numSelectionsEnabled += trackSelection.enableCount;
     }
     // There are 2 renderers, and track selections are made once (1 period).
-    // Track selections are not reused, so there are 2 track selections made.
     assertThat(createdTrackSelections).hasSize(2);
-    // There should be 2 track selections enabled in total.
     assertThat(numSelectionsEnabled).isEqualTo(2);
   }
 
@@ -699,7 +698,7 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
 
-    List<FakeTrackSelection> createdTrackSelections = trackSelector.getSelectedTrackSelections();
+    List<FakeTrackSelection> createdTrackSelections = trackSelector.getAllTrackSelections();
     int numSelectionsEnabled = 0;
     // Assert that all tracks selection are disabled at the end of the playback.
     for (FakeTrackSelection trackSelection : createdTrackSelections) {
@@ -707,9 +706,7 @@ public final class ExoPlayerTest {
       numSelectionsEnabled += trackSelection.enableCount;
     }
     // There are 2 renderers, and track selections are made twice (2 periods).
-    // Track selections are not reused, so there are 4 track selections made.
     assertThat(createdTrackSelections).hasSize(4);
-    // There should be 4 track selections enabled in total.
     assertThat(numSelectionsEnabled).isEqualTo(4);
   }
 
@@ -726,13 +723,7 @@ public final class ExoPlayerTest {
         new ActionSchedule.Builder("testChangeTrackSelection")
             .pause()
             .waitForPlaybackState(Player.STATE_READY)
-            .executeRunnable(
-                new Runnable() {
-                  @Override
-                  public void run() {
-                    trackSelector.setRendererDisabled(0, true);
-                  }
-                })
+            .disableRenderer(0)
             .play()
             .build();
 
@@ -745,23 +736,21 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
 
-    List<FakeTrackSelection> createdTrackSelections = trackSelector.getSelectedTrackSelections();
+    List<FakeTrackSelection> createdTrackSelections = trackSelector.getAllTrackSelections();
     int numSelectionsEnabled = 0;
     // Assert that all tracks selection are disabled at the end of the playback.
     for (FakeTrackSelection trackSelection : createdTrackSelections) {
       assertThat(trackSelection.isEnabled).isFalse();
       numSelectionsEnabled += trackSelection.enableCount;
     }
-    // There are 2 renderers, and track selections are made twice.
-    // Track selections are not reused, so there are 4 track selections made.
+    // There are 2 renderers, and track selections are made twice. The second time one renderer is
+    // disabled, so only one out of the two track selections is enabled.
     assertThat(createdTrackSelections).hasSize(4);
-    // Initially there are 2 track selections enabled.
-    // The second time one renderer is disabled, so only 1 track selection should be enabled.
     assertThat(numSelectionsEnabled).isEqualTo(3);
   }
 
   @Test
-  public void testAllActivatedTrackSelectionAreReleasedWhenTrackSelectionsAreUsed()
+  public void testAllActivatedTrackSelectionAreReleasedWhenTrackSelectionsAreReused()
       throws Exception {
     Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
     MediaSource mediaSource =
@@ -773,13 +762,7 @@ public final class ExoPlayerTest {
         new ActionSchedule.Builder("testReuseTrackSelection")
             .pause()
             .waitForPlaybackState(Player.STATE_READY)
-            .executeRunnable(
-                new Runnable() {
-                  @Override
-                  public void run() {
-                    trackSelector.setRendererDisabled(0, true);
-                  }
-                })
+            .disableRenderer(0)
             .play()
             .build();
 
@@ -792,18 +775,17 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
 
-    List<FakeTrackSelection> createdTrackSelections = trackSelector.getSelectedTrackSelections();
+    List<FakeTrackSelection> createdTrackSelections = trackSelector.getAllTrackSelections();
     int numSelectionsEnabled = 0;
     // Assert that all tracks selection are disabled at the end of the playback.
     for (FakeTrackSelection trackSelection : createdTrackSelections) {
       assertThat(trackSelection.isEnabled).isFalse();
       numSelectionsEnabled += trackSelection.enableCount;
     }
-    // There are 2 renderers, and track selections are made twice.
-    // TrackSelections are reused, so there are only 2 track selections made for 2 renderers.
+    // There are 2 renderers, and track selections are made twice. The second time one renderer is
+    // disabled, and the selector re-uses the previous selection for the enabled renderer. So we
+    // expect two track selections, one of which will have been enabled twice.
     assertThat(createdTrackSelections).hasSize(2);
-    // Initially there are 2 track selections enabled.
-    // The second time one renderer is disabled, so only 1 track selection should be enabled.
     assertThat(numSelectionsEnabled).isEqualTo(3);
   }
 
@@ -1832,6 +1814,88 @@ public final class ExoPlayerTest {
   }
 
   @Test
+  public void testCancelMessageBeforeDelivery() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    final PositionGrabbingMessageTarget target = new PositionGrabbingMessageTarget();
+    final AtomicReference<PlayerMessage> message = new AtomicReference<>();
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testCancelMessage")
+            .pause()
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    message.set(
+                        player.createMessage(target).setPosition(/* positionMs= */ 50).send());
+                  }
+                })
+            // Play a bit to ensure message arrived in internal player.
+            .playUntilPosition(/* windowIndex= */ 0, /* positionMs= */ 30)
+            .executeRunnable(
+                new Runnable() {
+                  @Override
+                  public void run() {
+                    message.get().cancel();
+                  }
+                })
+            .play()
+            .build();
+    new Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    assertThat(message.get().isCanceled()).isTrue();
+    assertThat(target.messageCount).isEqualTo(0);
+  }
+
+  @Test
+  public void testCancelRepeatedMessageAfterDelivery() throws Exception {
+    Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
+    final PositionGrabbingMessageTarget target = new PositionGrabbingMessageTarget();
+    final AtomicReference<PlayerMessage> message = new AtomicReference<>();
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testCancelMessage")
+            .pause()
+            .waitForPlaybackState(Player.STATE_BUFFERING)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    message.set(
+                        player
+                            .createMessage(target)
+                            .setPosition(/* positionMs= */ 50)
+                            .setDeleteAfterDelivery(/* deleteAfterDelivery= */ false)
+                            .send());
+                  }
+                })
+            // Play until the message has been delivered.
+            .playUntilPosition(/* windowIndex= */ 0, /* positionMs= */ 51)
+            // Seek back, cancel the message, and play past the same position again.
+            .seek(/* positionMs= */ 0)
+            .executeRunnable(
+                new Runnable() {
+                  @Override
+                  public void run() {
+                    message.get().cancel();
+                  }
+                })
+            .play()
+            .build();
+    new Builder()
+        .setTimeline(timeline)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilEnded(TIMEOUT_MS);
+    assertThat(message.get().isCanceled()).isTrue();
+    assertThat(target.messageCount).isEqualTo(1);
+  }
+
+  @Test
   public void testSetAndSwitchSurface() throws Exception {
     final List<Integer> rendererMessages = new ArrayList<>();
     Renderer videoRenderer =
@@ -1953,8 +2017,10 @@ public final class ExoPlayerTest {
 
     @Override
     public void handleMessage(SimpleExoPlayer player, int messageType, Object message) {
-      windowIndex = player.getCurrentWindowIndex();
-      positionMs = player.getCurrentPosition();
+      if (player != null) {
+        windowIndex = player.getCurrentWindowIndex();
+        positionMs = player.getCurrentPosition();
+      }
       messageCount++;
     }
   }
