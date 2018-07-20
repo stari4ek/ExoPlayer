@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.testutil;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.DefaultLoadControl;
 import com.google.android.exoplayer2.ExoPlaybackException;
@@ -40,6 +41,7 @@ import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
+import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.HandlerWrapper;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -50,11 +52,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Helper class to run an ExoPlayer test.
- */
-public final class ExoPlayerTestRunner extends Player.DefaultEventListener
-    implements ActionSchedule.Callback {
+/** Helper class to run an ExoPlayer test. */
+public final class ExoPlayerTestRunner implements Player.EventListener, ActionSchedule.Callback {
 
   /**
    * Builder to set-up a {@link ExoPlayerTestRunner}. Default fake implementations will be used for
@@ -662,8 +661,10 @@ public final class ExoPlayerTestRunner extends Player.DefaultEventListener
           trackSelector,
           loadControl,
           /* drmSessionManager= */ null,
+          new DefaultBandwidthMeter.Builder().build(),
           new AnalyticsCollector.Factory(),
-          clock);
+          clock,
+          Looper.myLooper());
     }
   }
 }

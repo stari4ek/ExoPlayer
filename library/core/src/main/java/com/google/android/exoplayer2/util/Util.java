@@ -29,6 +29,8 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Parcel;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -66,6 +68,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.checkerframework.checker.initialization.qual.UnknownInitialization;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
 /**
@@ -237,10 +240,51 @@ public final class Util {
    * @param length The output array length. Must be less or equal to the length of the input array.
    * @return The copied array.
    */
-  @SuppressWarnings("nullness:assignment.type.incompatible")
+  @SuppressWarnings({"nullness:argument.type.incompatible", "nullness:return.type.incompatible"})
   public static <T> T[] nullSafeArrayCopy(T[] input, int length) {
     Assertions.checkArgument(length <= input.length);
     return Arrays.copyOf(input, length);
+  }
+
+  /**
+   * Creates a {@link Handler} with the specified {@link Handler.Callback} on the current {@link
+   * Looper} thread. The method accepts partially initialized objects as callback under the
+   * assumption that the Handler won't be used to send messages until the callback is fully
+   * initialized.
+   *
+   * <p>If the current thread doesn't have a {@link Looper}, the application's main thread {@link
+   * Looper} is used.
+   *
+   * @param callback A {@link Handler.Callback}. May be a partially initialized class.
+   * @return A {@link Handler} with the specified callback on the current {@link Looper} thread.
+   */
+  public static Handler createHandler(Handler.@UnknownInitialization Callback callback) {
+    return createHandler(getLooper(), callback);
+  }
+
+  /**
+   * Creates a {@link Handler} with the specified {@link Handler.Callback} on the specified {@link
+   * Looper} thread. The method accepts partially initialized objects as callback under the
+   * assumption that the Handler won't be used to send messages until the callback is fully
+   * initialized.
+   *
+   * @param looper A {@link Looper} to run the callback on.
+   * @param callback A {@link Handler.Callback}. May be a partially initialized class.
+   * @return A {@link Handler} with the specified callback on the current {@link Looper} thread.
+   */
+  @SuppressWarnings({"nullness:argument.type.incompatible", "nullness:return.type.incompatible"})
+  public static Handler createHandler(
+      Looper looper, Handler.@UnknownInitialization Callback callback) {
+    return new Handler(looper, callback);
+  }
+
+  /**
+   * Returns the {@link Looper} associated with the current thread, or the {@link Looper} of the
+   * application's main thread if the current thread doesn't have a {@link Looper}.
+   */
+  public static Looper getLooper() {
+    Looper myLooper = Looper.myLooper();
+    return myLooper != null ? myLooper : Looper.getMainLooper();
   }
 
   /**
@@ -1018,10 +1062,10 @@ public final class Util {
    *     {@code trackType}.
    */
   public static String getCodecsOfType(String codecs, int trackType) {
-    if (TextUtils.isEmpty(codecs)) {
+    String[] codecArray = splitCodecs(codecs);
+    if (codecArray.length == 0) {
       return null;
     }
-    String[] codecArray = split(codecs.trim(), "(\\s*,\\s*)");
     StringBuilder builder = new StringBuilder();
     for (String codec : codecArray) {
       if (trackType == MimeTypes.getTrackTypeOfCodec(codec)) {
@@ -1032,6 +1076,19 @@ public final class Util {
       }
     }
     return builder.length() > 0 ? builder.toString() : null;
+  }
+
+  /**
+   * Splits a codecs sequence string, as defined in RFC 6381, into individual codec strings.
+   *
+   * @param codecs A codec sequence string, as defined in RFC 6381.
+   * @return The split codecs, or an array of length zero if the input was empty.
+   */
+  public static String[] splitCodecs(String codecs) {
+    if (TextUtils.isEmpty(codecs)) {
+      return new String[0];
+    }
+    return split(codecs.trim(), "(\\s*,\\s*)");
   }
 
   /**
@@ -1060,12 +1117,12 @@ public final class Util {
   }
 
   /**
-   * Returns whether {@code encoding} is one of the PCM encodings.
+   * Returns whether {@code encoding} is one of the linear PCM encodings.
    *
    * @param encoding The encoding of the audio data.
    * @return Whether the encoding is one of the PCM encodings.
    */
-  public static boolean isEncodingPcm(@C.Encoding int encoding) {
+  public static boolean isEncodingLinearPcm(@C.Encoding int encoding) {
     return encoding == C.ENCODING_PCM_8BIT
         || encoding == C.ENCODING_PCM_16BIT
         || encoding == C.ENCODING_PCM_24BIT

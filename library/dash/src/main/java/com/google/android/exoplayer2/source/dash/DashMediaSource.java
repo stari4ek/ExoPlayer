@@ -37,14 +37,17 @@ import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispat
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.source.dash.PlayerEmsgHandler.PlayerEmsgCallback;
+import com.google.android.exoplayer2.source.dash.manifest.AdaptationSet;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifest;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifestParser;
 import com.google.android.exoplayer2.source.dash.manifest.UtcTimingElement;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.Loader;
+import com.google.android.exoplayer2.upstream.Loader.LoadErrorAction;
 import com.google.android.exoplayer2.upstream.LoaderErrorThrower;
 import com.google.android.exoplayer2.upstream.ParsingLoadable;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import java.io.BufferedReader;
@@ -312,6 +315,7 @@ public final class DashMediaSource extends BaseMediaSource {
 
   private DataSource dataSource;
   private Loader loader;
+  private @Nullable TransferListener<? super DataSource> mediaTransferListener;
 
   private IOException manifestFatalError;
   private Handler handler;
@@ -543,7 +547,11 @@ public final class DashMediaSource extends BaseMediaSource {
   // MediaSource implementation.
 
   @Override
-  public void prepareSourceInternal(ExoPlayer player, boolean isTopLevelSource) {
+  public void prepareSourceInternal(
+      ExoPlayer player,
+      boolean isTopLevelSource,
+      @Nullable TransferListener<? super DataSource> mediaTransferListener) {
+    this.mediaTransferListener = mediaTransferListener;
     if (sideloadedManifest) {
       processManifest(false);
     } else {
@@ -570,6 +578,7 @@ public final class DashMediaSource extends BaseMediaSource {
             manifest,
             periodIndex,
             chunkSourceFactory,
+            mediaTransferListener,
             minLoadableRetryCount,
             periodEventDispatcher,
             elapsedRealtimeOffsetMs,
@@ -637,6 +646,7 @@ public final class DashMediaSource extends BaseMediaSource {
       long elapsedRealtimeMs, long loadDurationMs) {
     manifestEventDispatcher.loadCompleted(
         loadable.dataSpec,
+        loadable.getUri(),
         loadable.type,
         elapsedRealtimeMs,
         loadDurationMs,
@@ -698,7 +708,9 @@ public final class DashMediaSource extends BaseMediaSource {
       synchronized (manifestUriLock) {
         // This condition checks that replaceManifestUri wasn't called between the start and end of
         // this load. If it was, we ignore the manifest location and prefer the manual replacement.
-        if (loadable.dataSpec.uri == manifestUri) {
+        @SuppressWarnings("ReferenceEquality")
+        boolean isSameUriInstance = loadable.dataSpec.uri == manifestUri;
+        if (isSameUriInstance) {
           manifestUri = manifest.location;
         }
       }
@@ -716,8 +728,7 @@ public final class DashMediaSource extends BaseMediaSource {
     }
   }
 
-  /* package */ @Loader.RetryAction
-  int onManifestLoadError(
+  /* package */ LoadErrorAction onManifestLoadError(
       ParsingLoadable<DashManifest> loadable,
       long elapsedRealtimeMs,
       long loadDurationMs,
@@ -725,6 +736,7 @@ public final class DashMediaSource extends BaseMediaSource {
     boolean isFatal = error instanceof ParserException;
     manifestEventDispatcher.loadError(
         loadable.dataSpec,
+        loadable.getUri(),
         loadable.type,
         elapsedRealtimeMs,
         loadDurationMs,
@@ -738,6 +750,7 @@ public final class DashMediaSource extends BaseMediaSource {
       long elapsedRealtimeMs, long loadDurationMs) {
     manifestEventDispatcher.loadCompleted(
         loadable.dataSpec,
+        loadable.getUri(),
         loadable.type,
         elapsedRealtimeMs,
         loadDurationMs,
@@ -745,14 +758,14 @@ public final class DashMediaSource extends BaseMediaSource {
     onUtcTimestampResolved(loadable.getResult() - elapsedRealtimeMs);
   }
 
-  /* package */ @Loader.RetryAction
-  int onUtcTimestampLoadError(
+  /* package */ LoadErrorAction onUtcTimestampLoadError(
       ParsingLoadable<Long> loadable,
       long elapsedRealtimeMs,
       long loadDurationMs,
       IOException error) {
     manifestEventDispatcher.loadError(
         loadable.dataSpec,
+        loadable.getUri(),
         loadable.type,
         elapsedRealtimeMs,
         loadDurationMs,
@@ -767,6 +780,7 @@ public final class DashMediaSource extends BaseMediaSource {
       long loadDurationMs) {
     manifestEventDispatcher.loadCanceled(
         loadable.dataSpec,
+        loadable.getUri(),
         loadable.type,
         elapsedRealtimeMs,
         loadDurationMs,
@@ -954,7 +968,8 @@ public final class DashMediaSource extends BaseMediaSource {
   private <T> void startLoading(ParsingLoadable<T> loadable,
       Loader.Callback<ParsingLoadable<T>> callback, int minRetryCount) {
     long elapsedRealtimeMs = loader.startLoading(loadable, callback, minRetryCount);
-    manifestEventDispatcher.loadStarted(loadable.dataSpec, loadable.type, elapsedRealtimeMs);
+    manifestEventDispatcher.loadStarted(
+        loadable.dataSpec, loadable.dataSpec.uri, loadable.type, elapsedRealtimeMs);
   }
 
   private long getNowUnixTimeUs() {
@@ -974,8 +989,25 @@ public final class DashMediaSource extends BaseMediaSource {
       long availableEndTimeUs = Long.MAX_VALUE;
       boolean isIndexExplicit = false;
       boolean seenEmptyIndex = false;
+
+      boolean haveAudioVideoAdaptationSets = false;
       for (int i = 0; i < adaptationSetCount; i++) {
-        DashSegmentIndex index = period.adaptationSets.get(i).representations.get(0).getIndex();
+        int type = period.adaptationSets.get(i).type;
+        if (type == C.TRACK_TYPE_AUDIO || type == C.TRACK_TYPE_VIDEO) {
+          haveAudioVideoAdaptationSets = true;
+          break;
+        }
+      }
+
+      for (int i = 0; i < adaptationSetCount; i++) {
+        AdaptationSet adaptationSet = period.adaptationSets.get(i);
+        // Exclude text adaptation sets from duration calculations, if we have at least one audio
+        // or video adaptation set. See: https://github.com/google/ExoPlayer/issues/4029
+        if (haveAudioVideoAdaptationSets && adaptationSet.type == C.TRACK_TYPE_TEXT) {
+          continue;
+        }
+
+        DashSegmentIndex index = adaptationSet.representations.get(0).getIndex();
         if (index == null) {
           return new PeriodSeekInfo(true, 0, durationUs);
         }
@@ -1051,10 +1083,9 @@ public final class DashMediaSource extends BaseMediaSource {
 
     @Override
     public Period getPeriod(int periodIndex, Period period, boolean setIdentifiers) {
-      Assertions.checkIndex(periodIndex, 0, manifest.getPeriodCount());
+      Assertions.checkIndex(periodIndex, 0, getPeriodCount());
       Object id = setIdentifiers ? manifest.getPeriod(periodIndex).id : null;
-      Object uid = setIdentifiers ? firstPeriodId
-          + Assertions.checkIndex(periodIndex, 0, manifest.getPeriodCount()) : null;
+      Object uid = setIdentifiers ? (firstPeriodId + periodIndex) : null;
       return period.set(id, uid, 0, manifest.getPeriodDurationUs(periodIndex),
           C.msToUs(manifest.getPeriod(periodIndex).startMs - manifest.getPeriod(0).startMs)
               - offsetInFirstPeriodUs);
@@ -1081,7 +1112,7 @@ public final class DashMediaSource extends BaseMediaSource {
           windowDefaultStartPositionUs,
           windowDurationUs,
           /* firstPeriodIndex= */ 0,
-          manifest.getPeriodCount() - 1,
+          /* lastPeriodIndex= */ getPeriodCount() - 1,
           offsetInFirstPeriodUs);
     }
 
@@ -1091,8 +1122,8 @@ public final class DashMediaSource extends BaseMediaSource {
         return C.INDEX_UNSET;
       }
       int periodId = (int) uid;
-      return periodId < firstPeriodId || periodId >= firstPeriodId + getPeriodCount()
-          ? C.INDEX_UNSET : (periodId - firstPeriodId);
+      int periodIndex = periodId - firstPeriodId;
+      return periodIndex < 0 || periodIndex >= getPeriodCount() ? C.INDEX_UNSET : periodIndex;
     }
 
     private long getAdjustedWindowDefaultStartPositionUs(long defaultPositionProjectionUs) {
@@ -1172,11 +1203,12 @@ public final class DashMediaSource extends BaseMediaSource {
     }
 
     @Override
-    public @Loader.RetryAction int onLoadError(
+    public LoadErrorAction onLoadError(
         ParsingLoadable<DashManifest> loadable,
         long elapsedRealtimeMs,
         long loadDurationMs,
-        IOException error) {
+        IOException error,
+        int errorCount) {
       return onManifestLoadError(loadable, elapsedRealtimeMs, loadDurationMs, error);
     }
 
@@ -1197,11 +1229,12 @@ public final class DashMediaSource extends BaseMediaSource {
     }
 
     @Override
-    public @Loader.RetryAction int onLoadError(
+    public LoadErrorAction onLoadError(
         ParsingLoadable<Long> loadable,
         long elapsedRealtimeMs,
         long loadDurationMs,
-        IOException error) {
+        IOException error,
+        int errorCount) {
       return onUtcTimestampLoadError(loadable, elapsedRealtimeMs, loadDurationMs, error);
     }
 

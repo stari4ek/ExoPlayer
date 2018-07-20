@@ -19,6 +19,7 @@ import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.SeekParameters;
+import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
@@ -26,11 +27,15 @@ import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
+import com.google.android.exoplayer2.source.chunk.Chunk;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist.HlsUrl;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistTracker;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.upstream.Allocator;
+import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
@@ -50,6 +55,8 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private final HlsExtractorFactory extractorFactory;
   private final HlsPlaylistTracker playlistTracker;
   private final HlsDataSourceFactory dataSourceFactory;
+  private final @Nullable TransferListener<? super DataSource> mediaTransferListener;
+  private final LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy;
   private final int minLoadableRetryCount;
   private final EventDispatcher eventDispatcher;
   private final Allocator allocator;
@@ -66,10 +73,29 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private SequenceableLoader compositeSequenceableLoader;
   private boolean notifiedReadingStarted;
 
+  /**
+   * Creates an HLS media period.
+   *
+   * @param extractorFactory An {@link HlsExtractorFactory} for {@link Extractor}s for the segments.
+   * @param playlistTracker A tracker for HLS playlists.
+   * @param dataSourceFactory An {@link HlsDataSourceFactory} for {@link DataSource}s for segments
+   *     and keys.
+   * @param mediaTransferListener The transfer listener to inform of any media data transfers. May
+   *     be null if no listener is available.
+   * @param chunkLoadErrorHandlingPolicy A {@link LoadErrorHandlingPolicy} for chunk loads.
+   * @param minLoadableRetryCount The minimum number of times to retry if a loading error occurs.
+   * @param eventDispatcher A dispatcher to notify of events.
+   * @param allocator An {@link Allocator} from which to obtain media buffer allocations.
+   * @param compositeSequenceableLoaderFactory A factory to create composite {@link
+   *     SequenceableLoader}s for when this media source loads data from multiple streams.
+   * @param allowChunklessPreparation Whether chunkless preparation is allowed.
+   */
   public HlsMediaPeriod(
       HlsExtractorFactory extractorFactory,
       HlsPlaylistTracker playlistTracker,
       HlsDataSourceFactory dataSourceFactory,
+      @Nullable TransferListener<? super DataSource> mediaTransferListener,
+      LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy,
       int minLoadableRetryCount,
       EventDispatcher eventDispatcher,
       Allocator allocator,
@@ -78,6 +104,8 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
     this.extractorFactory = extractorFactory;
     this.playlistTracker = playlistTracker;
     this.dataSourceFactory = dataSourceFactory;
+    this.mediaTransferListener = mediaTransferListener;
+    this.chunkLoadErrorHandlingPolicy = chunkLoadErrorHandlingPolicy;
     this.minLoadableRetryCount = minLoadableRetryCount;
     this.eventDispatcher = eventDispatcher;
     this.allocator = allocator;
@@ -442,8 +470,10 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
             && (masterPlaylist.muxedAudioFormat != null || masterPlaylist.audios.isEmpty())) {
           muxedTrackGroups.add(
               new TrackGroup(
-                  deriveMuxedAudioFormat(
-                      variants[0].format, masterPlaylist.muxedAudioFormat, Format.NO_VALUE)));
+                  deriveAudioFormat(
+                      variants[0].format,
+                      masterPlaylist.muxedAudioFormat,
+                      /* isPrimaryTrackInVariant= */ false)));
         }
         List<Format> ccFormats = masterPlaylist.muxedCaptionFormats;
         if (ccFormats != null) {
@@ -457,8 +487,10 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
         for (int i = 0; i < audioFormats.length; i++) {
           Format variantFormat = variants[i].format;
           audioFormats[i] =
-              deriveMuxedAudioFormat(
-                  variantFormat, masterPlaylist.muxedAudioFormat, variantFormat.bitrate);
+              deriveAudioFormat(
+                  variantFormat,
+                  masterPlaylist.muxedAudioFormat,
+                  /* isPrimaryTrackInVariant= */ true);
         }
         muxedTrackGroups.add(new TrackGroup(audioFormats));
       } else {
@@ -488,53 +520,78 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
 
   private HlsSampleStreamWrapper buildSampleStreamWrapper(int trackType, HlsUrl[] variants,
       Format muxedAudioFormat, List<Format> muxedCaptionFormats, long positionUs) {
-    HlsChunkSource defaultChunkSource = new HlsChunkSource(extractorFactory, playlistTracker,
-        variants, dataSourceFactory, timestampAdjusterProvider, muxedCaptionFormats);
-    return new HlsSampleStreamWrapper(trackType, this, defaultChunkSource, allocator, positionUs,
-        muxedAudioFormat, minLoadableRetryCount, eventDispatcher);
+    HlsChunkSource defaultChunkSource =
+        new HlsChunkSource(
+            extractorFactory,
+            playlistTracker,
+            variants,
+            dataSourceFactory,
+            mediaTransferListener,
+            timestampAdjusterProvider,
+            muxedCaptionFormats);
+    return new HlsSampleStreamWrapper(
+        trackType,
+        /* callback= */ this,
+        defaultChunkSource,
+        allocator,
+        positionUs,
+        muxedAudioFormat,
+        chunkLoadErrorHandlingPolicy,
+        minLoadableRetryCount,
+        eventDispatcher);
   }
 
   private static Format deriveVideoFormat(Format variantFormat) {
     String codecs = Util.getCodecsOfType(variantFormat.codecs, C.TRACK_TYPE_VIDEO);
-    String mimeType = MimeTypes.getMediaMimeType(codecs);
-    return Format.createVideoSampleFormat(
+    String sampleMimeType = MimeTypes.getMediaMimeType(codecs);
+    return Format.createVideoContainerFormat(
         variantFormat.id,
-        mimeType,
+        variantFormat.label,
+        variantFormat.containerMimeType,
+        sampleMimeType,
         codecs,
         variantFormat.bitrate,
-        Format.NO_VALUE,
         variantFormat.width,
         variantFormat.height,
         variantFormat.frameRate,
-        null,
-        null);
+        /* initializationData= */ null,
+        variantFormat.selectionFlags);
   }
 
-  private static Format deriveMuxedAudioFormat(
-      Format variantFormat, Format mediaTagFormat, int bitrate) {
+  private static Format deriveAudioFormat(
+      Format variantFormat, Format mediaTagFormat, boolean isPrimaryTrackInVariant) {
     String codecs;
     int channelCount = Format.NO_VALUE;
     int selectionFlags = 0;
     String language = null;
+    String label = null;
     if (mediaTagFormat != null) {
       codecs = mediaTagFormat.codecs;
       channelCount = mediaTagFormat.channelCount;
       selectionFlags = mediaTagFormat.selectionFlags;
       language = mediaTagFormat.language;
+      label = mediaTagFormat.label;
     } else {
       codecs = Util.getCodecsOfType(variantFormat.codecs, C.TRACK_TYPE_AUDIO);
+      if (isPrimaryTrackInVariant) {
+        channelCount = variantFormat.channelCount;
+        selectionFlags = variantFormat.selectionFlags;
+        language = variantFormat.label;
+        label = variantFormat.label;
+      }
     }
-    String mimeType = MimeTypes.getMediaMimeType(codecs);
-    return Format.createAudioSampleFormat(
+    String sampleMimeType = MimeTypes.getMediaMimeType(codecs);
+    int bitrate = isPrimaryTrackInVariant ? variantFormat.bitrate : Format.NO_VALUE;
+    return Format.createAudioContainerFormat(
         variantFormat.id,
-        mimeType,
+        label,
+        variantFormat.containerMimeType,
+        sampleMimeType,
         codecs,
         bitrate,
-        Format.NO_VALUE,
         channelCount,
-        Format.NO_VALUE,
-        null,
-        null,
+        /* sampleRate= */ Format.NO_VALUE,
+        /* initializationData= */ null,
         selectionFlags,
         language);
   }

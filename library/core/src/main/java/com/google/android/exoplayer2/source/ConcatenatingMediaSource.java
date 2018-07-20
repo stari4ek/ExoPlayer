@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.source;
 
 import android.os.Handler;
-import android.os.Looper;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
@@ -27,6 +26,8 @@ import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource.MediaSourceHolder;
 import com.google.android.exoplayer2.source.ShuffleOrder.DefaultShuffleOrder;
 import com.google.android.exoplayer2.upstream.Allocator;
+import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayList;
@@ -61,13 +62,14 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
   private final List<MediaSourceHolder> mediaSourceHolders;
   private final MediaSourceHolder query;
   private final Map<MediaPeriod, MediaSourceHolder> mediaSourceByMediaPeriod;
-  private final List<EventDispatcher> pendingOnCompletionActions;
+  private final List<Runnable> pendingOnCompletionActions;
   private final boolean isAtomic;
   private final boolean useLazyPreparation;
   private final Timeline.Window window;
   private final Timeline.Period period;
 
   private @Nullable ExoPlayer player;
+  private @Nullable Handler playerApplicationHandler;
   private boolean listenerNotificationScheduled;
   private ShuffleOrder shuffleOrder;
   private int windowCount;
@@ -351,11 +353,7 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
   public final synchronized void clear(@Nullable Runnable actionOnCompletion) {
     mediaSourcesPublic.clear();
     if (player != null) {
-      player
-          .createMessage(this)
-          .setType(MSG_CLEAR)
-          .setPayload(actionOnCompletion != null ? new EventDispatcher(actionOnCompletion) : null)
-          .send();
+      player.createMessage(this).setType(MSG_CLEAR).setPayload(actionOnCompletion).send();
     } else if (actionOnCompletion != null) {
       actionOnCompletion.run();
     }
@@ -377,9 +375,13 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
   }
 
   @Override
-  public final synchronized void prepareSourceInternal(ExoPlayer player, boolean isTopLevelSource) {
-    super.prepareSourceInternal(player, isTopLevelSource);
+  public final synchronized void prepareSourceInternal(
+      ExoPlayer player,
+      boolean isTopLevelSource,
+      @Nullable TransferListener<? super DataSource> mediaTransferListener) {
+    super.prepareSourceInternal(player, isTopLevelSource, mediaTransferListener);
     this.player = player;
+    playerApplicationHandler = new Handler(player.getApplicationLooper());
     if (mediaSourcesPublic.isEmpty()) {
       notifyListener();
     } else {
@@ -424,6 +426,7 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
     super.releaseSourceInternal();
     mediaSourceHolders.clear();
     player = null;
+    playerApplicationHandler = null;
     shuffleOrder = shuffleOrder.cloneAndClear();
     windowCount = 0;
     periodCount = 0;
@@ -462,6 +465,10 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
   @Override
   @SuppressWarnings("unchecked")
   public final void handleMessage(int messageType, Object message) throws ExoPlaybackException {
+    if (player == null) {
+      // Stale event.
+      return;
+    }
     switch (messageType) {
       case MSG_ADD:
         MessageData<MediaSourceHolder> addMessage = (MessageData<MediaSourceHolder>) message;
@@ -493,15 +500,16 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
         break;
       case MSG_CLEAR:
         clearInternal();
-        scheduleListenerNotification((EventDispatcher) message);
+        scheduleListenerNotification((Runnable) message);
         break;
       case MSG_NOTIFY_LISTENER:
         notifyListener();
         break;
       case MSG_ON_COMPLETION:
-        List<EventDispatcher> actionsOnCompletion = ((List<EventDispatcher>) message);
+        List<Runnable> actionsOnCompletion = ((List<Runnable>) message);
+        Handler handler = Assertions.checkNotNull(playerApplicationHandler);
         for (int i = 0; i < actionsOnCompletion.size(); i++) {
-          actionsOnCompletion.get(i).dispatchEvent();
+          handler.post(actionsOnCompletion.get(i));
         }
         break;
       default:
@@ -509,7 +517,7 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
     }
   }
 
-  private void scheduleListenerNotification(@Nullable EventDispatcher actionOnCompletion) {
+  private void scheduleListenerNotification(@Nullable Runnable actionOnCompletion) {
     if (!listenerNotificationScheduled) {
       Assertions.checkNotNull(player).createMessage(this).setType(MSG_NOTIFY_LISTENER).send();
       listenerNotificationScheduled = true;
@@ -521,9 +529,9 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
 
   private void notifyListener() {
     listenerNotificationScheduled = false;
-    List<EventDispatcher> actionsOnCompletion =
+    List<Runnable> actionsOnCompletion =
         pendingOnCompletionActions.isEmpty()
-            ? Collections.<EventDispatcher>emptyList()
+            ? Collections.<Runnable>emptyList()
             : new ArrayList<>(pendingOnCompletionActions);
     pendingOnCompletionActions.clear();
     refreshSourceInfo(
@@ -698,34 +706,16 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
     }
   }
 
-  /** Can be used to dispatch a runnable on the thread the object was created on. */
-  private static final class EventDispatcher {
-
-    public final Handler eventHandler;
-    public final Runnable runnable;
-
-    public EventDispatcher(Runnable runnable) {
-      this.runnable = runnable;
-      this.eventHandler =
-          new Handler(Looper.myLooper() != null ? Looper.myLooper() : Looper.getMainLooper());
-    }
-
-    public void dispatchEvent() {
-      eventHandler.post(runnable);
-    }
-  }
-
   /** Message used to post actions from app thread to playback thread. */
   private static final class MessageData<T> {
 
     public final int index;
     public final T customData;
-    public final @Nullable EventDispatcher actionOnCompletion;
+    public final @Nullable Runnable actionOnCompletion;
 
     public MessageData(int index, T customData, @Nullable Runnable actionOnCompletion) {
       this.index = index;
-      this.actionOnCompletion =
-          actionOnCompletion != null ? new EventDispatcher(actionOnCompletion) : null;
+      this.actionOnCompletion = actionOnCompletion;
       this.customData = customData;
     }
   }

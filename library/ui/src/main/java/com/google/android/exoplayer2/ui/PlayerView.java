@@ -143,13 +143,13 @@ import java.util.List;
  *       for more details.
  *       <ul>
  *         <li>Corresponding method: None
- *         <li>Default: {@code R.id.exo_player_view}
+ *         <li>Default: {@code R.layout.exo_player_view}
  *       </ul>
  *   <li><b>{@code controller_layout_id}</b> - Specifies the id of the layout resource to be
  *       inflated by the child {@link PlayerControlView}. See below for more details.
  *       <ul>
  *         <li>Corresponding method: None
- *         <li>Default: {@code R.id.exo_player_control_view}
+ *         <li>Default: {@code R.layout.exo_player_control_view}
  *       </ul>
  *   <li>All attributes that can be set on a {@link PlayerControlView} can also be set on a
  *       PlayerView, and will be propagated to the inflated {@link PlayerControlView} unless the
@@ -681,8 +681,12 @@ public class PlayerView extends FrameLayout {
     }
     boolean isDpadWhenControlHidden =
         isDpadKey(event.getKeyCode()) && useController && !controller.isVisible();
-    maybeShowController(true);
-    return isDpadWhenControlHidden || dispatchMediaKeyEvent(event) || super.dispatchKeyEvent(event);
+    boolean handled =
+        isDpadWhenControlHidden || dispatchMediaKeyEvent(event) || super.dispatchKeyEvent(event);
+    if (handled) {
+      maybeShowController(true);
+    }
+    return handled;
   }
 
   /**
@@ -694,6 +698,11 @@ public class PlayerView extends FrameLayout {
    */
   public boolean dispatchMediaKeyEvent(KeyEvent event) {
     return useController && controller.dispatchMediaKeyEvent(event);
+  }
+
+  /** Returns whether the controller is currently visible. */
+  public boolean isControllerVisible() {
+    return controller != null && controller.isVisible();
   }
 
   /**
@@ -1170,8 +1179,8 @@ public class PlayerView extends FrameLayout {
         || keyCode == KeyEvent.KEYCODE_DPAD_CENTER;
   }
 
-  private final class ComponentListener extends Player.DefaultEventListener
-      implements TextOutput, VideoListener, OnLayoutChangeListener {
+  private final class ComponentListener
+      implements Player.EventListener, TextOutput, VideoListener, OnLayoutChangeListener {
 
     // TextOutput implementation
 

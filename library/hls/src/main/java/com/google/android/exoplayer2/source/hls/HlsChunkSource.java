@@ -17,6 +17,7 @@ package com.google.android.exoplayer2.source.hls;
 
 import android.net.Uri;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.source.BehindLiveWindowException;
@@ -32,6 +33,7 @@ import com.google.android.exoplayer2.trackselection.BaseTrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.TimestampAdjuster;
 import com.google.android.exoplayer2.util.UriUtil;
 import com.google.android.exoplayer2.util.Util;
@@ -104,7 +106,7 @@ import java.util.List;
   // the way in which HlsSampleStreamWrapper generates track groups. Use only index based methods
   // in TrackSelection to avoid unexpected behavior.
   private TrackSelection trackSelection;
-  private long liveEdgeTimeUs;
+  private long liveEdgeInPeriodTimeUs;
   private boolean seenExpectedPlaylistError;
 
   /**
@@ -114,21 +116,28 @@ import java.util.List;
    * @param variants The available variants.
    * @param dataSourceFactory An {@link HlsDataSourceFactory} to create {@link DataSource}s for the
    *     chunks.
-   * @param timestampAdjusterProvider A provider of {@link TimestampAdjuster} instances. If
-   *     multiple {@link HlsChunkSource}s are used for a single playback, they should all share the
-   *     same provider.
+   * @param mediaTransferListener The transfer listener which should be informed of any media data
+   *     transfers. May be null if no listener is available.
+   * @param timestampAdjusterProvider A provider of {@link TimestampAdjuster} instances. If multiple
+   *     {@link HlsChunkSource}s are used for a single playback, they should all share the same
+   *     provider.
    * @param muxedCaptionFormats List of muxed caption {@link Format}s. Null if no closed caption
    *     information is available in the master playlist.
    */
-  public HlsChunkSource(HlsExtractorFactory extractorFactory, HlsPlaylistTracker playlistTracker,
-      HlsUrl[] variants, HlsDataSourceFactory dataSourceFactory,
-      TimestampAdjusterProvider timestampAdjusterProvider, List<Format> muxedCaptionFormats) {
+  public HlsChunkSource(
+      HlsExtractorFactory extractorFactory,
+      HlsPlaylistTracker playlistTracker,
+      HlsUrl[] variants,
+      HlsDataSourceFactory dataSourceFactory,
+      @Nullable TransferListener<? super DataSource> mediaTransferListener,
+      TimestampAdjusterProvider timestampAdjusterProvider,
+      List<Format> muxedCaptionFormats) {
     this.extractorFactory = extractorFactory;
     this.playlistTracker = playlistTracker;
     this.variants = variants;
     this.timestampAdjusterProvider = timestampAdjusterProvider;
     this.muxedCaptionFormats = muxedCaptionFormats;
-    liveEdgeTimeUs = C.TIME_UNSET;
+    liveEdgeInPeriodTimeUs = C.TIME_UNSET;
     Format[] variantFormats = new Format[variants.length];
     int[] initialTrackSelection = new int[variants.length];
     for (int i = 0; i < variants.length; i++) {
@@ -136,6 +145,9 @@ import java.util.List;
       initialTrackSelection[i] = i;
     }
     mediaDataSource = dataSourceFactory.createDataSource(C.DATA_TYPE_MEDIA);
+    if (mediaTransferListener != null) {
+      mediaDataSource.addTransferListener(mediaTransferListener);
+    }
     encryptionDataSource = dataSourceFactory.createDataSource(C.DATA_TYPE_DRM);
     trackGroup = new TrackGroup(variantFormats);
     trackSelection = new InitializationTrackSelection(trackGroup, initialTrackSelection);
@@ -204,18 +216,20 @@ import java.util.List;
    * but the end of the stream has not been reached, {@link HlsChunkHolder#playlist} is set to
    * contain the {@link HlsUrl} that refers to the playlist that needs refreshing.
    *
-   * @param previous The most recently loaded media chunk.
    * @param playbackPositionUs The current playback position relative to the period start in
    *     microseconds. If playback of the period to which this chunk source belongs has not yet
    *     started, the value will be the starting position in the period minus the duration of any
    *     media in previous periods still to be played.
    * @param loadPositionUs The current load position relative to the period start in microseconds.
-   *     If {@code previous} is null, this is the starting position from which chunks should be
-   *     provided. Else it's equal to {@code previous.endTimeUs}.
+   *     If {@code queue} is empty, this is the starting position from which chunks should be
+   *     provided. Else it's equal to {@link HlsMediaChunk#endTimeUs} of the last chunk in the
+   *     {@code queue}.
+   * @param queue The queue of buffered {@link HlsMediaChunk}s.
    * @param out A holder to populate.
    */
   public void getNextChunk(
-      HlsMediaChunk previous, long playbackPositionUs, long loadPositionUs, HlsChunkHolder out) {
+      long playbackPositionUs, long loadPositionUs, List<HlsMediaChunk> queue, HlsChunkHolder out) {
+    HlsMediaChunk previous = queue.isEmpty() ? null : queue.get(queue.size() - 1);
     int oldVariantIndex = previous == null ? C.INDEX_UNSET
         : trackGroup.indexOf(previous.trackFormat);
     long bufferedDurationUs = loadPositionUs - playbackPositionUs;
@@ -248,22 +262,23 @@ import java.util.List;
       return;
     }
     HlsMediaPlaylist mediaPlaylist = playlistTracker.getPlaylistSnapshot(selectedUrl);
-    independentSegments = mediaPlaylist.hasIndependentSegmentsTag;
+    independentSegments = mediaPlaylist.hasIndependentSegments;
 
     updateLiveEdgeTimeUs(mediaPlaylist);
 
     // Select the chunk.
     long chunkMediaSequence;
+    long startOfPlaylistInPeriodUs =
+        mediaPlaylist.startTimeUs - playlistTracker.getInitialStartTimeUs();
     if (previous == null || switchingVariant) {
-      long targetPositionUs = (previous == null || independentSegments) ? loadPositionUs
-          : previous.startTimeUs;
-      if (!mediaPlaylist.hasEndTag && targetPositionUs >= mediaPlaylist.getEndTimeUs()) {
+      long endOfPlaylistInPeriodUs = startOfPlaylistInPeriodUs + mediaPlaylist.durationUs;
+      long targetPositionInPeriodUs =
+          (previous == null || independentSegments) ? loadPositionUs : previous.startTimeUs;
+      if (!mediaPlaylist.hasEndTag && targetPositionInPeriodUs >= endOfPlaylistInPeriodUs) {
         // If the playlist is too old to contain the chunk, we need to refresh it.
         chunkMediaSequence = mediaPlaylist.mediaSequence + mediaPlaylist.segments.size();
       } else {
-        long positionOfPlaylistInPeriodUs =
-            mediaPlaylist.startTimeUs - playlistTracker.getInitialStartTimeUs();
-        long targetPositionInPlaylistUs = targetPositionUs - positionOfPlaylistInPeriodUs;
+        long targetPositionInPlaylistUs = targetPositionInPeriodUs - startOfPlaylistInPeriodUs;
         chunkMediaSequence =
             Util.binarySearchFloor(
                     mediaPlaylist.segments,
@@ -277,6 +292,8 @@ import java.util.List;
           selectedVariantIndex = oldVariantIndex;
           selectedUrl = variants[selectedVariantIndex];
           mediaPlaylist = playlistTracker.getPlaylistSnapshot(selectedUrl);
+          startOfPlaylistInPeriodUs =
+              mediaPlaylist.startTimeUs - playlistTracker.getInitialStartTimeUs();
           chunkMediaSequence = previous.getNextChunkIndex();
         }
       }
@@ -331,9 +348,7 @@ import java.util.List;
     }
 
     // Compute start time of the next chunk.
-    long positionOfPlaylistInPeriodUs =
-        mediaPlaylist.startTimeUs - playlistTracker.getInitialStartTimeUs();
-    long segmentStartTimeInPeriodUs = positionOfPlaylistInPeriodUs + segment.relativeStartTimeUs;
+    long segmentStartTimeInPeriodUs = startOfPlaylistInPeriodUs + segment.relativeStartTimeUs;
     int discontinuitySequence = mediaPlaylist.discontinuitySequence
         + segment.relativeDiscontinuitySequence;
     TimestampAdjuster timestampAdjuster = timestampAdjusterProvider.getAdjuster(
@@ -382,17 +397,17 @@ import java.util.List;
   }
 
   /**
-   * Called when the {@link HlsSampleStreamWrapper} encounters an error loading a chunk obtained
-   * from this source.
+   * Attempts to blacklist the track associated with the given chunk. Blacklisting will fail if the
+   * track is the only non-blacklisted track in the selection.
    *
-   * @param chunk The chunk whose load encountered the error.
-   * @param cancelable Whether the load can be canceled.
-   * @param error The error.
-   * @return Whether the load should be canceled.
+   * @param chunk The chunk whose load caused the blacklisting attempt.
+   * @param blacklistDurationMs The number of milliseconds for which the track selection should be
+   *     blacklisted.
+   * @return Whether the blacklisting succeeded.
    */
-  public boolean onChunkLoadError(Chunk chunk, boolean cancelable, IOException error) {
-    return cancelable && ChunkedTrackBlacklistUtil.maybeBlacklistTrack(trackSelection,
-        trackSelection.indexOf(trackGroup.indexOf(chunk.trackFormat)), error);
+  public boolean maybeBlacklistTrack(Chunk chunk, long blacklistDurationMs) {
+    return trackSelection.blacklist(
+        trackSelection.indexOf(trackGroup.indexOf(chunk.trackFormat)), blacklistDurationMs);
   }
 
   /**
@@ -420,12 +435,17 @@ import java.util.List;
   // Private methods.
 
   private long resolveTimeToLiveEdgeUs(long playbackPositionUs) {
-    final boolean resolveTimeToLiveEdgePossible = liveEdgeTimeUs != C.TIME_UNSET;
-    return resolveTimeToLiveEdgePossible ? liveEdgeTimeUs - playbackPositionUs : C.TIME_UNSET;
+    final boolean resolveTimeToLiveEdgePossible = liveEdgeInPeriodTimeUs != C.TIME_UNSET;
+    return resolveTimeToLiveEdgePossible
+        ? liveEdgeInPeriodTimeUs - playbackPositionUs
+        : C.TIME_UNSET;
   }
 
   private void updateLiveEdgeTimeUs(HlsMediaPlaylist mediaPlaylist) {
-    liveEdgeTimeUs = mediaPlaylist.hasEndTag ? C.TIME_UNSET : mediaPlaylist.getEndTimeUs();
+    liveEdgeInPeriodTimeUs =
+        mediaPlaylist.hasEndTag
+            ? C.TIME_UNSET
+            : (mediaPlaylist.getEndTimeUs() - playlistTracker.getInitialStartTimeUs());
   }
 
   private EncryptionKeyChunk newEncryptionKeyChunk(Uri keyUri, String iv, int variantIndex,

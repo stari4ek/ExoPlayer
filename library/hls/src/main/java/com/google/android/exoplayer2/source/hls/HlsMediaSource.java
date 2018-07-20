@@ -32,6 +32,7 @@ import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispat
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.SinglePeriodTimeline;
 import com.google.android.exoplayer2.source.ads.AdsMediaSource;
+import com.google.android.exoplayer2.source.chunk.Chunk;
 import com.google.android.exoplayer2.source.hls.playlist.DefaultHlsPlaylistTracker;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMediaPlaylist;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylist;
@@ -39,7 +40,9 @@ import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistParser;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistTracker;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.ParsingLoadable;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
 import java.util.List;
@@ -61,6 +64,7 @@ public final class HlsMediaSource extends BaseMediaSource
     private @Nullable ParsingLoadable.Parser<HlsPlaylist> playlistParser;
     private @Nullable HlsPlaylistTracker playlistTracker;
     private CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
+    private LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy;
     private int minLoadableRetryCount;
     private boolean allowChunklessPreparation;
     private boolean isCreateCalled;
@@ -86,6 +90,7 @@ public final class HlsMediaSource extends BaseMediaSource
     public Factory(HlsDataSourceFactory hlsDataSourceFactory) {
       this.hlsDataSourceFactory = Assertions.checkNotNull(hlsDataSourceFactory);
       extractorFactory = HlsExtractorFactory.DEFAULT;
+      chunkLoadErrorHandlingPolicy = LoadErrorHandlingPolicy.getDefault();
       minLoadableRetryCount = DEFAULT_MIN_LOADABLE_RETRY_COUNT;
       compositeSequenceableLoaderFactory = new DefaultCompositeSequenceableLoaderFactory();
     }
@@ -117,6 +122,21 @@ public final class HlsMediaSource extends BaseMediaSource
     public Factory setExtractorFactory(HlsExtractorFactory extractorFactory) {
       Assertions.checkState(!isCreateCalled);
       this.extractorFactory = Assertions.checkNotNull(extractorFactory);
+      return this;
+    }
+
+    /**
+     * Sets the {@link LoadErrorHandlingPolicy} for chunk loads. The default value is {@link
+     * LoadErrorHandlingPolicy#DEFAULT}.
+     *
+     * @param chunkLoadErrorHandlingPolicy A {@link LoadErrorHandlingPolicy} for chunk loads.
+     * @return This factory, for convenience.
+     * @throws IllegalStateException If one of the {@code create} methods has already been called.
+     */
+    public Factory setChunkLoadErrorHandlingPolicy(
+        LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy) {
+      Assertions.checkState(!isCreateCalled);
+      this.chunkLoadErrorHandlingPolicy = chunkLoadErrorHandlingPolicy;
       return this;
     }
 
@@ -214,6 +234,7 @@ public final class HlsMediaSource extends BaseMediaSource
         playlistTracker =
             new DefaultHlsPlaylistTracker(
                 hlsDataSourceFactory,
+                LoadErrorHandlingPolicy.getDefault(),
                 minLoadableRetryCount,
                 playlistParser != null ? playlistParser : new HlsPlaylistParser());
       }
@@ -222,6 +243,7 @@ public final class HlsMediaSource extends BaseMediaSource
           hlsDataSourceFactory,
           extractorFactory,
           compositeSequenceableLoaderFactory,
+          chunkLoadErrorHandlingPolicy,
           minLoadableRetryCount,
           playlistTracker,
           allowChunklessPreparation,
@@ -259,10 +281,13 @@ public final class HlsMediaSource extends BaseMediaSource
   private final Uri manifestUri;
   private final HlsDataSourceFactory dataSourceFactory;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
+  private final LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy;
   private final int minLoadableRetryCount;
   private final boolean allowChunklessPreparation;
   private final HlsPlaylistTracker playlistTracker;
   private final @Nullable Object tag;
+
+  private @Nullable TransferListener<? super DataSource> mediaTransferListener;
 
   /**
    * @param manifestUri The {@link Uri} of the HLS manifest.
@@ -338,9 +363,13 @@ public final class HlsMediaSource extends BaseMediaSource
         dataSourceFactory,
         extractorFactory,
         new DefaultCompositeSequenceableLoaderFactory(),
+        LoadErrorHandlingPolicy.getDefault(),
         minLoadableRetryCount,
         new DefaultHlsPlaylistTracker(
-            dataSourceFactory, minLoadableRetryCount, new HlsPlaylistParser()),
+            dataSourceFactory,
+            LoadErrorHandlingPolicy.getDefault(),
+            minLoadableRetryCount,
+            playlistParser),
         /* allowChunklessPreparation= */ false,
         /* tag= */ null);
     if (eventHandler != null && eventListener != null) {
@@ -353,6 +382,7 @@ public final class HlsMediaSource extends BaseMediaSource
       HlsDataSourceFactory dataSourceFactory,
       HlsExtractorFactory extractorFactory,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
+      LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy,
       int minLoadableRetryCount,
       HlsPlaylistTracker playlistTracker,
       boolean allowChunklessPreparation,
@@ -361,6 +391,7 @@ public final class HlsMediaSource extends BaseMediaSource
     this.dataSourceFactory = dataSourceFactory;
     this.extractorFactory = extractorFactory;
     this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
+    this.chunkLoadErrorHandlingPolicy = chunkLoadErrorHandlingPolicy;
     this.minLoadableRetryCount = minLoadableRetryCount;
     this.playlistTracker = playlistTracker;
     this.allowChunklessPreparation = allowChunklessPreparation;
@@ -368,7 +399,11 @@ public final class HlsMediaSource extends BaseMediaSource
   }
 
   @Override
-  public void prepareSourceInternal(ExoPlayer player, boolean isTopLevelSource) {
+  public void prepareSourceInternal(
+      ExoPlayer player,
+      boolean isTopLevelSource,
+      @Nullable TransferListener<? super DataSource> mediaTransferListener) {
+    this.mediaTransferListener = mediaTransferListener;
     EventDispatcher eventDispatcher = createEventDispatcher(/* mediaPeriodId= */ null);
     playlistTracker.start(manifestUri, eventDispatcher, /* listener= */ this);
   }
@@ -386,6 +421,8 @@ public final class HlsMediaSource extends BaseMediaSource
         extractorFactory,
         playlistTracker,
         dataSourceFactory,
+        mediaTransferListener,
+        chunkLoadErrorHandlingPolicy,
         minLoadableRetryCount,
         eventDispatcher,
         allocator,
@@ -401,7 +438,7 @@ public final class HlsMediaSource extends BaseMediaSource
   @Override
   public void releaseSourceInternal() {
     if (playlistTracker != null) {
-      playlistTracker.release();
+      playlistTracker.stop();
     }
   }
 

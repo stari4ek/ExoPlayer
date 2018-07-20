@@ -18,8 +18,8 @@ package com.google.android.exoplayer2;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
+import android.support.annotation.Nullable;
 import android.view.Surface;
-import com.google.android.exoplayer2.Player.DefaultEventListener;
 import com.google.android.exoplayer2.Player.EventListener;
 import com.google.android.exoplayer2.Timeline.Window;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
@@ -45,6 +45,8 @@ import com.google.android.exoplayer2.testutil.FakeTrackSelection;
 import com.google.android.exoplayer2.testutil.FakeTrackSelector;
 import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import com.google.android.exoplayer2.upstream.Allocator;
+import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -230,8 +232,10 @@ public final class ExoPlayerTest {
         new FakeMediaSource(timeline, new Object(), Builder.VIDEO_FORMAT) {
           @Override
           public synchronized void prepareSourceInternal(
-              ExoPlayer player, boolean isTopLevelSource) {
-            super.prepareSourceInternal(player, isTopLevelSource);
+              ExoPlayer player,
+              boolean isTopLevelSource,
+              @Nullable TransferListener<? super DataSource> mediaTransferListener) {
+            super.prepareSourceInternal(player, isTopLevelSource, mediaTransferListener);
             // We've queued a source info refresh on the playback thread's event queue. Allow the
             // test thread to prepare the player with the third source, and block this thread (the
             // playback thread) until the test thread's call to prepare() has returned.
@@ -483,7 +487,7 @@ public final class ExoPlayerTest {
             .build();
     final List<Integer> playbackStatesWhenSeekProcessed = new ArrayList<>();
     EventListener eventListener =
-        new DefaultEventListener() {
+        new EventListener() {
           private int currentPlaybackState = Player.STATE_IDLE;
 
           @Override
@@ -535,7 +539,7 @@ public final class ExoPlayerTest {
             .build();
     final boolean[] onSeekProcessedCalled = new boolean[1];
     EventListener listener =
-        new DefaultEventListener() {
+        new EventListener() {
           @Override
           public void onSeekProcessed() {
             onSeekProcessedCalled[0] = true;
@@ -577,7 +581,8 @@ public final class ExoPlayerTest {
               MediaPeriodId id,
               TrackGroupArray trackGroupArray,
               Allocator allocator,
-              EventDispatcher eventDispatcher) {
+              EventDispatcher eventDispatcher,
+              @Nullable TransferListener<? super DataSource> transferListener) {
             FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray, eventDispatcher);
             mediaPeriod.setSeekToUsOffset(10);
             return mediaPeriod;
@@ -611,7 +616,8 @@ public final class ExoPlayerTest {
               MediaPeriodId id,
               TrackGroupArray trackGroupArray,
               Allocator allocator,
-              EventDispatcher eventDispatcher) {
+              EventDispatcher eventDispatcher,
+              @Nullable TransferListener<? super DataSource> transferListener) {
             FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray, eventDispatcher);
             mediaPeriod.setDiscontinuityPositionUs(10);
             return mediaPeriod;
@@ -636,7 +642,8 @@ public final class ExoPlayerTest {
               MediaPeriodId id,
               TrackGroupArray trackGroupArray,
               Allocator allocator,
-              EventDispatcher eventDispatcher) {
+              EventDispatcher eventDispatcher,
+              @Nullable TransferListener<? super DataSource> transferListener) {
             FakeMediaPeriod mediaPeriod = new FakeMediaPeriod(trackGroupArray, eventDispatcher);
             mediaPeriod.setDiscontinuityPositionUs(0);
             return mediaPeriod;
@@ -872,7 +879,8 @@ public final class ExoPlayerTest {
               MediaPeriodId id,
               TrackGroupArray trackGroupArray,
               Allocator allocator,
-              EventDispatcher eventDispatcher) {
+              EventDispatcher eventDispatcher,
+              @Nullable TransferListener<? super DataSource> transferListener) {
             // Defer completing preparation of the period until playback parameters have been set.
             fakeMediaPeriodHolder[0] =
                 new FakeMediaPeriod(trackGroupArray, eventDispatcher, /* deferOnPrepared= */ true);
@@ -1393,7 +1401,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1413,7 +1421,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1435,8 +1443,8 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target50.positionMs >= 50).isTrue();
-    assertThat(target80.positionMs >= 80).isTrue();
+    assertThat(target50.positionMs).isAtLeast(50L);
+    assertThat(target80.positionMs).isAtLeast(80L);
     assertThat(target80.positionMs).isAtLeast(target50.positionMs);
   }
 
@@ -1459,8 +1467,8 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target1.positionMs >= 50).isTrue();
-    assertThat(target2.positionMs >= 50).isTrue();
+    assertThat(target1.positionMs).isAtLeast(50L);
+    assertThat(target2.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1481,7 +1489,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1545,7 +1553,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1565,7 +1573,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1631,7 +1639,7 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
     assertThat(target.messageCount).isEqualTo(1);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1660,7 +1668,7 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
     assertThat(target.messageCount).isEqualTo(2);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1694,7 +1702,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
     assertThat(target.windowIndex).isEqualTo(1);
   }
 
@@ -1716,7 +1724,7 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
     assertThat(target.windowIndex).isEqualTo(2);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1737,7 +1745,7 @@ public final class ExoPlayerTest {
         .start()
         .blockUntilEnded(TIMEOUT_MS);
     assertThat(target.windowIndex).isEqualTo(2);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
   }
 
   @Test
@@ -1774,7 +1782,7 @@ public final class ExoPlayerTest {
         .build()
         .start()
         .blockUntilEnded(TIMEOUT_MS);
-    assertThat(target.positionMs >= 50).isTrue();
+    assertThat(target.positionMs).isAtLeast(50L);
     assertThat(target.windowIndex).isEqualTo(0);
   }
 
@@ -1981,6 +1989,44 @@ public final class ExoPlayerTest {
   }
 
   @Test
+  public void testRepeatedSeeksToUnpreparedPeriodInSameWindowKeepsWindowSequenceNumber()
+      throws Exception {
+    Timeline timeline =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* periodCount= */ 2,
+                /* id= */ 0,
+                /* isSeekable= */ true,
+                /* isDynamic= */ false,
+                /* durationUs= */ 10 * C.MICROS_PER_SECOND));
+    FakeMediaSource mediaSource = new FakeMediaSource(timeline, /* manifest= */ null);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("testSeekToUnpreparedPeriod")
+            .pause()
+            .waitForPlaybackState(Player.STATE_READY)
+            .seek(/* windowIndex= */ 0, /* positionMs= */ 9999)
+            .seek(/* windowIndex= */ 0, /* positionMs= */ 1)
+            .seek(/* windowIndex= */ 0, /* positionMs= */ 9999)
+            .play()
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setMediaSource(mediaSource)
+            .setActionSchedule(actionSchedule)
+            .build()
+            .start()
+            .blockUntilEnded(TIMEOUT_MS);
+
+    testRunner.assertPlayedPeriodIndices(0, 1, 0, 1);
+    assertThat(mediaSource.getCreatedMediaPeriods())
+        .containsAllOf(
+            new MediaPeriodId(/* periodIndex= */ 0, /* windowSequenceNumber= */ 0),
+            new MediaPeriodId(/* periodIndex= */ 1, /* windowSequenceNumber= */ 0));
+    assertThat(mediaSource.getCreatedMediaPeriods())
+        .doesNotContain(new MediaPeriodId(/* periodIndex= */ 1, /* windowSequenceNumber= */ 1));
+  }
+
+  @Test
   public void testRecursivePlayerChangesReportConsistentValuesForAllListeners() throws Exception {
     // We add two listeners to the player. The first stops the player as soon as it's ready and both
     // record the state change events they receive.
@@ -1988,7 +2034,7 @@ public final class ExoPlayerTest {
     final List<Integer> eventListener1States = new ArrayList<>();
     final List<Integer> eventListener2States = new ArrayList<>();
     final EventListener eventListener1 =
-        new DefaultEventListener() {
+        new EventListener() {
           @Override
           public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
             eventListener1States.add(playbackState);
@@ -1998,7 +2044,7 @@ public final class ExoPlayerTest {
           }
         };
     final EventListener eventListener2 =
-        new DefaultEventListener() {
+        new EventListener() {
           @Override
           public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
             eventListener2States.add(playbackState);
@@ -2038,7 +2084,7 @@ public final class ExoPlayerTest {
     final List<Boolean> eventListenerPlayWhenReady = new ArrayList<>();
     final List<Integer> eventListenerStates = new ArrayList<>();
     final EventListener eventListener =
-        new DefaultEventListener() {
+        new EventListener() {
           @Override
           public void onTimelineChanged(Timeline timeline, Object manifest, int reason) {
             if (timeline.isEmpty()) {

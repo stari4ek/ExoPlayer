@@ -36,6 +36,7 @@ import com.google.android.exoplayer2.source.MediaSourceEventListener.MediaLoadDa
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
 import java.lang.annotation.Retention;
@@ -168,8 +169,6 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
     void onAdTapped();
 
   }
-
-  private static final String TAG = "AdsMediaSource";
 
   private final MediaSource contentMediaSource;
   private final MediaSourceFactory adMediaSourceFactory;
@@ -307,8 +306,11 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   }
 
   @Override
-  public void prepareSourceInternal(final ExoPlayer player, boolean isTopLevelSource) {
-    super.prepareSourceInternal(player, isTopLevelSource);
+  public void prepareSourceInternal(
+      final ExoPlayer player,
+      boolean isTopLevelSource,
+      @Nullable TransferListener<? super DataSource> mediaTransferListener) {
+    super.prepareSourceInternal(player, isTopLevelSource, mediaTransferListener);
     Assertions.checkArgument(isTopLevelSource);
     final ComponentListener componentListener = new ComponentListener();
     this.componentListener = componentListener;
@@ -338,7 +340,7 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
           Arrays.fill(adDurationsUs[adGroupIndex], oldAdCount, adCount, C.TIME_UNSET);
         }
         adGroupMediaSources[adGroupIndex][adIndexInAdGroup] = adMediaSource;
-        deferredMediaPeriodByAdMediaSource.put(adMediaSource, new ArrayList<DeferredMediaPeriod>());
+        deferredMediaPeriodByAdMediaSource.put(adMediaSource, new ArrayList<>());
         prepareChildSource(id, adMediaSource);
       }
       MediaSource mediaSource = adGroupMediaSources[adGroupIndex][adIndexInAdGroup];
@@ -541,6 +543,7 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
       createEventDispatcher(/* mediaPeriodId= */ null)
           .loadError(
               dataSpec,
+              dataSpec.uri,
               C.DATA_TYPE_AD,
               C.TRACK_TYPE_UNKNOWN,
               /* loadDurationMs= */ 0,
@@ -582,6 +585,7 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
       createEventDispatcher(mediaPeriodId)
           .loadError(
               new DataSpec(adUri),
+              adUri,
               C.DATA_TYPE_AD,
               C.TRACK_TYPE_UNKNOWN,
               /* loadDurationMs= */ 0,

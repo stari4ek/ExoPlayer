@@ -35,6 +35,7 @@ import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
+import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.HandlerWrapper;
@@ -77,6 +78,7 @@ import java.util.Collections;
   private static final int MSG_SET_SHUFFLE_ENABLED = 13;
   private static final int MSG_SEND_MESSAGE = 14;
   private static final int MSG_SEND_MESSAGE_TO_TARGET_THREAD = 15;
+  private static final int MSG_PLAYBACK_PARAMETERS_CHANGED_INTERNAL = 16;
 
   private static final int PREPARING_SOURCE_INTERVAL_MS = 10;
   private static final int RENDERING_INTERVAL_MS = 10;
@@ -87,6 +89,7 @@ import java.util.Collections;
   private final TrackSelector trackSelector;
   private final TrackSelectorResult emptyTrackSelectorResult;
   private final LoadControl loadControl;
+  private final BandwidthMeter bandwidthMeter;
   private final HandlerWrapper handler;
   private final HandlerThread internalPlaybackThread;
   private final Handler eventHandler;
@@ -123,6 +126,7 @@ import java.util.Collections;
       TrackSelector trackSelector,
       TrackSelectorResult emptyTrackSelectorResult,
       LoadControl loadControl,
+      BandwidthMeter bandwidthMeter,
       boolean playWhenReady,
       @Player.RepeatMode int repeatMode,
       boolean shuffleModeEnabled,
@@ -133,6 +137,7 @@ import java.util.Collections;
     this.trackSelector = trackSelector;
     this.emptyTrackSelectorResult = emptyTrackSelectorResult;
     this.loadControl = loadControl;
+    this.bandwidthMeter = bandwidthMeter;
     this.playWhenReady = playWhenReady;
     this.repeatMode = repeatMode;
     this.shuffleModeEnabled = shuffleModeEnabled;
@@ -162,7 +167,7 @@ import java.util.Collections;
     enabledRenderers = new Renderer[0];
     window = new Timeline.Window();
     period = new Timeline.Period();
-    trackSelector.init(/* listener= */ this, /* bandwidthMeter= */ null);
+    trackSelector.init(/* listener= */ this, bandwidthMeter);
 
     // Note: The documentation for Process.THREAD_PRIORITY_AUDIO that states "Applications can
     // not normally change to this priority" is incorrect.
@@ -271,8 +276,9 @@ import java.util.Collections;
 
   @Override
   public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {
-    eventHandler.obtainMessage(MSG_PLAYBACK_PARAMETERS_CHANGED, playbackParameters).sendToTarget();
-    updateTrackSelectionPlaybackSpeed(playbackParameters.speed);
+    handler
+        .obtainMessage(MSG_PLAYBACK_PARAMETERS_CHANGED_INTERNAL, playbackParameters)
+        .sendToTarget();
   }
 
   // Handler.Callback implementation.
@@ -323,6 +329,9 @@ import java.util.Collections;
           break;
         case MSG_TRACK_SELECTION_INVALIDATED:
           reselectTracksInternal();
+          break;
+        case MSG_PLAYBACK_PARAMETERS_CHANGED_INTERNAL:
+          handlePlaybackParameters((PlaybackParameters) msg.obj);
           break;
         case MSG_SEND_MESSAGE:
           sendMessageInternal((PlayerMessage) msg.obj);
@@ -393,7 +402,11 @@ import java.util.Collections;
     loadControl.onPrepared();
     this.mediaSource = mediaSource;
     setState(Player.STATE_BUFFERING);
-    mediaSource.prepareSource(player, /* isTopLevelSource= */ true, /* listener= */ this);
+    mediaSource.prepareSource(
+        player,
+        /* isTopLevelSource= */ true,
+        /* listener= */ this,
+        bandwidthMeter.getTransferListener());
     handler.sendEmptyMessage(MSG_DO_SOME_WORK);
   }
 
@@ -419,6 +432,7 @@ import java.util.Collections;
     if (!queue.updateRepeatMode(repeatMode)) {
       seekToCurrentPosition(/* sendDiscontinuity= */ true);
     }
+    updateLoadingMediaPeriodId();
   }
 
   private void setShuffleModeEnabledInternal(boolean shuffleModeEnabled)
@@ -427,6 +441,7 @@ import java.util.Collections;
     if (!queue.updateShuffleModeEnabled(shuffleModeEnabled)) {
       seekToCurrentPosition(/* sendDiscontinuity= */ true);
     }
+    updateLoadingMediaPeriodId();
   }
 
   private void seekToCurrentPosition(boolean sendDiscontinuity) throws ExoPlaybackException {
@@ -483,11 +498,12 @@ import java.util.Collections;
       playbackInfo.positionUs = periodPositionUs;
     }
 
-    // Update the buffered position.
+    // Update the buffered position and total buffered duration.
+    MediaPeriodHolder loadingPeriod = queue.getLoadingPeriod();
     playbackInfo.bufferedPositionUs =
-        enabledRenderers.length == 0
-            ? playingPeriodHolder.info.durationUs
-            : playingPeriodHolder.getBufferedPositionUs(/* convertEosToDuration= */ true);
+        loadingPeriod.getBufferedPositionUs(/* convertEosToDuration= */ true);
+    playbackInfo.totalBufferedDurationUs =
+        playbackInfo.bufferedPositionUs - loadingPeriod.toPeriodTime(rendererPositionUs);
   }
 
   private void doSomeWork() throws ExoPlaybackException, IOException {
@@ -691,6 +707,7 @@ import java.util.Collections;
       resetRendererPosition(periodPositionUs);
     }
 
+    updateLoadingMediaPeriodId();
     handler.sendEmptyMessage(MSG_DO_SOME_WORK);
     return periodPositionUs;
   }
@@ -785,18 +802,26 @@ import java.util.Collections;
       pendingMessages.clear();
       nextPendingMessageIndex = 0;
     }
+    // Set the start position to TIME_UNSET so that a subsequent seek to 0 isn't ignored.
+    MediaPeriodId mediaPeriodId =
+        resetPosition ? new MediaPeriodId(getFirstPeriodIndex()) : playbackInfo.periodId;
+    long startPositionUs = resetPosition ? C.TIME_UNSET : playbackInfo.positionUs;
+    long contentPositionUs = resetPosition ? C.TIME_UNSET : playbackInfo.contentPositionUs;
     playbackInfo =
         new PlaybackInfo(
             resetState ? Timeline.EMPTY : playbackInfo.timeline,
             resetState ? null : playbackInfo.manifest,
-            resetPosition ? new MediaPeriodId(getFirstPeriodIndex()) : playbackInfo.periodId,
-            // Set the start position to TIME_UNSET so that a subsequent seek to 0 isn't ignored.
-            resetPosition ? C.TIME_UNSET : playbackInfo.positionUs,
-            resetPosition ? C.TIME_UNSET : playbackInfo.contentPositionUs,
+            mediaPeriodId,
+            startPositionUs,
+            contentPositionUs,
             playbackInfo.playbackState,
             /* isLoading= */ false,
             resetState ? TrackGroupArray.EMPTY : playbackInfo.trackGroups,
-            resetState ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult);
+            resetState ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult,
+            mediaPeriodId,
+            startPositionUs,
+            /* totalBufferedDurationUs= */ 0,
+            startPositionUs);
     if (releaseMediaSource) {
       if (mediaSource != null) {
         mediaSource.releaseSource(/* listener= */ this);
@@ -1051,6 +1076,7 @@ import java.util.Collections;
         updateLoadControlTrackSelection(periodHolder.trackGroups, periodHolder.trackSelectorResult);
       }
     }
+    updateLoadingMediaPeriodId();
     if (playbackInfo.playbackState != Player.STATE_ENDED) {
       maybeContinueLoading();
       updatePlaybackPositions();
@@ -1249,6 +1275,7 @@ import java.util.Collections;
     if (!queue.updateQueuedPeriods(playingPeriodId, rendererPositionUs)) {
       seekToCurrentPosition(/* sendDiscontinuity= */ false);
     }
+    updateLoadingMediaPeriodId();
   }
 
   private void handleSourceInfoRefreshEndedPlayback() {
@@ -1494,6 +1521,7 @@ import java.util.Collections;
                 info);
         mediaPeriod.prepare(this, info.startPositionUs);
         setIsLoading(true);
+        updateLoadingMediaPeriodId();
       }
     }
   }
@@ -1523,6 +1551,17 @@ import java.util.Collections;
     }
     queue.reevaluateBuffer(rendererPositionUs);
     maybeContinueLoading();
+  }
+
+  private void handlePlaybackParameters(PlaybackParameters playbackParameters)
+      throws ExoPlaybackException {
+    eventHandler.obtainMessage(MSG_PLAYBACK_PARAMETERS_CHANGED, playbackParameters).sendToTarget();
+    updateTrackSelectionPlaybackSpeed(playbackParameters.speed);
+    for (Renderer renderer : renderers) {
+      if (renderer != null) {
+        renderer.setOperatingRate(playbackParameters.speed);
+      }
+    }
   }
 
   private void maybeContinueLoading() {
@@ -1618,6 +1657,13 @@ import java.util.Collections;
     MediaPeriodHolder readingPeriodHolder = queue.getReadingPeriod();
     return readingPeriodHolder.next != null && readingPeriodHolder.next.prepared
         && renderer.hasReadStreamToEnd();
+  }
+
+  private void updateLoadingMediaPeriodId() {
+    MediaPeriodHolder loadingMediaPeriodHolder = queue.getLoadingPeriod();
+    MediaPeriodId loadingMediaPeriodId =
+        loadingMediaPeriodHolder == null ? playbackInfo.periodId : loadingMediaPeriodHolder.info.id;
+    playbackInfo = playbackInfo.copyWithLoadingMediaPeriodId(loadingMediaPeriodId);
   }
 
   @NonNull
