@@ -95,8 +95,13 @@ public final class DefaultHlsExtractorFactory implements HlsExtractorFactory {
     } else if (lastPathSegment.endsWith(MP4_FILE_EXTENSION)
         || lastPathSegment.startsWith(M4_FILE_EXTENSION_PREFIX, lastPathSegment.length() - 4)
         || lastPathSegment.startsWith(MP4_FILE_EXTENSION_PREFIX, lastPathSegment.length() - 5)) {
-      extractor = new FragmentedMp4Extractor(0, timestampAdjuster, null, drmInitData,
-          muxedCaptionFormats != null ? muxedCaptionFormats : Collections.<Format>emptyList());
+      extractor =
+          new FragmentedMp4Extractor(
+              /* flags= */ 0,
+              timestampAdjuster,
+              /* sideloadedTrack= */ null,
+              drmInitData,
+              muxedCaptionFormats != null ? muxedCaptionFormats : Collections.emptyList());
     } else {
       // For any other file extension, we assume TS format.
       @DefaultTsPayloadReaderFactory.Flags
@@ -109,7 +114,11 @@ public final class DefaultHlsExtractorFactory implements HlsExtractorFactory {
         // closed caption track on channel 0.
         muxedCaptionFormats =
             Collections.singletonList(
-                Format.createTextSampleFormat(null, MimeTypes.APPLICATION_CEA608, 0, null));
+                Format.createTextSampleFormat(
+                    /* id= */ null,
+                    MimeTypes.APPLICATION_CEA608,
+                    /* selectionFlags= */ 0,
+                    /* language= */ null));
       }
       String codecs = format.codecs;
       if (!TextUtils.isEmpty(codecs)) {

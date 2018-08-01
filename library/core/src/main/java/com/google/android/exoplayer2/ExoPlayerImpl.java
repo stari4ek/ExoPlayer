@@ -47,9 +47,16 @@ import java.util.concurrent.CopyOnWriteArraySet;
 
   private static final String TAG = "ExoPlayerImpl";
 
+  /**
+   * This empty track selector result can only be used for {@link PlaybackInfo#trackSelectorResult}
+   * when the player does not have any track selection made (such as when player is reset, or when
+   * player seeks to an unprepared period). It will not be used as result of any {@link
+   * TrackSelector#selectTracks(RendererCapabilities[], TrackGroupArray)} operation.
+   */
+  /* package */ final TrackSelectorResult emptyTrackSelectorResult;
+
   private final Renderer[] renderers;
   private final TrackSelector trackSelector;
-  private final TrackSelectorResult emptyTrackSelectorResult;
   private final Handler eventHandler;
   private final ExoPlayerImplInternal internalPlayer;
   private final Handler internalPlayerHandler;
@@ -120,12 +127,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
             ExoPlayerImpl.this.handleEvent(msg);
           }
         };
-    playbackInfo =
-        new PlaybackInfo(
-            Timeline.EMPTY,
-            /* startPositionUs= */ 0,
-            TrackGroupArray.EMPTY,
-            emptyTrackSelectorResult);
+    playbackInfo = PlaybackInfo.createDummy(/* startPositionUs= */ 0, emptyTrackSelectorResult);
     pendingPlaybackInfoUpdates = new ArrayDeque<>();
     internalPlayer =
         new ExoPlayerImplInternal(
@@ -316,10 +318,10 @@ import java.util.concurrent.CopyOnWriteArraySet;
     } else {
       long windowPositionUs = positionMs == C.TIME_UNSET
           ? timeline.getWindow(windowIndex, window).getDefaultPositionUs() : C.msToUs(positionMs);
-      Pair<Integer, Long> periodIndexAndPositon =
+      Pair<Integer, Long> periodIndexAndPosition =
           timeline.getPeriodPosition(window, period, windowIndex, windowPositionUs);
       maskingWindowPositionMs = C.usToMs(windowPositionUs);
-      maskingPeriodIndex = periodIndexAndPositon.first;
+      maskingPeriodIndex = periodIndexAndPosition.first;
     }
     internalPlayer.seekTo(timeline, windowIndex, C.msToUs(positionMs));
     for (Player.EventListener listener : listeners) {

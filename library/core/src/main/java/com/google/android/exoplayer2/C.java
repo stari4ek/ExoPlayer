@@ -80,6 +80,9 @@ public final class C {
   /** The number of bits per byte. */
   public static final int BITS_PER_BYTE = 8;
 
+  /** The number of bytes per float. */
+  public static final int BYTES_PER_FLOAT = 4;
+
   /**
    * The name of the ASCII charset.
    */
@@ -189,13 +192,6 @@ public final class C {
   public static final int ENCODING_DTS_HD = AudioFormat.ENCODING_DTS_HD;
   /** @see AudioFormat#ENCODING_DOLBY_TRUEHD */
   public static final int ENCODING_DOLBY_TRUEHD = AudioFormat.ENCODING_DOLBY_TRUEHD;
-
-  /**
-   * @see AudioFormat#CHANNEL_OUT_7POINT1_SURROUND
-   */
-  @SuppressWarnings("deprecation")
-  public static final int CHANNEL_OUT_7POINT1_SURROUND = Util.SDK_INT < 23
-      ? AudioFormat.CHANNEL_OUT_7POINT1 : AudioFormat.CHANNEL_OUT_7POINT1_SURROUND;
 
   /**
    * Stream types for an {@link android.media.AudioTrack}.
@@ -485,32 +481,24 @@ public final class C {
    */
   public static final int RESULT_FORMAT_READ = -5;
 
-  /**
-   * A data type constant for data of unknown or unspecified type.
-   */
+  /** A data type constant for data of unknown or unspecified type. */
   public static final int DATA_TYPE_UNKNOWN = 0;
-  /**
-   * A data type constant for media, typically containing media samples.
-   */
+  /** A data type constant for media, typically containing media samples. */
   public static final int DATA_TYPE_MEDIA = 1;
-  /**
-   * A data type constant for media, typically containing only initialization data.
-   */
+  /** A data type constant for media, typically containing only initialization data. */
   public static final int DATA_TYPE_MEDIA_INITIALIZATION = 2;
-  /**
-   * A data type constant for drm or encryption data.
-   */
+  /** A data type constant for drm or encryption data. */
   public static final int DATA_TYPE_DRM = 3;
-  /**
-   * A data type constant for a manifest file.
-   */
+  /** A data type constant for a manifest file. */
   public static final int DATA_TYPE_MANIFEST = 4;
-  /**
-   * A data type constant for time synchronization data.
-   */
+  /** A data type constant for time synchronization data. */
   public static final int DATA_TYPE_TIME_SYNCHRONIZATION = 5;
   /** A data type constant for ads loader data. */
   public static final int DATA_TYPE_AD = 6;
+  /**
+   * A data type constant for progressive media live streams, typically containing media samples.
+   */
+  public static final int DATA_TYPE_MEDIA_LIVE_STREAM = 7;
   /**
    * Applications or extensions may define custom {@code DATA_TYPE_*} constants greater than or
    * equal to this value.

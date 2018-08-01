@@ -73,6 +73,16 @@ public final class SsMediaSource extends BaseMediaSource
     /**
      * Creates a new factory for {@link SsMediaSource}s.
      *
+     * @param dataSourceFactory A factory for {@link DataSource} instances that will be used to load
+     *     manifest and media data.
+     */
+    public Factory(DataSource.Factory dataSourceFactory) {
+      this(new DefaultSsChunkSource.Factory(dataSourceFactory), dataSourceFactory);
+    }
+
+    /**
+     * Creates a new factory for {@link SsMediaSource}s.
+     *
      * @param chunkSourceFactory A factory for {@link SsChunkSource} instances.
      * @param manifestDataSourceFactory A factory for {@link DataSource} instances that will be used
      *     to load (and refresh) the manifest. May be {@code null} if the factory will only ever be
@@ -285,7 +295,7 @@ public final class SsMediaSource extends BaseMediaSource
   private DataSource manifestDataSource;
   private Loader manifestLoader;
   private LoaderErrorThrower manifestLoaderErrorThrower;
-  private @Nullable TransferListener<? super DataSource> mediaTransferListener;
+  private @Nullable TransferListener mediaTransferListener;
 
   private long manifestLoadStartTimestamp;
   private SsManifest manifest;
@@ -467,7 +477,7 @@ public final class SsMediaSource extends BaseMediaSource
   public void prepareSourceInternal(
       ExoPlayer player,
       boolean isTopLevelSource,
-      @Nullable TransferListener<? super DataSource> mediaTransferListener) {
+      @Nullable TransferListener mediaTransferListener) {
     this.mediaTransferListener = mediaTransferListener;
     if (sideloadedManifest) {
       manifestLoaderErrorThrower = new LoaderErrorThrower.Dummy();

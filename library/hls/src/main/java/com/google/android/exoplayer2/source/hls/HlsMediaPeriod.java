@@ -27,7 +27,6 @@ import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.source.SequenceableLoader;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.source.chunk.Chunk;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist.HlsUrl;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistTracker;
@@ -55,9 +54,8 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private final HlsExtractorFactory extractorFactory;
   private final HlsPlaylistTracker playlistTracker;
   private final HlsDataSourceFactory dataSourceFactory;
-  private final @Nullable TransferListener<? super DataSource> mediaTransferListener;
-  private final LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy;
-  private final int minLoadableRetryCount;
+  private final @Nullable TransferListener mediaTransferListener;
+  private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final EventDispatcher eventDispatcher;
   private final Allocator allocator;
   private final IdentityHashMap<SampleStream, Integer> streamWrapperIndices;
@@ -82,8 +80,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
    *     and keys.
    * @param mediaTransferListener The transfer listener to inform of any media data transfers. May
    *     be null if no listener is available.
-   * @param chunkLoadErrorHandlingPolicy A {@link LoadErrorHandlingPolicy} for chunk loads.
-   * @param minLoadableRetryCount The minimum number of times to retry if a loading error occurs.
+   * @param loadErrorHandlingPolicy A {@link LoadErrorHandlingPolicy}.
    * @param eventDispatcher A dispatcher to notify of events.
    * @param allocator An {@link Allocator} from which to obtain media buffer allocations.
    * @param compositeSequenceableLoaderFactory A factory to create composite {@link
@@ -94,9 +91,8 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
       HlsExtractorFactory extractorFactory,
       HlsPlaylistTracker playlistTracker,
       HlsDataSourceFactory dataSourceFactory,
-      @Nullable TransferListener<? super DataSource> mediaTransferListener,
-      LoadErrorHandlingPolicy<Chunk> chunkLoadErrorHandlingPolicy,
-      int minLoadableRetryCount,
+      @Nullable TransferListener mediaTransferListener,
+      LoadErrorHandlingPolicy loadErrorHandlingPolicy,
       EventDispatcher eventDispatcher,
       Allocator allocator,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
@@ -105,8 +101,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
     this.playlistTracker = playlistTracker;
     this.dataSourceFactory = dataSourceFactory;
     this.mediaTransferListener = mediaTransferListener;
-    this.chunkLoadErrorHandlingPolicy = chunkLoadErrorHandlingPolicy;
-    this.minLoadableRetryCount = minLoadableRetryCount;
+    this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
     this.eventDispatcher = eventDispatcher;
     this.allocator = allocator;
     this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
@@ -368,7 +363,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
               C.TRACK_TYPE_AUDIO,
               new HlsUrl[] {audioRendition},
               null,
-              Collections.<Format>emptyList(),
+              Collections.emptyList(),
               positionUs);
       sampleStreamWrappers[currentWrapperIndex++] = sampleStreamWrapper;
       Format renditionFormat = audioRendition.format;
@@ -385,11 +380,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
       HlsUrl url = subtitleRenditions.get(i);
       HlsSampleStreamWrapper sampleStreamWrapper =
           buildSampleStreamWrapper(
-              C.TRACK_TYPE_TEXT,
-              new HlsUrl[] {url},
-              null,
-              Collections.<Format>emptyList(),
-              positionUs);
+              C.TRACK_TYPE_TEXT, new HlsUrl[] {url}, null, Collections.emptyList(), positionUs);
       sampleStreamWrappers[currentWrapperIndex++] = sampleStreamWrapper;
       sampleStreamWrapper.prepareWithMasterPlaylistInfo(
           new TrackGroupArray(new TrackGroup(url.format)), 0, TrackGroupArray.EMPTY);
@@ -536,8 +527,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
         allocator,
         positionUs,
         muxedAudioFormat,
-        chunkLoadErrorHandlingPolicy,
-        minLoadableRetryCount,
+        loadErrorHandlingPolicy,
         eventDispatcher);
   }
 

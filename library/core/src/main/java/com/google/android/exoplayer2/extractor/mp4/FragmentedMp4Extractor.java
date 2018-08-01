@@ -57,17 +57,9 @@ import java.util.UUID;
  */
 public final class FragmentedMp4Extractor implements Extractor {
 
-  /**
-   * Factory for {@link FragmentedMp4Extractor} instances.
-   */
-  public static final ExtractorsFactory FACTORY = new ExtractorsFactory() {
-
-    @Override
-    public Extractor[] createExtractors() {
-      return new Extractor[] {new FragmentedMp4Extractor()};
-    }
-
-  };
+  /** Factory for {@link FragmentedMp4Extractor} instances. */
+  public static final ExtractorsFactory FACTORY =
+      () -> new Extractor[] {new FragmentedMp4Extractor()};
 
   /**
    * Flags controlling the behavior of the extractor.
@@ -201,8 +193,7 @@ public final class FragmentedMp4Extractor implements Extractor {
       @Nullable TimestampAdjuster timestampAdjuster,
       @Nullable Track sideloadedTrack,
       @Nullable DrmInitData sideloadedDrmInitData) {
-    this(flags, timestampAdjuster, sideloadedTrack, sideloadedDrmInitData,
-        Collections.<Format>emptyList());
+    this(flags, timestampAdjuster, sideloadedTrack, sideloadedDrmInitData, Collections.emptyList());
   }
 
   /**

@@ -432,7 +432,7 @@ public class AnalyticsCollector
 
   @Override
   public final void onTimelineChanged(
-      Timeline timeline, Object manifest, @Player.TimelineChangeReason int reason) {
+      Timeline timeline, @Nullable Object manifest, @Player.TimelineChangeReason int reason) {
     mediaPeriodQueueTracker.onTimelineChanged(timeline);
     EventTime eventTime = generatePlayingMediaPeriodEventTime();
     for (AnalyticsListener listener : listeners) {
@@ -784,8 +784,7 @@ public class AnalyticsCollector
       if (newTimeline.isEmpty() || timeline.isEmpty()) {
         return mediaPeriod;
       }
-      Object uid =
-          timeline.getPeriod(mediaPeriod.mediaPeriodId.periodIndex, period, /* setIds= */ true).uid;
+      Object uid = timeline.getUidOfPeriod(mediaPeriod.mediaPeriodId.periodIndex);
       int newPeriodIndex = newTimeline.getIndexOfPeriod(uid);
       if (newPeriodIndex == C.INDEX_UNSET) {
         return mediaPeriod;

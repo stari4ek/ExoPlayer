@@ -16,8 +16,10 @@
 package com.google.android.exoplayer2;
 
 import android.annotation.TargetApi;
+import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
+import android.media.AudioManager;
 import android.media.MediaCodec;
 import android.media.PlaybackParams;
 import android.os.Handler;
@@ -80,7 +82,11 @@ public class SimpleExoPlayer
   private final CopyOnWriteArraySet<MetadataOutput> metadataOutputs;
   private final CopyOnWriteArraySet<VideoRendererEventListener> videoDebugListeners;
   private final CopyOnWriteArraySet<AudioRendererEventListener> audioDebugListeners;
+  private final BandwidthMeter bandwidthMeter;
   private final AnalyticsCollector analyticsCollector;
+
+  @SuppressWarnings({"unused", "FieldCanBeLocal"})
+  private final @Nullable AudioManager audioManager;
 
   private Format videoFormat;
   private Format audioFormat;
@@ -109,7 +115,10 @@ public class SimpleExoPlayer
    *     will not be used for DRM protected playbacks.
    * @param looper The {@link Looper} which must be used for all calls to the player and which is
    *     used to call listeners on.
+   * @deprecated Use {@link #SimpleExoPlayer(Context, RenderersFactory, TrackSelector, LoadControl,
+   *     BandwidthMeter, DrmSessionManager, Looper)}.
    */
+  @Deprecated
   protected SimpleExoPlayer(
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
@@ -118,6 +127,7 @@ public class SimpleExoPlayer
       @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       Looper looper) {
     this(
+        /* context= */ null,
         renderersFactory,
         trackSelector,
         loadControl,
@@ -128,6 +138,37 @@ public class SimpleExoPlayer
   }
 
   /**
+   * @param context A {@link Context}.
+   * @param renderersFactory A factory for creating {@link Renderer}s to be used by the instance.
+   * @param trackSelector The {@link TrackSelector} that will be used by the instance.
+   * @param loadControl The {@link LoadControl} that will be used by the instance.
+   * @param bandwidthMeter The {@link BandwidthMeter} that will be used by the instance.
+   * @param drmSessionManager An optional {@link DrmSessionManager}. May be null if the instance
+   *     will not be used for DRM protected playbacks.
+   * @param looper The {@link Looper} which must be used for all calls to the player and which is
+   *     used to call listeners on.
+   */
+  protected SimpleExoPlayer(
+      Context context,
+      RenderersFactory renderersFactory,
+      TrackSelector trackSelector,
+      LoadControl loadControl,
+      BandwidthMeter bandwidthMeter,
+      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
+      Looper looper) {
+    this(
+        context,
+        renderersFactory,
+        trackSelector,
+        loadControl,
+        drmSessionManager,
+        bandwidthMeter,
+        new AnalyticsCollector.Factory(),
+        looper);
+  }
+
+  /**
+   * @param context A {@link Context}.
    * @param renderersFactory A factory for creating {@link Renderer}s to be used by the instance.
    * @param trackSelector The {@link TrackSelector} that will be used by the instance.
    * @param loadControl The {@link LoadControl} that will be used by the instance.
@@ -140,6 +181,7 @@ public class SimpleExoPlayer
    *     used to call listeners on.
    */
   protected SimpleExoPlayer(
+      Context context,
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
@@ -148,6 +190,7 @@ public class SimpleExoPlayer
       AnalyticsCollector.Factory analyticsCollectorFactory,
       Looper looper) {
     this(
+        context,
         renderersFactory,
         trackSelector,
         loadControl,
@@ -159,6 +202,7 @@ public class SimpleExoPlayer
   }
 
   /**
+   * @param context A {@link Context}.
    * @param renderersFactory A factory for creating {@link Renderer}s to be used by the instance.
    * @param trackSelector The {@link TrackSelector} that will be used by the instance.
    * @param loadControl The {@link LoadControl} that will be used by the instance.
@@ -173,6 +217,7 @@ public class SimpleExoPlayer
    *     used to call listeners on.
    */
   protected SimpleExoPlayer(
+      Context context,
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
@@ -181,6 +226,7 @@ public class SimpleExoPlayer
       AnalyticsCollector.Factory analyticsCollectorFactory,
       Clock clock,
       Looper looper) {
+    this.bandwidthMeter = bandwidthMeter;
     componentListener = new ComponentListener();
     videoListeners = new CopyOnWriteArraySet<>();
     audioListeners = new CopyOnWriteArraySet<>();
@@ -215,9 +261,17 @@ public class SimpleExoPlayer
     audioDebugListeners.add(analyticsCollector);
     audioListeners.add(analyticsCollector);
     addMetadataOutput(analyticsCollector);
+    bandwidthMeter.addEventListener(eventHandler, analyticsCollector);
     if (drmSessionManager instanceof DefaultDrmSessionManager) {
       ((DefaultDrmSessionManager) drmSessionManager).addListener(eventHandler, analyticsCollector);
     }
+    // TODO: Remove null check once the deprecated factory method and constructor that don't take
+    // Contexts have been removed.
+    audioManager =
+        context == null
+            ? null
+            : (AudioManager)
+                context.getApplicationContext().getSystemService(Context.AUDIO_SERVICE);
   }
 
   @Override
@@ -854,6 +908,7 @@ public class SimpleExoPlayer
     if (mediaSource != null) {
       mediaSource.removeEventListener(analyticsCollector);
     }
+    bandwidthMeter.removeEventListener(analyticsCollector);
     currentCues = Collections.emptyList();
   }
 

@@ -61,17 +61,8 @@ import java.util.UUID;
  */
 public final class MatroskaExtractor implements Extractor {
 
-  /**
-   * Factory for {@link MatroskaExtractor} instances.
-   */
-  public static final ExtractorsFactory FACTORY = new ExtractorsFactory() {
-
-    @Override
-    public Extractor[] createExtractors() {
-      return new Extractor[] {new MatroskaExtractor()};
-    }
-
-  };
+  /** Factory for {@link MatroskaExtractor} instances. */
+  public static final ExtractorsFactory FACTORY = () -> new Extractor[] {new MatroskaExtractor()};
 
   /**
    * Flags controlling the behavior of the extractor.
@@ -1560,7 +1551,7 @@ public final class MatroskaExtractor implements Extractor {
       if (!foundSyncframe) {
         input.peekFully(syncframePrefix, 0, Ac3Util.TRUEHD_SYNCFRAME_PREFIX_LENGTH);
         input.resetPeekPosition();
-        if ((Ac3Util.parseTrueHdSyncframeAudioSampleCount(syncframePrefix) == C.INDEX_UNSET)) {
+        if (Ac3Util.parseTrueHdSyncframeAudioSampleCount(syncframePrefix) == 0) {
           return;
         }
         foundSyncframe = true;
