@@ -24,6 +24,7 @@ import android.media.MediaFormat;
 import android.support.annotation.IntDef;
 import android.view.Surface;
 import com.google.android.exoplayer2.PlayerMessage.Target;
+import com.google.android.exoplayer2.audio.AuxEffectInfo;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -283,24 +284,32 @@ public final class C {
   public static final int FLAG_AUDIBILITY_ENFORCED =
       android.media.AudioAttributes.FLAG_AUDIBILITY_ENFORCED;
 
-  /**
-   * Usage types for {@link com.google.android.exoplayer2.audio.AudioAttributes}.
-   */
+  /** Usage types for {@link com.google.android.exoplayer2.audio.AudioAttributes}. */
   @Retention(RetentionPolicy.SOURCE)
-  @IntDef({USAGE_ALARM, USAGE_ASSISTANCE_ACCESSIBILITY, USAGE_ASSISTANCE_NAVIGATION_GUIDANCE,
-      USAGE_ASSISTANCE_SONIFICATION, USAGE_GAME, USAGE_MEDIA, USAGE_NOTIFICATION,
-      USAGE_NOTIFICATION_COMMUNICATION_DELAYED, USAGE_NOTIFICATION_COMMUNICATION_INSTANT,
-      USAGE_NOTIFICATION_COMMUNICATION_REQUEST, USAGE_NOTIFICATION_EVENT,
-      USAGE_NOTIFICATION_RINGTONE, USAGE_UNKNOWN, USAGE_VOICE_COMMUNICATION,
-      USAGE_VOICE_COMMUNICATION_SIGNALLING})
+  @IntDef({
+    USAGE_ALARM,
+    USAGE_ASSISTANCE_ACCESSIBILITY,
+    USAGE_ASSISTANCE_NAVIGATION_GUIDANCE,
+    USAGE_ASSISTANCE_SONIFICATION,
+    USAGE_ASSISTANT,
+    USAGE_GAME,
+    USAGE_MEDIA,
+    USAGE_NOTIFICATION,
+    USAGE_NOTIFICATION_COMMUNICATION_DELAYED,
+    USAGE_NOTIFICATION_COMMUNICATION_INSTANT,
+    USAGE_NOTIFICATION_COMMUNICATION_REQUEST,
+    USAGE_NOTIFICATION_EVENT,
+    USAGE_NOTIFICATION_RINGTONE,
+    USAGE_UNKNOWN,
+    USAGE_VOICE_COMMUNICATION,
+    USAGE_VOICE_COMMUNICATION_SIGNALLING
+  })
   public @interface AudioUsage {}
   /**
    * @see android.media.AudioAttributes#USAGE_ALARM
    */
   public static final int USAGE_ALARM = android.media.AudioAttributes.USAGE_ALARM;
-  /**
-   * @see android.media.AudioAttributes#USAGE_ASSISTANCE_ACCESSIBILITY
-   */
+  /** @see android.media.AudioAttributes#USAGE_ASSISTANCE_ACCESSIBILITY */
   public static final int USAGE_ASSISTANCE_ACCESSIBILITY =
       android.media.AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY;
   /**
@@ -313,6 +322,8 @@ public final class C {
    */
   public static final int USAGE_ASSISTANCE_SONIFICATION =
       android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION;
+  /** @see android.media.AudioAttributes#USAGE_ASSISTANT */
+  public static final int USAGE_ASSISTANT = android.media.AudioAttributes.USAGE_ASSISTANT;
   /**
    * @see android.media.AudioAttributes#USAGE_GAME
    */
@@ -365,6 +376,29 @@ public final class C {
   public static final int USAGE_VOICE_COMMUNICATION_SIGNALLING =
       android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING;
 
+  /** Audio focus types. */
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({
+    AUDIOFOCUS_NONE,
+    AUDIOFOCUS_GAIN,
+    AUDIOFOCUS_GAIN_TRANSIENT,
+    AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+    AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+  })
+  public @interface AudioFocusGain {}
+  /** @see AudioManager#AUDIOFOCUS_NONE */
+  public static final int AUDIOFOCUS_NONE = AudioManager.AUDIOFOCUS_NONE;
+  /** @see AudioManager#AUDIOFOCUS_GAIN */
+  public static final int AUDIOFOCUS_GAIN = AudioManager.AUDIOFOCUS_GAIN;
+  /** @see AudioManager#AUDIOFOCUS_GAIN_TRANSIENT */
+  public static final int AUDIOFOCUS_GAIN_TRANSIENT = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT;
+  /** @see AudioManager#AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK */
+  public static final int AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK =
+      AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK;
+  /** @see AudioManager#AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE */
+  public static final int AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE =
+      AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE;
+
   /**
    * Flags which can apply to a buffer containing a media sample.
    */
@@ -380,14 +414,10 @@ public final class C {
    * Flag for empty buffers that signal that the end of the stream was reached.
    */
   public static final int BUFFER_FLAG_END_OF_STREAM = MediaCodec.BUFFER_FLAG_END_OF_STREAM;
-  /**
-   * Indicates that a buffer is (at least partially) encrypted.
-   */
-  public static final int BUFFER_FLAG_ENCRYPTED = 0x40000000;
-  /**
-   * Indicates that a buffer should be decoded but not rendered.
-   */
-  public static final int BUFFER_FLAG_DECODE_ONLY = 0x80000000;
+  /** Indicates that a buffer is (at least partially) encrypted. */
+  public static final int BUFFER_FLAG_ENCRYPTED = 1 << 30; // 0x40000000
+  /** Indicates that a buffer should be decoded but not rendered. */
+  public static final int BUFFER_FLAG_DECODE_ONLY = 1 << 31; // 0x80000000
 
   /**
    * Video scaling modes for {@link MediaCodec}-based {@link Renderer}s.
@@ -421,15 +451,13 @@ public final class C {
    * Indicates that the track should be selected if user preferences do not state otherwise.
    */
   public static final int SELECTION_FLAG_DEFAULT = 1;
-  /**
-   * Indicates that the track must be displayed. Only applies to text tracks.
-   */
-  public static final int SELECTION_FLAG_FORCED = 2;
+  /** Indicates that the track must be displayed. Only applies to text tracks. */
+  public static final int SELECTION_FLAG_FORCED = 1 << 1; // 2
   /**
    * Indicates that the player may choose to play the track in absence of an explicit user
    * preference.
    */
-  public static final int SELECTION_FLAG_AUTOSELECT = 4;
+  public static final int SELECTION_FLAG_AUTOSELECT = 1 << 2; // 4
 
   /**
    * Represents an undetermined language as an ISO 639 alpha-3 language code.
@@ -496,9 +524,9 @@ public final class C {
   /** A data type constant for ads loader data. */
   public static final int DATA_TYPE_AD = 6;
   /**
-   * A data type constant for progressive media live streams, typically containing media samples.
+   * A data type constant for live progressive media streams, typically containing media samples.
    */
-  public static final int DATA_TYPE_MEDIA_LIVE_STREAM = 7;
+  public static final int DATA_TYPE_MEDIA_PROGRESSIVE_LIVE = 7;
   /**
    * Applications or extensions may define custom {@code DATA_TYPE_*} constants greater than or
    * equal to this value.
@@ -697,6 +725,13 @@ public final class C {
    * owned by a {@link android.view.SurfaceView}.
    */
   public static final int MSG_SET_SCALING_MODE = 4;
+
+  /**
+   * A type of a message that can be passed to an audio {@link Renderer} via {@link
+   * ExoPlayer#createMessage(Target)}. The message payload should be an {@link AuxEffectInfo}
+   * instance representing an auxiliary audio effect for the underlying audio track.
+   */
+  public static final int MSG_SET_AUX_EFFECT_INFO = 5;
 
   /**
    * Applications or extensions may define custom {@code MSG_*} constants that can be passed to

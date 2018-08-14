@@ -123,7 +123,7 @@ public final class MimeTypes {
    * @param mimeType The mimeType to test.
    * @return Whether the top level type is audio.
    */
-  public static boolean isAudio(String mimeType) {
+  public static boolean isAudio(@Nullable String mimeType) {
     return BASE_TYPE_AUDIO.equals(getTopLevelType(mimeType));
   }
 
@@ -133,7 +133,7 @@ public final class MimeTypes {
    * @param mimeType The mimeType to test.
    * @return Whether the top level type is video.
    */
-  public static boolean isVideo(String mimeType) {
+  public static boolean isVideo(@Nullable String mimeType) {
     return BASE_TYPE_VIDEO.equals(getTopLevelType(mimeType));
   }
 
@@ -143,7 +143,7 @@ public final class MimeTypes {
    * @param mimeType The mimeType to test.
    * @return Whether the top level type is text.
    */
-  public static boolean isText(String mimeType) {
+  public static boolean isText(@Nullable String mimeType) {
     return BASE_TYPE_TEXT.equals(getTopLevelType(mimeType));
   }
 
@@ -153,7 +153,7 @@ public final class MimeTypes {
    * @param mimeType The mimeType to test.
    * @return Whether the top level type is application.
    */
-  public static boolean isApplication(String mimeType) {
+  public static boolean isApplication(@Nullable String mimeType) {
     return BASE_TYPE_APPLICATION.equals(getTopLevelType(mimeType));
   }
 
@@ -252,7 +252,7 @@ public final class MimeTypes {
 
   /**
    * Derives a mimeType from MP4 object type identifier, as defined in RFC 6381 and
-   * http://www.mp4ra.org/object.html.
+   * https://mp4ra.org/#/object_types.
    *
    * @param objectType The objectType identifier to derive.
    * @return The mimeType, or null if it could not be derived.

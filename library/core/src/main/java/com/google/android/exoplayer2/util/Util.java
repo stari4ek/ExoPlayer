@@ -33,6 +33,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcel;
+import android.security.NetworkSecurityPolicy;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.telephony.TelephonyManager;
@@ -69,7 +70,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.DataFormatException;
+import java.util.zip.Inflater;
 import org.checkerframework.checker.initialization.qual.UnknownInitialization;
+import org.checkerframework.checker.nullness.compatqual.NullableType;
 import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
@@ -183,6 +187,29 @@ public final class Util {
   }
 
   /**
+   * Returns whether it may be possible to load the given URIs based on the network security
+   * policy's cleartext traffic permissions.
+   *
+   * @param uris A list of URIs that will be loaded.
+   * @return Whether it may be possible to load the given URIs.
+   */
+  @TargetApi(24)
+  public static boolean checkCleartextTrafficPermitted(Uri... uris) {
+    if (Util.SDK_INT < 24) {
+      // We assume cleartext traffic is permitted.
+      return true;
+    }
+    for (Uri uri : uris) {
+      if ("http".equals(uri.getScheme())
+          && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(uri.getHost())) {
+        // The security policy prevents cleartext traffic.
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /**
    * Returns true if the URI is a path to a local file or a reference to a local file.
    *
    * @param uri The uri to test.
@@ -242,6 +269,13 @@ public final class Util {
   @SuppressWarnings({"contracts.postcondition.not.satisfied", "return.type.incompatible"})
   @EnsuresNonNull("#1")
   public static <T> T castNonNull(@Nullable T value) {
+    return value;
+  }
+
+  /** Casts a nullable type array to a non-null type array without runtime null check. */
+  @SuppressWarnings({"contracts.postcondition.not.satisfied", "return.type.incompatible"})
+  @EnsuresNonNull("#1")
+  public static <T> T[] castNonNullTypeArray(@NullableType T[] value) {
     return value;
   }
 
@@ -1637,6 +1671,53 @@ public final class Util {
       }
     }
     return toUpperInvariant(Locale.getDefault().getCountry());
+  }
+
+  /**
+   * Uncompresses the data in {@code input}.
+   *
+   * @param input Wraps the compressed input data.
+   * @param output Wraps an output buffer to be used to store the uncompressed data. If {@code
+   *     output.data} is null or it isn't big enough to hold the uncompressed data, a new array is
+   *     created. If {@code true} is returned then the output's position will be set to 0 and its
+   *     limit will be set to the length of the uncompressed data.
+   * @param inflater If not null, used to uncompressed the input. Otherwise a new {@link Inflater}
+   *     is created.
+   * @return Whether the input is uncompressed successfully.
+   */
+  public static boolean inflate(
+      ParsableByteArray input, ParsableByteArray output, @Nullable Inflater inflater) {
+    if (input.bytesLeft() <= 0) {
+      return false;
+    }
+    byte[] outputData = output.data;
+    if (outputData == null) {
+      outputData = new byte[input.bytesLeft()];
+    }
+    if (inflater == null) {
+      inflater = new Inflater();
+    }
+    inflater.setInput(input.data, input.getPosition(), input.bytesLeft());
+    try {
+      int outputSize = 0;
+      while (true) {
+        outputSize += inflater.inflate(outputData, outputSize, outputData.length - outputSize);
+        if (inflater.finished()) {
+          output.reset(outputData, outputSize);
+          return true;
+        }
+        if (inflater.needsDictionary() || inflater.needsInput()) {
+          return false;
+        }
+        if (outputSize == outputData.length) {
+          outputData = Arrays.copyOf(outputData, outputData.length * 2);
+        }
+      }
+    } catch (DataFormatException e) {
+      return false;
+    } finally {
+      inflater.reset();
+    }
   }
 
   /**

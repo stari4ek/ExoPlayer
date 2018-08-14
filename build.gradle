@@ -17,8 +17,9 @@ buildscript {
         google()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.2.0-beta05'
+        classpath 'com.android.tools.build:gradle:3.1.4'
         classpath 'com.novoda:bintray-release:0.8.1'
+        classpath 'com.google.android.gms:strict-version-matcher-plugin:1.0.3'
     }
     // Workaround for the following test coverage issue. Remove when fixed:
     // https://code.google.com/p/android/issues/detail?id=226070
@@ -35,7 +36,7 @@ allprojects {
         google()
     }
     project.ext {
-        // exoplayerPublishEnabled = true
+        exoplayerPublishEnabled = true
     }
     if (it.hasProperty('externalBuildDir')) {
         if (!new File(externalBuildDir).isAbsolute()) {

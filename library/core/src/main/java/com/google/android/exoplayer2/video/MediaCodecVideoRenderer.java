@@ -246,11 +246,11 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       }
     }
     List<MediaCodecInfo> decoderInfos =
-        mediaCodecSelector.getDecoderInfos(format, requiresSecureDecryption);
+        mediaCodecSelector.getDecoderInfos(format.sampleMimeType, requiresSecureDecryption);
     if (decoderInfos.isEmpty()) {
       return requiresSecureDecryption
               && !mediaCodecSelector
-                  .getDecoderInfos(format, /* requiresSecureDecoder= */ false)
+                  .getDecoderInfos(format.sampleMimeType, /* requiresSecureDecoder= */ false)
                   .isEmpty()
           ? FORMAT_UNSUPPORTED_DRM
           : FORMAT_UNSUPPORTED_SUBTYPE;
@@ -682,6 +682,15 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
     // We're either not playing, or it's not time to render the frame yet.
     return false;
+  }
+
+  /**
+   * Returns the offset that should be subtracted from {@code bufferPresentationTimeUs} in {@link
+   * #processOutputBuffer(long, long, MediaCodec, ByteBuffer, int, int, long, boolean)} to get the
+   * playback position with respect to the media.
+   */
+  protected long getOutputStreamOffsetUs() {
+    return outputStreamOffsetUs;
   }
 
   /**

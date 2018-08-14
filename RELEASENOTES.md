@@ -2,25 +2,37 @@
 
 ### dev-v2 (not yet released) ###
 
+* Add a flag to opt-in to automatic audio focus handling via
+  `SimpleExoPlayer.setAudioAttributes`.
+* Distribute Cronet extension via jCenter.
+* Set compileSdkVersion and targetSdkVersion to 28.
 * Add `AudioListener` for listening to changes in audio configuration during
   playback ([#3994](https://github.com/google/ExoPlayer/issues/3994)).
-* MPEG-TS:
-  * Support CEA-608/708 in H262
-    ([#2565](https://github.com/google/ExoPlayer/issues/2565)).
-  * Fix bug preventing SCTE-35 cues from being output
-    ([#4573](https://github.com/google/ExoPlayer/issues/4573)).
-* MPEG-PS: Support reading duration and seeking for MPEG-PS Streams
-  ([#4476](https://github.com/google/ExoPlayer/issues/4476)).
-* MediaSession extension:
-  * Allow apps to set custom errors.
+* Improved seeking support:
+  * Support seeking in MPEG-TS
+    ([#966](https://github.com/google/ExoPlayer/issues/966)).
+  * Support seeking in MPEG-PS
+    ([#4476](https://github.com/google/ExoPlayer/issues/4476)).
+  * Support approximate seeking in ADTS using a constant bitrate assumption
+    ([#4548](https://github.com/google/ExoPlayer/issues/4548)). Note that the
+    `FLAG_ENABLE_CONSTANT_BITRATE_SEEKING` flag must be set on the extractor to
+    enable this functionality.
+  * Support approximate seeking in AMR using a constant bitrate assumption.
+    Note that the `FLAG_ENABLE_CONSTANT_BITRATE_SEEKING` flag must be set on the
+    extractor to enable this functionality.
+  * Add `DefaultExtractorsFactory.setConstantBitrateSeekingEnabled` to enable
+    approximate seeking using a constant bitrate assumption for all extractors
+    that support it.
+* MPEG-TS: Support CEA-608/708 in H262
+  ([#2565](https://github.com/google/ExoPlayer/issues/2565)).
+* MediaSession extension: Allow apps to set custom errors.
 * Audio:
-  * Support seeking for the AMR container format using constant bitrate seek
-    map.
   * Add support for mu-law and A-law PCM with the ffmpeg extension
     ([#4360](https://github.com/google/ExoPlayer/issues/4360)).
   * Increase `AudioTrack` buffer sizes to the theoretical maximum required for
     each encoding for passthrough playbacks
     ([#3803](https://github.com/google/ExoPlayer/issues/3803)).
+  * Add support for attaching auxiliary audio effects to the `AudioTrack`.
 * Allow apps to pass a `CacheKeyFactory` for setting custom cache keys when
   creating a `CacheDataSource`.
 * Turned on Java 8 compiler support for the ExoPlayer library. Apps that depend
@@ -51,6 +63,8 @@
   * Allow configuration of the Loader retry delay
     ([#3370](https://github.com/google/ExoPlayer/issues/3370)).
 * HLS:
+  * Add support for PlayReady.
+  * Add support for alternative EXT-X-KEY tags.
   * Set the bitrate on primary track sample formats
     ([#3297](https://github.com/google/ExoPlayer/issues/3297)).
   * Pass HTTP response headers to `HlsExtractorFactory.createExtractor`.
@@ -85,6 +99,11 @@
   ([#273](https://github.com/google/ExoPlayer/issues/273)).
 * Fix where transitions to clipped media sources happened too early
   ([#4583](https://github.com/google/ExoPlayer/issues/4583)).
+* Add `DataSpec.httpMethod` and update `HttpDataSource` implementations to
+  support HTTP HEAD method. Previously, only GET and POST were supported.
+* IMA: Improve handling of consecutive empty ad groups
+  ([#4030](https://github.com/google/ExoPlayer/issues/4030)),
+  ([#4280](https://github.com/google/ExoPlayer/issues/4280)).
 
 ### 2.8.3 ###
 
@@ -98,10 +117,15 @@
     ([#4491](https://github.com/google/ExoPlayer/issues/4491)).
   * CEA-608: Improve handling of embedded styles
     ([#4321](https://github.com/google/ExoPlayer/issues/4321)).
-* DASH: Exclude text streams from duration calculations
-  ([#4029](https://github.com/google/ExoPlayer/issues/4029)).
+* DASH:
+  * Exclude text streams from duration calculations
+    ([#4029](https://github.com/google/ExoPlayer/issues/4029)).
+  * Fix freezing when playing multi-period manifests with `EventStream`s
+    ([#4492](https://github.com/google/ExoPlayer/issues/4492)).
 * DRM: Allow DrmInitData to carry a license server URL
   ([#3393](https://github.com/google/ExoPlayer/issues/3393)).
+* MPEG-TS: Fix bug preventing SCTE-35 cues from being output
+  ([#4573](https://github.com/google/ExoPlayer/issues/4573)).
 * Expose all internal ID3 data stored in MP4 udta boxes, and switch from using
   CommentFrame to InternalFrame for frames with gapless metadata in MP4.
 * Add `PlayerView.isControllerVisible`
@@ -120,6 +144,8 @@
   ([#4348](https://github.com/google/ExoPlayer/issues/4348)).
 * Fix issue when switching track selection from an embedded track to a primary
   track in DASH ([#4477](https://github.com/google/ExoPlayer/issues/4477)).
+* Fix accessibility class name for `DefaultTimeBar`
+  ([#4611](https://github.com/google/ExoPlayer/issues/4611)).
 * Improved compatibility with FireOS devices.
 
 ### 2.8.2 ###
