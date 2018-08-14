@@ -20,14 +20,16 @@ project.ext {
     // However, please note that the core media playback functionality provided
     // by the library requires API level 16 or greater.
     minSdkVersion = 14
+    // targetSdkVersion = 28
+    // compileSdkVersion = 28
+    // TVirl: do not jump to 28 - don't rush to "no plain text http" yet
     targetSdkVersion = 27
     compileSdkVersion = 27
-    buildToolsVersion = '27.0.3'
+    buildToolsVersion = '28.0.2'
     testSupportLibraryVersion = '0.5'
-    // supportLibraryVersion = '27.0.0'
     supportLibraryVersion = '27.1.1'
     // TVirl: play-services-ads, play-services-cast-framework
-    playServicesLibraryVersion = '15.0.1'
+    //playServicesLibraryVersion = '15.0.1'
     dexmakerVersion = '1.2'
     mockitoVersion = '1.9.5'
     junitVersion = '4.12'

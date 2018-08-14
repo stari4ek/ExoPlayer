@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.ext.cronet;
 
 import android.net.Uri;
-import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Log;
 import com.google.android.exoplayer2.C;
@@ -25,7 +24,6 @@ import com.google.android.exoplayer2.upstream.BaseDataSource;
 import com.google.android.exoplayer2.upstream.DataSourceException;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.upstream.HttpDataSource;
-import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.ConditionVariable;
@@ -156,15 +154,18 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
    * @param contentTypePredicate An optional {@link Predicate}. If a content type is rejected by the
    *     predicate then an {@link InvalidContentTypeException} is thrown from {@link
    *     #open(DataSpec)}.
-   * @param listener An optional listener.
    */
   public CronetDataSource(
-      CronetEngine cronetEngine,
-      Executor executor,
-      Predicate<String> contentTypePredicate,
-      @Nullable TransferListener listener) {
-    this(cronetEngine, executor, contentTypePredicate, listener, DEFAULT_CONNECT_TIMEOUT_MILLIS,
-        DEFAULT_READ_TIMEOUT_MILLIS, false, null, false);
+      CronetEngine cronetEngine, Executor executor, Predicate<String> contentTypePredicate) {
+    this(
+        cronetEngine,
+        executor,
+        contentTypePredicate,
+        DEFAULT_CONNECT_TIMEOUT_MILLIS,
+        DEFAULT_READ_TIMEOUT_MILLIS,
+        false,
+        null,
+        false);
   }
 
   /**
@@ -177,7 +178,6 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
    * @param contentTypePredicate An optional {@link Predicate}. If a content type is rejected by the
    *     predicate then an {@link InvalidContentTypeException} is thrown from {@link
    *     #open(DataSpec)}.
-   * @param listener An optional listener.
    * @param connectTimeoutMs The connection timeout, in milliseconds.
    * @param readTimeoutMs The read timeout, in milliseconds.
    * @param resetTimeoutOnRedirects Whether the connect timeout is reset when a redirect occurs.
@@ -187,13 +187,20 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
       CronetEngine cronetEngine,
       Executor executor,
       Predicate<String> contentTypePredicate,
-      @Nullable TransferListener listener,
       int connectTimeoutMs,
       int readTimeoutMs,
       boolean resetTimeoutOnRedirects,
       RequestProperties defaultRequestProperties) {
-    this(cronetEngine, executor, contentTypePredicate, listener, connectTimeoutMs,
-        readTimeoutMs, resetTimeoutOnRedirects, Clock.DEFAULT, defaultRequestProperties, false);
+    this(
+        cronetEngine,
+        executor,
+        contentTypePredicate,
+        connectTimeoutMs,
+        readTimeoutMs,
+        resetTimeoutOnRedirects,
+        Clock.DEFAULT,
+        defaultRequestProperties,
+        false);
   }
 
   /**
@@ -206,7 +213,6 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
    * @param contentTypePredicate An optional {@link Predicate}. If a content type is rejected by the
    *     predicate then an {@link InvalidContentTypeException} is thrown from {@link
    *     #open(DataSpec)}.
-   * @param listener An optional listener.
    * @param connectTimeoutMs The connection timeout, in milliseconds.
    * @param readTimeoutMs The read timeout, in milliseconds.
    * @param resetTimeoutOnRedirects Whether the connect timeout is reset when a redirect occurs.
@@ -218,14 +224,20 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
       CronetEngine cronetEngine,
       Executor executor,
       Predicate<String> contentTypePredicate,
-      @Nullable TransferListener listener,
       int connectTimeoutMs,
       int readTimeoutMs,
       boolean resetTimeoutOnRedirects,
       RequestProperties defaultRequestProperties,
       boolean handleSetCookieRequests) {
-    this(cronetEngine, executor, contentTypePredicate, listener, connectTimeoutMs,
-        readTimeoutMs, resetTimeoutOnRedirects, Clock.DEFAULT, defaultRequestProperties,
+    this(
+        cronetEngine,
+        executor,
+        contentTypePredicate,
+        connectTimeoutMs,
+        readTimeoutMs,
+        resetTimeoutOnRedirects,
+        Clock.DEFAULT,
+        defaultRequestProperties,
         handleSetCookieRequests);
   }
 
@@ -233,7 +245,6 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
       CronetEngine cronetEngine,
       Executor executor,
       Predicate<String> contentTypePredicate,
-      @Nullable TransferListener listener,
       int connectTimeoutMs,
       int readTimeoutMs,
       boolean resetTimeoutOnRedirects,
@@ -253,9 +264,6 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
     this.handleSetCookieRequests = handleSetCookieRequests;
     requestProperties = new RequestProperties();
     operation = new ConditionVariable();
-    if (listener != null) {
-      addTransferListener(listener);
-    }
   }
 
   // HttpDataSource implementation.
@@ -465,8 +473,8 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
       isContentTypeHeaderSet = isContentTypeHeaderSet || CONTENT_TYPE.equals(key);
       requestBuilder.addHeader(key, headerEntry.getValue());
     }
-    if (dataSpec.postBody != null && dataSpec.postBody.length != 0 && !isContentTypeHeaderSet) {
-      throw new IOException("POST request with non-empty body must set Content-Type");
+    if (dataSpec.httpBody != null && !isContentTypeHeaderSet) {
+      throw new IOException("HTTP request with non-empty body must set Content-Type");
     }
     // Set the Range header.
     if (dataSpec.position != 0 || dataSpec.length != C.LENGTH_UNSET) {
@@ -486,12 +494,10 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
     //   requestBuilder.addHeader("Accept-Encoding", "identity");
     // }
     // Set the method and (if non-empty) the body.
-    if (dataSpec.postBody != null) {
-      requestBuilder.setHttpMethod("POST");
-      if (dataSpec.postBody.length != 0) {
-        requestBuilder.setUploadDataProvider(new ByteArrayUploadDataProvider(dataSpec.postBody),
-            executor);
-      }
+    requestBuilder.setHttpMethod(dataSpec.getHttpMethodString());
+    if (dataSpec.httpBody != null) {
+      requestBuilder.setUploadDataProvider(
+          new ByteArrayUploadDataProvider(dataSpec.httpBody), executor);
     }
     return requestBuilder;
   }

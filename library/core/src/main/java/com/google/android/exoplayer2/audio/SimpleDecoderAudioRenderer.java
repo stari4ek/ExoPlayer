@@ -58,6 +58,9 @@ import java.lang.annotation.RetentionPolicy;
  *   <li>Message with type {@link C#MSG_SET_AUDIO_ATTRIBUTES} to set the audio attributes. The
  *       message payload should be an {@link com.google.android.exoplayer2.audio.AudioAttributes}
  *       instance that will configure the underlying audio track.
+ *   <li>Message with type {@link C#MSG_SET_AUX_EFFECT_INFO} to set the auxiliary effect. The
+ *       message payload should be an {@link AuxEffectInfo} instance that will configure the
+ *       underlying audio track.
  * </ul>
  */
 public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements MediaClock {
@@ -218,6 +221,9 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
 
   @Override
   public final int supportsFormat(Format format) {
+    if (!MimeTypes.isAudio(format.sampleMimeType)) {
+      return FORMAT_UNSUPPORTED_TYPE;
+    }
     int formatSupport = supportsFormatInternal(drmSessionManager, format);
     if (formatSupport <= FORMAT_UNSUPPORTED_DRM) {
       return formatSupport;
@@ -227,15 +233,15 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
   }
 
   /**
-   * Returns the {@link #FORMAT_SUPPORT_MASK} component of the return value for
-   * {@link #supportsFormat(Format)}.
+   * Returns the {@link #FORMAT_SUPPORT_MASK} component of the return value for {@link
+   * #supportsFormat(Format)}.
    *
    * @param drmSessionManager The renderer's {@link DrmSessionManager}.
-   * @param format The format.
+   * @param format The format, which has an audio {@link Format#sampleMimeType}.
    * @return The extent to which the renderer supports the format itself.
    */
-  protected abstract int supportsFormatInternal(DrmSessionManager<ExoMediaCrypto> drmSessionManager,
-      Format format);
+  protected abstract int supportsFormatInternal(
+      DrmSessionManager<ExoMediaCrypto> drmSessionManager, Format format);
 
   /**
    * Returns whether the audio sink can accept audio in the specified encoding.
@@ -586,6 +592,10 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
       case C.MSG_SET_AUDIO_ATTRIBUTES:
         AudioAttributes audioAttributes = (AudioAttributes) message;
         audioSink.setAudioAttributes(audioAttributes);
+        break;
+      case C.MSG_SET_AUX_EFFECT_INFO:
+        AuxEffectInfo auxEffectInfo = (AuxEffectInfo) message;
+        audioSink.setAuxEffectInfo(auxEffectInfo);
         break;
       default:
         super.handleMessage(messageType, message);

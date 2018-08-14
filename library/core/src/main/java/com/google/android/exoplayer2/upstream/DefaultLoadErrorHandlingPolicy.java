@@ -17,7 +17,6 @@ package com.google.android.exoplayer2.upstream;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ParserException;
-import com.google.android.exoplayer2.source.chunk.ChunkedTrackBlacklistUtil;
 import com.google.android.exoplayer2.upstream.HttpDataSource.InvalidResponseCodeException;
 import java.io.IOException;
 
@@ -26,12 +25,28 @@ public final class DefaultLoadErrorHandlingPolicy implements LoadErrorHandlingPo
 
   /** The default minimum number of times to retry loading data prior to propagating the error. */
   public static final int DEFAULT_MIN_LOADABLE_RETRY_COUNT = 3;
+  /**
+   * The default minimum number of times to retry loading prior to failing for progressive live
+   * streams.
+   */
+  public static final int DEFAULT_MIN_LOADABLE_RETRY_COUNT_PROGRESSIVE_LIVE = 6;
+  /** The default duration for which a track is blacklisted in milliseconds. */
+  public static final long DEFAULT_TRACK_BLACKLIST_MS = 60000;
+
+  private static final int DEFAULT_BEHAVIOR_MIN_LOADABLE_RETRY_COUNT = -1;
 
   private final int minimumLoadableRetryCount;
 
-  /** Creates an instance that returns the default values. */
+  /**
+   * Creates an instance with default behavior.
+   *
+   * <p>{@link #getMinimumLoadableRetryCount} will return {@link
+   * #DEFAULT_MIN_LOADABLE_RETRY_COUNT_PROGRESSIVE_LIVE} for {@code dataType} {@link
+   * C#DATA_TYPE_MEDIA_PROGRESSIVE_LIVE}. For other {@code dataType} values, it will return {@link
+   * #DEFAULT_MIN_LOADABLE_RETRY_COUNT}.
+   */
   public DefaultLoadErrorHandlingPolicy() {
-    this(DEFAULT_MIN_LOADABLE_RETRY_COUNT);
+    this(DEFAULT_BEHAVIOR_MIN_LOADABLE_RETRY_COUNT);
   }
 
   /**
@@ -45,8 +60,7 @@ public final class DefaultLoadErrorHandlingPolicy implements LoadErrorHandlingPo
 
   /**
    * Blacklists resources whose load error was an {@link InvalidResponseCodeException} with response
-   * code HTTP 404 or 410. The duration of the blacklisting is {@link
-   * ChunkedTrackBlacklistUtil#DEFAULT_TRACK_BLACKLIST_MS}.
+   * code HTTP 404 or 410. The duration of the blacklisting is {@link #DEFAULT_TRACK_BLACKLIST_MS}.
    */
   @Override
   public long getBlacklistDurationMsFor(
@@ -55,7 +69,7 @@ public final class DefaultLoadErrorHandlingPolicy implements LoadErrorHandlingPo
       int responseCode = ((InvalidResponseCodeException) exception).responseCode;
       return responseCode == 404 // HTTP 404 Not Found.
               || responseCode == 410 // HTTP 410 Gone.
-          ? ChunkedTrackBlacklistUtil.DEFAULT_TRACK_BLACKLIST_MS
+          ? DEFAULT_TRACK_BLACKLIST_MS
           : C.TIME_UNSET;
     }
     return C.TIME_UNSET;
@@ -73,9 +87,18 @@ public final class DefaultLoadErrorHandlingPolicy implements LoadErrorHandlingPo
         : Math.min((errorCount - 1) * 1000, 5000);
   }
 
-  /** Returns {@link #DEFAULT_MIN_LOADABLE_RETRY_COUNT}. */
+  /**
+   * See {@link #DefaultLoadErrorHandlingPolicy()} and {@link #DefaultLoadErrorHandlingPolicy(int)}
+   * for documentation about the behavior of this method.
+   */
   @Override
   public int getMinimumLoadableRetryCount(int dataType) {
-    return minimumLoadableRetryCount;
+    if (minimumLoadableRetryCount == DEFAULT_BEHAVIOR_MIN_LOADABLE_RETRY_COUNT) {
+      return dataType == C.DATA_TYPE_MEDIA_PROGRESSIVE_LIVE
+          ? DEFAULT_MIN_LOADABLE_RETRY_COUNT_PROGRESSIVE_LIVE
+          : DEFAULT_MIN_LOADABLE_RETRY_COUNT;
+    } else {
+      return minimumLoadableRetryCount;
+    }
   }
 }
