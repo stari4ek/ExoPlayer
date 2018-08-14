@@ -45,6 +45,8 @@ import com.google.android.exoplayer2.util.MediaClock;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Decodes and renders audio using {@link MediaCodec} and an {@link AudioSink}.
@@ -229,7 +231,12 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       @Nullable Handler eventHandler,
       @Nullable AudioRendererEventListener eventListener,
       AudioSink audioSink) {
-    super(C.TRACK_TYPE_AUDIO, mediaCodecSelector, drmSessionManager, playClearSamplesWithoutKeys);
+    super(
+        C.TRACK_TYPE_AUDIO,
+        mediaCodecSelector,
+        drmSessionManager,
+        playClearSamplesWithoutKeys,
+        /* assumedMinimumCodecOperatingRate= */ 44100);
     this.context = context.getApplicationContext();
     this.audioSink = audioSink;
     eventDispatcher = new EventDispatcher(eventHandler, eventListener);
@@ -262,15 +269,21 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
         requiresSecureDecryption |= drmInitData.get(i).requiresSecureDecryption;
       }
     }
-    MediaCodecInfo decoderInfo = mediaCodecSelector.getDecoderInfo(mimeType,
-        requiresSecureDecryption);
-    if (decoderInfo == null) {
-      return requiresSecureDecryption && mediaCodecSelector.getDecoderInfo(mimeType, false) != null
-          ? FORMAT_UNSUPPORTED_DRM : FORMAT_UNSUPPORTED_SUBTYPE;
+    List<MediaCodecInfo> decoderInfos =
+        mediaCodecSelector.getDecoderInfos(format, requiresSecureDecryption);
+    if (decoderInfos.isEmpty()) {
+      return requiresSecureDecryption
+              && !mediaCodecSelector
+                  .getDecoderInfos(format, /* requiresSecureDecoder= */ false)
+                  .isEmpty()
+          ? FORMAT_UNSUPPORTED_DRM
+          : FORMAT_UNSUPPORTED_SUBTYPE;
     }
     if (!supportsFormatDrm) {
       return FORMAT_UNSUPPORTED_DRM;
     }
+    // Check capabilities for the first decoder in the list, which takes priority.
+    MediaCodecInfo decoderInfo = decoderInfos.get(0);
     // Note: We assume support for unknown sampleRate and channelCount.
     boolean decoderCapable = Util.SDK_INT < 21
         || ((format.sampleRate == Format.NO_VALUE
@@ -282,15 +295,16 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   }
 
   @Override
-  protected MediaCodecInfo getDecoderInfo(MediaCodecSelector mediaCodecSelector,
-      Format format, boolean requiresSecureDecoder) throws DecoderQueryException {
+  protected List<MediaCodecInfo> getDecoderInfos(
+      MediaCodecSelector mediaCodecSelector, Format format, boolean requiresSecureDecoder)
+      throws DecoderQueryException {
     if (allowPassthrough(format.sampleMimeType)) {
       MediaCodecInfo passthroughDecoderInfo = mediaCodecSelector.getPassthroughDecoderInfo();
       if (passthroughDecoderInfo != null) {
-        return passthroughDecoderInfo;
+        return Collections.singletonList(passthroughDecoderInfo);
       }
     }
-    return super.getDecoderInfo(mediaCodecSelector, format, requiresSecureDecoder);
+    return super.getDecoderInfos(mediaCodecSelector, format, requiresSecureDecoder);
   }
 
   /**
@@ -307,13 +321,18 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   }
 
   @Override
-  protected void configureCodec(MediaCodecInfo codecInfo, MediaCodec codec, Format format,
-      MediaCrypto crypto) {
+  protected void configureCodec(
+      MediaCodecInfo codecInfo,
+      MediaCodec codec,
+      Format format,
+      MediaCrypto crypto,
+      float codecOperatingRate) {
     codecMaxInputSize = getCodecMaxInputSize(codecInfo, format, getStreamFormats());
     codecNeedsDiscardChannelsWorkaround = codecNeedsDiscardChannelsWorkaround(codecInfo.name);
     passthroughEnabled = codecInfo.passthrough;
     String codecMimeType = codecInfo.mimeType == null ? MimeTypes.AUDIO_RAW : codecInfo.mimeType;
-    MediaFormat mediaFormat = getMediaFormat(format, codecMimeType, codecMaxInputSize);
+    MediaFormat mediaFormat =
+        getMediaFormat(format, codecMimeType, codecMaxInputSize, codecOperatingRate);
     codec.configure(mediaFormat, /* surface= */ null, crypto, /* flags= */ 0);
     if (passthroughEnabled) {
       // Store the input MIME type if we're using the passthrough codec.
@@ -339,6 +358,14 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   @Override
   public MediaClock getMediaClock() {
     return this;
+  }
+
+  @Override
+  protected float getCodecOperatingRate(
+      float operatingRate, Format format, Format[] streamFormats) {
+    return format.sampleRate == Format.NO_VALUE
+        ? CODEC_OPERATING_RATE_UNSET
+        : (format.sampleRate * operatingRate);
   }
 
   @Override
@@ -624,10 +651,13 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
    * @param format The format of the media.
    * @param codecMimeType The MIME type handled by the codec.
    * @param codecMaxInputSize The maximum input size supported by the codec.
+   * @param codecOperatingRate The codec operating rate, or {@link #CODEC_OPERATING_RATE_UNSET} if
+   *     no codec operating rate should be set.
    * @return The framework media format.
    */
   @SuppressLint("InlinedApi")
-  protected MediaFormat getMediaFormat(Format format, String codecMimeType, int codecMaxInputSize) {
+  protected MediaFormat getMediaFormat(
+      Format format, String codecMimeType, int codecMaxInputSize, float codecOperatingRate) {
     MediaFormat mediaFormat = new MediaFormat();
     // Set format parameters that should always be set.
     mediaFormat.setString(MediaFormat.KEY_MIME, codecMimeType);
@@ -639,6 +669,9 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     // Set codec configuration values.
     if (Util.SDK_INT >= 23) {
       mediaFormat.setInteger(MediaFormat.KEY_PRIORITY, 0 /* realtime priority */);
+      if (codecOperatingRate != CODEC_OPERATING_RATE_UNSET) {
+        mediaFormat.setFloat(MediaFormat.KEY_OPERATING_RATE, codecOperatingRate);
+      }
     }
     return mediaFormat;
   }

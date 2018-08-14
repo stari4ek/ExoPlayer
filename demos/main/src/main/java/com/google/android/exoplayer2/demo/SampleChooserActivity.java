@@ -94,9 +94,15 @@ public class SampleChooserActivity extends Activity
     SampleListLoader loaderTask = new SampleListLoader();
     loaderTask.execute(uris);
 
-    // Ping the download service in case it's not running (but should be).
-    startService(
-        new Intent(this, DemoDownloadService.class).setAction(DownloadService.ACTION_INIT));
+    // Start the download service if it should be running but it's not currently.
+    // Starting the service in the foreground causes notification flicker if there is no scheduled
+    // action. Starting it in the background throws an exception if the app is in the background too
+    // (e.g. if device screen is locked).
+    try {
+      DownloadService.start(this, DemoDownloadService.class);
+    } catch (IllegalStateException e) {
+      DownloadService.startForeground(this, DemoDownloadService.class);
+    }
   }
 
   @Override
@@ -244,6 +250,7 @@ public class SampleChooserActivity extends Activity
       ArrayList<UriSample> playlistSamples = null;
       String adTagUri = null;
       String abrAlgorithm = null;
+      String sphericalStereoMode = null;
 
       reader.beginObject();
       while (reader.hasNext()) {
@@ -304,6 +311,11 @@ public class SampleChooserActivity extends Activity
                 !insidePlaylist, "Invalid attribute on nested item: abr_algorithm");
             abrAlgorithm = reader.nextString();
             break;
+          case "spherical_stereo_mode":
+            Assertions.checkState(
+                !insidePlaylist, "Invalid attribute on nested item: spherical_stereo_mode");
+            sphericalStereoMode = reader.nextString();
+            break;
           default:
             throw new ParserException("Unsupported attribute name: " + name);
         }
@@ -320,7 +332,14 @@ public class SampleChooserActivity extends Activity
             sampleName, preferExtensionDecoders, abrAlgorithm, drmInfo, playlistSamplesArray);
       } else {
         return new UriSample(
-            sampleName, preferExtensionDecoders, abrAlgorithm, drmInfo, uri, extension, adTagUri);
+            sampleName,
+            preferExtensionDecoders,
+            abrAlgorithm,
+            drmInfo,
+            uri,
+            extension,
+            adTagUri,
+            sphericalStereoMode);
       }
     }
 
@@ -513,6 +532,7 @@ public class SampleChooserActivity extends Activity
     public final Uri uri;
     public final String extension;
     public final String adTagUri;
+    public final String sphericalStereoMode;
 
     public UriSample(
         String name,
@@ -521,11 +541,13 @@ public class SampleChooserActivity extends Activity
         DrmInfo drmInfo,
         Uri uri,
         String extension,
-        String adTagUri) {
+        String adTagUri,
+        String sphericalStereoMode) {
       super(name, preferExtensionDecoders, abrAlgorithm, drmInfo);
       this.uri = uri;
       this.extension = extension;
       this.adTagUri = adTagUri;
+      this.sphericalStereoMode = sphericalStereoMode;
     }
 
     @Override
@@ -534,6 +556,7 @@ public class SampleChooserActivity extends Activity
           .setData(uri)
           .putExtra(PlayerActivity.EXTENSION_EXTRA, extension)
           .putExtra(PlayerActivity.AD_TAG_URI_EXTRA, adTagUri)
+          .putExtra(PlayerActivity.SPHERICAL_STEREO_MODE_EXTRA, sphericalStereoMode)
           .setAction(PlayerActivity.ACTION_VIEW);
     }
 

@@ -50,7 +50,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Stack;
 import java.util.UUID;
 
 /**
@@ -58,17 +57,9 @@ import java.util.UUID;
  */
 public final class FragmentedMp4Extractor implements Extractor {
 
-  /**
-   * Factory for {@link FragmentedMp4Extractor} instances.
-   */
-  public static final ExtractorsFactory FACTORY = new ExtractorsFactory() {
-
-    @Override
-    public Extractor[] createExtractors() {
-      return new Extractor[] {new FragmentedMp4Extractor()};
-    }
-
-  };
+  /** Factory for {@link FragmentedMp4Extractor} instances. */
+  public static final ExtractorsFactory FACTORY =
+      () -> new Extractor[] {new FragmentedMp4Extractor()};
 
   /**
    * Flags controlling the behavior of the extractor.
@@ -141,7 +132,7 @@ public final class FragmentedMp4Extractor implements Extractor {
   // Parser state.
   private final ParsableByteArray atomHeader;
   private final byte[] extendedTypeScratch;
-  private final Stack<ContainerAtom> containerAtoms;
+  private final ArrayDeque<ContainerAtom> containerAtoms;
   private final ArrayDeque<MetadataSampleInfo> pendingMetadataSampleInfos;
   private final @Nullable TrackOutput additionalEmsgTrackOutput;
 
@@ -202,8 +193,7 @@ public final class FragmentedMp4Extractor implements Extractor {
       @Nullable TimestampAdjuster timestampAdjuster,
       @Nullable Track sideloadedTrack,
       @Nullable DrmInitData sideloadedDrmInitData) {
-    this(flags, timestampAdjuster, sideloadedTrack, sideloadedDrmInitData,
-        Collections.<Format>emptyList());
+    this(flags, timestampAdjuster, sideloadedTrack, sideloadedDrmInitData, Collections.emptyList());
   }
 
   /**
@@ -257,7 +247,7 @@ public final class FragmentedMp4Extractor implements Extractor {
     nalPrefix = new ParsableByteArray(5);
     nalBuffer = new ParsableByteArray();
     extendedTypeScratch = new byte[16];
-    containerAtoms = new Stack<>();
+    containerAtoms = new ArrayDeque<>();
     pendingMetadataSampleInfos = new ArrayDeque<>();
     trackBundles = new SparseArray<>();
     durationUs = C.TIME_UNSET;
@@ -390,7 +380,7 @@ public final class FragmentedMp4Extractor implements Extractor {
 
     if (shouldParseContainerAtom(atomType)) {
       long endPosition = input.getPosition() + atomSize - Atom.HEADER_SIZE;
-      containerAtoms.add(new ContainerAtom(atomType, endPosition));
+      containerAtoms.push(new ContainerAtom(atomType, endPosition));
       if (atomSize == atomHeaderBytesRead) {
         processAtomEnded(endPosition);
       } else {
@@ -500,7 +490,7 @@ public final class FragmentedMp4Extractor implements Extractor {
       for (int i = 0; i < trackCount; i++) {
         Track track = tracks.valueAt(i);
         TrackBundle trackBundle = new TrackBundle(extractorOutput.track(i, track.type));
-        trackBundle.init(track, defaultSampleValuesArray.get(track.id));
+        trackBundle.init(track, getDefaultSampleValues(defaultSampleValuesArray, track.id));
         trackBundles.put(track.id, trackBundle);
         durationUs = Math.max(durationUs, track.durationUs);
       }
@@ -510,9 +500,21 @@ public final class FragmentedMp4Extractor implements Extractor {
       Assertions.checkState(trackBundles.size() == trackCount);
       for (int i = 0; i < trackCount; i++) {
         Track track = tracks.valueAt(i);
-        trackBundles.get(track.id).init(track, defaultSampleValuesArray.get(track.id));
+        trackBundles
+            .get(track.id)
+            .init(track, getDefaultSampleValues(defaultSampleValuesArray, track.id));
       }
     }
+  }
+
+  private DefaultSampleValues getDefaultSampleValues(
+      SparseArray<DefaultSampleValues> defaultSampleValuesArray, int trackId) {
+    if (defaultSampleValuesArray.size() == 1) {
+      // Ignore track id if there is only one track to cope with non-matching track indices.
+      // See https://github.com/google/ExoPlayer/issues/4477.
+      return defaultSampleValuesArray.valueAt(/* index= */ 0);
+    }
+    return Assertions.checkNotNull(defaultSampleValuesArray.get(trackId));
   }
 
   private void onMoofContainerAtomRead(ContainerAtom moof) throws ParserException {
@@ -643,7 +645,7 @@ public final class FragmentedMp4Extractor implements Extractor {
   private static void parseTraf(ContainerAtom traf, SparseArray<TrackBundle> trackBundleArray,
       @Flags int flags, byte[] extendedTypeScratch) throws ParserException {
     LeafAtom tfhd = traf.getLeafAtomOfType(Atom.TYPE_tfhd);
-    TrackBundle trackBundle = parseTfhd(tfhd.data, trackBundleArray, flags);
+    TrackBundle trackBundle = parseTfhd(tfhd.data, trackBundleArray);
     if (trackBundle == null) {
       return;
     }
@@ -794,13 +796,13 @@ public final class FragmentedMp4Extractor implements Extractor {
    * @return The {@link TrackBundle} to which the {@link TrackFragment} belongs, or null if the tfhd
    *     does not refer to any {@link TrackBundle}.
    */
-  private static TrackBundle parseTfhd(ParsableByteArray tfhd,
-      SparseArray<TrackBundle> trackBundles, int flags) {
+  private static TrackBundle parseTfhd(
+      ParsableByteArray tfhd, SparseArray<TrackBundle> trackBundles) {
     tfhd.setPosition(Atom.HEADER_SIZE);
     int fullAtom = tfhd.readInt();
     int atomFlags = Atom.parseFullAtomFlags(fullAtom);
     int trackId = tfhd.readInt();
-    TrackBundle trackBundle = trackBundles.get((flags & FLAG_SIDELOADED) == 0 ? trackId : 0);
+    TrackBundle trackBundle = getTrackBundle(trackBundles, trackId);
     if (trackBundle == null) {
       return null;
     }
@@ -823,6 +825,17 @@ public final class FragmentedMp4Extractor implements Extractor {
     trackBundle.fragment.header = new DefaultSampleValues(defaultSampleDescriptionIndex,
         defaultSampleDuration, defaultSampleSize, defaultSampleFlags);
     return trackBundle;
+  }
+
+  private static @Nullable TrackBundle getTrackBundle(
+      SparseArray<TrackBundle> trackBundles, int trackId) {
+    if (trackBundles.size() == 1) {
+      // Ignore track id if there is only one track. This is either because we have a side-loaded
+      // track (flag FLAG_SIDELOADED) or to cope with non-matching track indices (see
+      // https://github.com/google/ExoPlayer/issues/4083).
+      return trackBundles.valueAt(/* index= */ 0);
+    }
+    return trackBundles.get(trackId);
   }
 
   /**

@@ -25,6 +25,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
+import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -53,18 +54,18 @@ public class HlsMediaPlaylistParserTest {
             + "\n"
             + "#EXT-X-KEY:METHOD=AES-128,"
             + "URI=\"https://priv.example.com/key.php?r=2680\",IV=0x1566B\n"
-            + "#EXTINF:7.975,\n"
+            + "#EXTINF:7.975,segment title\n"
             + "#EXT-X-BYTERANGE:51501@2147483648\n"
             + "https://priv.example.com/fileSequence2680.ts\n"
             + "\n"
             + "#EXT-X-KEY:METHOD=NONE\n"
-            + "#EXTINF:7.941,\n"
+            + "#EXTINF:7.941,segment title .,:/# with interesting chars\n"
             + "#EXT-X-BYTERANGE:51501\n" // @2147535149
             + "https://priv.example.com/fileSequence2681.ts\n"
             + "\n"
             + "#EXT-X-DISCONTINUITY\n"
             + "#EXT-X-KEY:METHOD=AES-128,URI=\"https://priv.example.com/key.php?r=2682\"\n"
-            + "#EXTINF:7.975,\n"
+            + "#EXTINF:7.975\n" // Trailing comma is omitted.
             + "#EXT-X-BYTERANGE:51740\n" // @2147586650
             + "https://priv.example.com/fileSequence2682.ts\n"
             + "\n"
@@ -90,6 +91,7 @@ public class HlsMediaPlaylistParserTest {
     assertThat(mediaPlaylist.discontinuitySequence + segment.relativeDiscontinuitySequence)
         .isEqualTo(4);
     assertThat(segment.durationUs).isEqualTo(7975000);
+    assertThat(segment.title).isEqualTo("");
     assertThat(segment.fullSegmentEncryptionKeyUri).isNull();
     assertThat(segment.encryptionIV).isNull();
     assertThat(segment.byterangeLength).isEqualTo(51370);
@@ -99,6 +101,7 @@ public class HlsMediaPlaylistParserTest {
     segment = segments.get(1);
     assertThat(segment.relativeDiscontinuitySequence).isEqualTo(0);
     assertThat(segment.durationUs).isEqualTo(7975000);
+    assertThat(segment.title).isEqualTo("segment title");
     assertThat(segment.fullSegmentEncryptionKeyUri)
         .isEqualTo("https://priv.example.com/key.php?r=2680");
     assertThat(segment.encryptionIV).isEqualTo("0x1566B");
@@ -109,6 +112,7 @@ public class HlsMediaPlaylistParserTest {
     segment = segments.get(2);
     assertThat(segment.relativeDiscontinuitySequence).isEqualTo(0);
     assertThat(segment.durationUs).isEqualTo(7941000);
+    assertThat(segment.title).isEqualTo("segment title .,:/# with interesting chars");
     assertThat(segment.fullSegmentEncryptionKeyUri).isNull();
     assertThat(segment.encryptionIV).isEqualTo(null);
     assertThat(segment.byterangeLength).isEqualTo(51501);
@@ -118,6 +122,7 @@ public class HlsMediaPlaylistParserTest {
     segment = segments.get(3);
     assertThat(segment.relativeDiscontinuitySequence).isEqualTo(1);
     assertThat(segment.durationUs).isEqualTo(7975000);
+    assertThat(segment.title).isEqualTo("");
     assertThat(segment.fullSegmentEncryptionKeyUri)
         .isEqualTo("https://priv.example.com/key.php?r=2682");
     // 0xA7A == 2682.
@@ -130,6 +135,7 @@ public class HlsMediaPlaylistParserTest {
     segment = segments.get(4);
     assertThat(segment.relativeDiscontinuitySequence).isEqualTo(1);
     assertThat(segment.durationUs).isEqualTo(7975000);
+    assertThat(segment.title).isEqualTo("");
     assertThat(segment.fullSegmentEncryptionKeyUri)
         .isEqualTo("https://priv.example.com/key.php?r=2682");
     // 0xA7B == 2683.
@@ -277,5 +283,43 @@ public class HlsMediaPlaylistParserTest {
         .isSameAs(segments.get(2).initializationSegment);
     assertThat(segments.get(1).initializationSegment.url).isEqualTo("init1.ts");
     assertThat(segments.get(3).initializationSegment.url).isEqualTo("init2.ts");
+  }
+
+  @Test
+  public void testMasterPlaylistAttributeInheritance() throws IOException {
+    Uri playlistUri = Uri.parse("https://example.com/test3.m3u8");
+    String playlistString =
+        "#EXTM3U\n"
+            + "#EXT-X-VERSION:3\n"
+            + "#EXT-X-TARGETDURATION:5\n"
+            + "#EXT-X-MEDIA-SEQUENCE:10\n"
+            + "#EXTINF:5.005,\n"
+            + "02/00/27.ts\n"
+            + "#EXT-X-MAP:URI=\"init1.ts\""
+            + "#EXTINF:5.005,\n"
+            + "02/00/32.ts\n"
+            + "#EXTINF:5.005,\n"
+            + "02/00/42.ts\n"
+            + "#EXT-X-MAP:URI=\"init2.ts\""
+            + "#EXTINF:5.005,\n"
+            + "02/00/47.ts\n";
+    InputStream inputStream =
+        new ByteArrayInputStream(playlistString.getBytes(Charset.forName(C.UTF8_NAME)));
+    HlsMediaPlaylist playlist =
+        (HlsMediaPlaylist) new HlsPlaylistParser().parse(playlistUri, inputStream);
+    assertThat(playlist.hasIndependentSegments).isFalse();
+
+    HlsMasterPlaylist masterPlaylist =
+        new HlsMasterPlaylist(
+            /* baseUri= */ "https://example.com/",
+            /* tags= */ Collections.emptyList(),
+            /* variants= */ Collections.emptyList(),
+            /* audios= */ Collections.emptyList(),
+            /* subtitles= */ Collections.emptyList(),
+            /* muxedAudioFormat= */ null,
+            /* muxedCaptionFormats= */ null,
+            /* hasIndependentSegments= */ true);
+
+    assertThat(playlist.copyWithMasterPlaylistInfo(masterPlaylist).hasIndependentSegments).isTrue();
   }
 }

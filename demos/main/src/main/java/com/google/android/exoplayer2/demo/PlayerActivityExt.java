@@ -35,7 +35,7 @@ public class PlayerActivityExt extends PlayerActivity {
                                   : uri.getLastPathSegment());
         if (type == C.TYPE_OTHER) {
             return new ExtractorMediaSource
-                .Factory(mediaDataSourceFactory)
+                .Factory(dataSourceFactory)
                 .setExtractorsFactory(
                     new ExtractorsFactory() {
 
