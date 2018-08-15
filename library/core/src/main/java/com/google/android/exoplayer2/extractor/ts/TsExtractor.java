@@ -229,9 +229,13 @@ public final class TsExtractor implements Extractor {
     }
     tsPacketBuffer.reset();
     continuityCounters.clear();
-    for (int i = 0; i < tsPayloadReaders.size(); i++) {
-      tsPayloadReaders.valueAt(i).seek();
-    }
+
+    // Elementary stream readers' state should be cleared to get consistent behaviours when seeking.
+    resetPayloadReaders();
+    // TVirl: https://github.com/stari4ek/iptv-for-androidtv/issues/1174
+//    for (int i = 0; i < tsPayloadReaders.size(); i++) {
+//      tsPayloadReaders.valueAt(i).seek();
+//    }
     bytesSinceLastSync = 0;
   }
 
@@ -318,18 +322,22 @@ public final class TsExtractor implements Extractor {
     }
 
     // Read the payload.
-    boolean wereTracksEnded = tracksEnded;
-    if (shouldConsumePacketPayload(pid)) {
-      tsPacketBuffer.setLimit(endOfPacket);
-      payloadReader.consume(tsPacketBuffer, payloadUnitStartIndicator);
-      tsPacketBuffer.setLimit(limit);
-    }
-    if (mode != MODE_HLS && !wereTracksEnded && tracksEnded) {
-      // We have read all tracks from all PMTs in this stream. Now seek to the beginning and read
-      // again to make sure we output all media, including any contained in packets prior to those
-      // containing the track information.
-      pendingSeekToStart = true;
-    }
+    // TVirl: https://github.com/stari4ek/iptv-for-androidtv/issues/1174
+    tsPacketBuffer.setLimit(endOfPacket);
+    payloadReader.consume(tsPacketBuffer, payloadUnitStartIndicator);
+    tsPacketBuffer.setLimit(limit);
+//    boolean wereTracksEnded = tracksEnded;
+//    if (shouldConsumePacketPayload(pid)) {
+//      tsPacketBuffer.setLimit(endOfPacket);
+//      payloadReader.consume(tsPacketBuffer, payloadUnitStartIndicator);
+//      tsPacketBuffer.setLimit(limit);
+//    }
+//    if (mode != MODE_HLS && !wereTracksEnded && tracksEnded) {
+//      // We have read all tracks from all PMTs in this stream. Now seek to the beginning and read
+//      // again to make sure we output all media, including any contained in packets prior to those
+//      // containing the track information.
+//      pendingSeekToStart = true;
+//    }
 
     tsPacketBuffer.setPosition(endOfPacket);
     return RESULT_CONTINUE;
