@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+@SuppressWarnings("ConstantField")
 /* package*/ abstract class Atom {
 
   /**
@@ -142,6 +143,8 @@ import java.util.List;
   public static final int TYPE_vpcC = Util.getIntegerCodeForString("vpcC");
   public static final int TYPE_camm = Util.getIntegerCodeForString("camm");
   public static final int TYPE_alac = Util.getIntegerCodeForString("alac");
+  public static final int TYPE_alaw = Util.getIntegerCodeForString("alaw");
+  public static final int TYPE_ulaw = Util.getIntegerCodeForString("ulaw");
 
   public final int type;
 

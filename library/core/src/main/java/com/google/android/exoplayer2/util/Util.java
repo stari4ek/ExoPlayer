@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.util;
 
 import android.Manifest.permission;
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.ComponentName;
@@ -34,11 +35,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcel;
 import android.security.NetworkSecurityPolicy;
-import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.Display;
 import android.view.WindowManager;
 import com.google.android.exoplayer2.C;
@@ -67,7 +66,6 @@ import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.DataFormatException;
@@ -86,9 +84,7 @@ public final class Util {
    * Like {@link android.os.Build.VERSION#SDK_INT}, but in a place where it can be conveniently
    * overridden for local testing.
    */
-  public static final int SDK_INT =
-      (Build.VERSION.SDK_INT == 25 && Build.VERSION.CODENAME.charAt(0) == 'O') ? 26
-      : Build.VERSION.SDK_INT;
+  public static final int SDK_INT = Build.VERSION.SDK_INT;
 
   /**
    * Like {@link Build#DEVICE}, but in a place where it can be conveniently overridden for local
@@ -113,6 +109,9 @@ public final class Util {
    */
   public static final String DEVICE_DEBUG_INFO = DEVICE + ", " + MODEL + ", " + MANUFACTURER + ", "
       + SDK_INT;
+
+  /** An empty byte array. */
+  public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
 
   private static final String TAG = "Util";
   private static final Pattern XS_DATE_TIME_PATTERN = Pattern.compile(
@@ -253,12 +252,21 @@ public final class Util {
   /**
    * Removes an indexed range from a List.
    *
+   * <p>Does nothing if the provided range is valid and {@code fromIndex == toIndex}.
+   *
    * @param list The List to remove the range from.
    * @param fromIndex The first index to be removed (inclusive).
    * @param toIndex The last index to be removed (exclusive).
+   * @throws IllegalArgumentException If {@code fromIndex} &lt; 0, {@code toIndex} &gt; {@code
+   *     list.size()}, or {@code fromIndex} &gt; {@code toIndex}.
    */
   public static <T> void removeRange(List<T> list, int fromIndex, int toIndex) {
-    list.subList(fromIndex, toIndex).clear();
+    if (fromIndex < 0 || toIndex > list.size() || fromIndex > toIndex) {
+      throw new IllegalArgumentException();
+    } else if (fromIndex != toIndex) {
+      // Checking index inequality prevents an unnecessary allocation.
+      list.subList(fromIndex, toIndex).clear();
+    }
   }
 
   /**
@@ -341,12 +349,7 @@ public final class Util {
    * @return The executor.
    */
   public static ExecutorService newSingleThreadExecutor(final String threadName) {
-    return Executors.newSingleThreadExecutor(new ThreadFactory() {
-      @Override
-      public Thread newThread(@NonNull Runnable r) {
-        return new Thread(r, threadName);
-      }
-    });
+    return Executors.newSingleThreadExecutor(runnable -> new Thread(runnable, threadName));
   }
 
   /**
@@ -1252,6 +1255,8 @@ public final class Util {
       case C.ENCODING_PCM_32BIT:
       case C.ENCODING_PCM_FLOAT:
         return channelCount * 4;
+      case C.ENCODING_PCM_A_LAW:
+      case C.ENCODING_PCM_MU_LAW:
       case C.ENCODING_INVALID:
       case Format.NO_VALUE:
       default:
@@ -1332,6 +1337,7 @@ public final class Util {
       case C.USAGE_NOTIFICATION_EVENT:
         return C.STREAM_TYPE_NOTIFICATION;
       case C.USAGE_ASSISTANCE_ACCESSIBILITY:
+      case C.USAGE_ASSISTANT:
       case C.USAGE_UNKNOWN:
       default:
         return C.STREAM_TYPE_DEFAULT;
@@ -1448,6 +1454,8 @@ public final class Util {
         return C.DEFAULT_TEXT_BUFFER_SIZE;
       case C.TRACK_TYPE_METADATA:
         return C.DEFAULT_METADATA_BUFFER_SIZE;
+      case C.TRACK_TYPE_CAMERA_MOTION:
+        return C.DEFAULT_CAMERA_MOTION_BUFFER_SIZE;
       default:
         throw new IllegalStateException();
     }
@@ -1557,7 +1565,7 @@ public final class Util {
    * and is not declared to be thrown.
    */
   public static void sneakyThrow(Throwable t) {
-    Util.<RuntimeException>sneakyThrowInternal(t);
+    Util.sneakyThrowInternal(t);
   }
 
   @SuppressWarnings("unchecked")
@@ -1678,9 +1686,9 @@ public final class Util {
    *
    * @param input Wraps the compressed input data.
    * @param output Wraps an output buffer to be used to store the uncompressed data. If {@code
-   *     output.data} is null or it isn't big enough to hold the uncompressed data, a new array is
-   *     created. If {@code true} is returned then the output's position will be set to 0 and its
-   *     limit will be set to the length of the uncompressed data.
+   *     output.data} isn't big enough to hold the uncompressed data, a new array is created. If
+   *     {@code true} is returned then the output's position will be set to 0 and its limit will be
+   *     set to the length of the uncompressed data.
    * @param inflater If not null, used to uncompressed the input. Otherwise a new {@link Inflater}
    *     is created.
    * @return Whether the input is uncompressed successfully.
@@ -1691,8 +1699,8 @@ public final class Util {
       return false;
     }
     byte[] outputData = output.data;
-    if (outputData == null) {
-      outputData = new byte[input.bytesLeft()];
+    if (outputData.length < input.bytesLeft()) {
+      outputData = new byte[2 * input.bytesLeft()];
     }
     if (inflater == null) {
       inflater = new Inflater();
@@ -1753,6 +1761,7 @@ public final class Util {
         // Attempt to read sys.display-size.
         String sysDisplaySize = null;
         try {
+          @SuppressLint("PrivateApi")
           Class<?> systemProperties = Class.forName("android.os.SystemProperties");
           Method getMethod = systemProperties.getMethod("get", String.class);
           sysDisplaySize = (String) getMethod.invoke(systemProperties, "sys.display-size");

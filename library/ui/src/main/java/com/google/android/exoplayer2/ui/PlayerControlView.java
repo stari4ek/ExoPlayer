@@ -20,6 +20,7 @@ import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.support.annotation.Nullable;
 import android.util.AttributeSet;
@@ -208,6 +209,8 @@ public class PlayerControlView extends FrameLayout {
   private final Formatter formatter;
   private final Timeline.Period period;
   private final Timeline.Window window;
+  private final Runnable updateProgressAction;
+  private final Runnable hideAction;
 
   private final Drawable repeatOffButtonDrawable;
   private final Drawable repeatOneButtonDrawable;
@@ -235,22 +238,6 @@ public class PlayerControlView extends FrameLayout {
   private boolean[] playedAdGroups;
   private long[] extraAdGroupTimesMs;
   private boolean[] extraPlayedAdGroups;
-
-  private final Runnable updateProgressAction =
-      new Runnable() {
-        @Override
-        public void run() {
-          updateProgress();
-        }
-      };
-
-  private final Runnable hideAction =
-      new Runnable() {
-        @Override
-        public void run() {
-          hide();
-        }
-      };
 
   public PlayerControlView(Context context) {
     this(context, null);
@@ -303,6 +290,8 @@ public class PlayerControlView extends FrameLayout {
     extraPlayedAdGroups = new boolean[0];
     componentListener = new ComponentListener();
     controlDispatcher = new com.google.android.exoplayer2.DefaultControlDispatcher();
+    updateProgressAction = this::updateProgress;
+    hideAction = this::hide;
 
     LayoutInflater.from(context).inflate(controllerLayoutId, this);
     setDescendantFocusability(FOCUS_AFTER_DESCENDANTS);
@@ -374,9 +363,14 @@ public class PlayerControlView extends FrameLayout {
   /**
    * Sets the {@link Player} to control.
    *
-   * @param player The {@link Player} to control.
+   * @param player The {@link Player} to control, or {@code null} to detach the current player. Only
+   *     players which are accessed on the main thread are supported ({@code
+   *     player.getApplicationLooper() == Looper.getMainLooper()}).
    */
-  public void setPlayer(Player player) {
+  public void setPlayer(@Nullable Player player) {
+    Assertions.checkState(Looper.myLooper() == Looper.getMainLooper());
+    Assertions.checkArgument(
+        player == null || player.getApplicationLooper() == Looper.getMainLooper());
     if (this.player == player) {
       return;
     }

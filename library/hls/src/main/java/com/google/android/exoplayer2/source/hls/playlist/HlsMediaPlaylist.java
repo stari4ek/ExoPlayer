@@ -154,11 +154,13 @@ public final class HlsMediaPlaylist extends HlsPlaylist {
   }
 
   /**
-   * Type of the playlist, as defined by #EXT-X-PLAYLIST-TYPE.
+   * Type of the playlist, as defined by #EXT-X-PLAYLIST-TYPE. One of {@link
+   * #PLAYLIST_TYPE_UNKNOWN}, {@link #PLAYLIST_TYPE_VOD} or {@link #PLAYLIST_TYPE_EVENT}.
    */
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({PLAYLIST_TYPE_UNKNOWN, PLAYLIST_TYPE_VOD, PLAYLIST_TYPE_EVENT})
   public @interface PlaylistType {}
+
   public static final int PLAYLIST_TYPE_UNKNOWN = 0;
   public static final int PLAYLIST_TYPE_VOD = 1;
   public static final int PLAYLIST_TYPE_EVENT = 2;
@@ -330,40 +332,6 @@ public final class HlsMediaPlaylist extends HlsPlaylist {
         version,
         targetDurationUs,
         hasIndependentSegments,
-        hasEndTag,
-        hasProgramDateTime,
-        protectionSchemes,
-        segments);
-  }
-
-  /**
-   * Returns a playlist identical to this one, except for adding any inheritable attributes from the
-   * provided {@link HlsMasterPlaylist}.
-   *
-   * <p>The inheritable attributes are:
-   *
-   * <ul>
-   *   <li>{@link #hasIndependentSegments}.
-   * </ul>
-   *
-   * @return An identical playlist including the inheritable attributes from {@code masterPlaylist}.
-   */
-  public HlsMediaPlaylist copyWithMasterPlaylistInfo(HlsMasterPlaylist masterPlaylist) {
-    if (hasIndependentSegments || !masterPlaylist.hasIndependentSegments) {
-      return this;
-    }
-    return new HlsMediaPlaylist(
-        playlistType,
-        baseUri,
-        tags,
-        startOffsetUs,
-        startTimeUs,
-        hasDiscontinuitySequence,
-        discontinuitySequence,
-        mediaSequence,
-        version,
-        targetDurationUs,
-        hasIndependentSegments || masterPlaylist.hasIndependentSegments,
         hasEndTag,
         hasProgramDateTime,
         protectionSchemes,

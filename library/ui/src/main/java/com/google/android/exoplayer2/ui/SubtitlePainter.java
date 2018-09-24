@@ -35,9 +35,9 @@ import android.text.style.AbsoluteSizeSpan;
 import android.text.style.BackgroundColorSpan;
 import android.text.style.RelativeSizeSpan;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import com.google.android.exoplayer2.text.CaptionStyleCompat;
 import com.google.android.exoplayer2.text.Cue;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 
 /**
@@ -431,6 +431,7 @@ import com.google.android.exoplayer2.util.Util;
    * latter only checks the text of each sequence, and does not check for equality of styling that
    * may be embedded within the {@link CharSequence}s.
    */
+  @SuppressWarnings("UndefinedEquals")
   private static boolean areCharSequencesEqual(CharSequence first, CharSequence second) {
     // Some CharSequence implementations don't perform a cheap referential equality check in their
     // equals methods, so we perform one explicitly here.

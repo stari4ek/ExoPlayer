@@ -20,8 +20,6 @@ import android.content.Context;
 import android.graphics.PointF;
 import android.graphics.SurfaceTexture;
 import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
@@ -37,7 +35,8 @@ import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ui.spherical.Mesh.EyeType;
+import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.ui.spherical.ProjectionRenderer.EyeType;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import javax.microedition.khronos.egl.EGLConfig;
@@ -70,17 +69,6 @@ public final class SphericalSurfaceView extends GLSurfaceView {
     void surfaceChanged(@Nullable Surface surface);
   }
 
-  // A spherical mesh for video should be large enough that there are no stereo artifacts.
-  private static final int SPHERE_RADIUS_METERS = 50;
-
-  // TODO These should be configured based on the video type. It's assumed 360 video here.
-  private static final int DEFAULT_SPHERE_HORIZONTAL_DEGREES = 360;
-  private static final int DEFAULT_SPHERE_VERTICAL_DEGREES = 180;
-
-  // The 360 x 180 sphere has 5 degree quads. Increase these if lines in videos look wavy.
-  private static final int DEFAULT_SPHERE_COLUMNS = 72;
-  private static final int DEFAULT_SPHERE_ROWS = 36;
-
   // Arbitrary vertical field of view.
   private static final int FIELD_OF_VIEW_DEGREES = 90;
   private static final float Z_NEAR = .1f;
@@ -89,16 +77,19 @@ public final class SphericalSurfaceView extends GLSurfaceView {
   // TODO Calculate this depending on surface size and field of view.
   private static final float PX_PER_DEGREES = 25;
 
-  /*package*/ static final float UPRIGHT_ROLL = (float) Math.PI;
+  /* package */ static final float UPRIGHT_ROLL = (float) Math.PI;
 
   private final SensorManager sensorManager;
   private final @Nullable Sensor orientationSensor;
-  private final PhoneOrientationListener phoneOrientationListener;
+  private final OrientationListener orientationListener;
   private final Renderer renderer;
   private final Handler mainHandler;
+  private final TouchTracker touchTracker;
+  private final SceneRenderer scene;
   private @Nullable SurfaceListener surfaceListener;
   private @Nullable SurfaceTexture surfaceTexture;
   private @Nullable Surface surface;
+  private @Nullable Player.VideoComponent videoComponent;
 
   public SphericalSurfaceView(Context context) {
     this(context, null);
@@ -106,7 +97,6 @@ public final class SphericalSurfaceView extends GLSurfaceView {
 
   public SphericalSurfaceView(Context context, @Nullable AttributeSet attributeSet) {
     super(context, attributeSet);
-
     mainHandler = new Handler(Looper.getMainLooper());
 
     // Configure sensors and touch.
@@ -119,45 +109,47 @@ public final class SphericalSurfaceView extends GLSurfaceView {
     int type = Util.SDK_INT >= 18 ? Sensor.TYPE_GAME_ROTATION_VECTOR : Sensor.TYPE_ROTATION_VECTOR;
     orientationSensor = sensorManager.getDefaultSensor(type);
 
-    renderer = new Renderer();
+    scene = new SceneRenderer();
+    renderer = new Renderer(scene);
 
-    TouchTracker touchTracker = new TouchTracker(renderer, PX_PER_DEGREES);
+    touchTracker = new TouchTracker(context, renderer, PX_PER_DEGREES);
     WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
     Display display = Assertions.checkNotNull(windowManager).getDefaultDisplay();
-    phoneOrientationListener = new PhoneOrientationListener(display, touchTracker, renderer);
+    orientationListener = new OrientationListener(display, touchTracker, renderer);
 
     setEGLContextClientVersion(2);
     setRenderer(renderer);
     setOnTouchListener(touchTracker);
-
-    setStereoMode(C.STEREO_MODE_MONO);
   }
 
   /**
-   * Sets stereo mode of the media to be played.
+   * Sets the default stereo mode. If the played video doesn't contain a stereo mode the default one
+   * is used.
    *
-   * @param stereoMode One of {@link C#STEREO_MODE_MONO}, {@link C#STEREO_MODE_TOP_BOTTOM}, {@link
-   *     C#STEREO_MODE_LEFT_RIGHT}.
+   * @param stereoMode A {@link C.StereoMode} value.
    */
-  public void setStereoMode(@C.StereoMode int stereoMode) {
-    Assertions.checkState(
-        stereoMode == C.STEREO_MODE_MONO
-            || stereoMode == C.STEREO_MODE_TOP_BOTTOM
-            || stereoMode == C.STEREO_MODE_LEFT_RIGHT);
-    Mesh mesh =
-        Mesh.createUvSphere(
-            SPHERE_RADIUS_METERS,
-            DEFAULT_SPHERE_ROWS,
-            DEFAULT_SPHERE_COLUMNS,
-            DEFAULT_SPHERE_VERTICAL_DEGREES,
-            DEFAULT_SPHERE_HORIZONTAL_DEGREES,
-            stereoMode);
-    queueEvent(() -> renderer.scene.setMesh(mesh));
+  public void setDefaultStereoMode(@C.StereoMode int stereoMode) {
+    scene.setDefaultStereoMode(stereoMode);
   }
 
-  /** Returns the {@link Surface} associated with this view. */
-  public @Nullable Surface getSurface() {
-    return surface;
+  /** Sets the {@link Player.VideoComponent} to use. */
+  public void setVideoComponent(@Nullable Player.VideoComponent newVideoComponent) {
+    if (newVideoComponent == videoComponent) {
+      return;
+    }
+    if (videoComponent != null) {
+      if (surface != null) {
+        videoComponent.clearVideoSurface(surface);
+      }
+      videoComponent.clearVideoFrameMetadataListener(scene);
+      videoComponent.clearCameraMotionListener(scene);
+    }
+    videoComponent = newVideoComponent;
+    if (videoComponent != null) {
+      videoComponent.setVideoFrameMetadataListener(scene);
+      videoComponent.setCameraMotionListener(scene);
+      videoComponent.setVideoSurface(surface);
+    }
   }
 
   /**
@@ -169,19 +161,24 @@ public final class SphericalSurfaceView extends GLSurfaceView {
     surfaceListener = listener;
   }
 
+  /** Sets the {@link SingleTapListener} used to listen to single tap events on this view. */
+  public void setSingleTapListener(@Nullable SingleTapListener listener) {
+    touchTracker.setSingleTapListener(listener);
+  }
+
   @Override
   public void onResume() {
     super.onResume();
     if (orientationSensor != null) {
       sensorManager.registerListener(
-          phoneOrientationListener, orientationSensor, SensorManager.SENSOR_DELAY_FASTEST);
+          orientationListener, orientationSensor, SensorManager.SENSOR_DELAY_FASTEST);
     }
   }
 
   @Override
   public void onPause() {
     if (orientationSensor != null) {
-      sensorManager.unregisterListener(phoneOrientationListener);
+      sensorManager.unregisterListener(orientationListener);
     }
     super.onPause();
   }
@@ -230,82 +227,13 @@ public final class SphericalSurfaceView extends GLSurfaceView {
     }
   }
 
-  /** Detects sensor events and saves them as a matrix. */
-  private static class PhoneOrientationListener implements SensorEventListener {
-    private final float[] phoneInWorldSpaceMatrix = new float[16];
-    private final float[] remappedPhoneMatrix = new float[16];
-    private final float[] angles = new float[3];
-    private final Display display;
-    private final TouchTracker touchTracker;
-    private final Renderer renderer;
-
-    public PhoneOrientationListener(Display display, TouchTracker touchTracker, Renderer renderer) {
-      this.display = display;
-      this.touchTracker = touchTracker;
-      this.renderer = renderer;
-    }
-
-    @Override
-    @BinderThread
-    public void onSensorChanged(SensorEvent event) {
-      SensorManager.getRotationMatrixFromVector(remappedPhoneMatrix, event.values);
-
-      // If we're not in upright portrait mode, remap the axes of the coordinate system according to
-      // the display rotation.
-      int xAxis;
-      int yAxis;
-      switch (display.getRotation()) {
-        case Surface.ROTATION_270:
-          xAxis = SensorManager.AXIS_MINUS_Y;
-          yAxis = SensorManager.AXIS_X;
-          break;
-        case Surface.ROTATION_180:
-          xAxis = SensorManager.AXIS_MINUS_X;
-          yAxis = SensorManager.AXIS_MINUS_Y;
-          break;
-        case Surface.ROTATION_90:
-          xAxis = SensorManager.AXIS_Y;
-          yAxis = SensorManager.AXIS_MINUS_X;
-          break;
-        case Surface.ROTATION_0:
-        default:
-          xAxis = SensorManager.AXIS_X;
-          yAxis = SensorManager.AXIS_Y;
-          break;
-      }
-      SensorManager.remapCoordinateSystem(
-          remappedPhoneMatrix, xAxis, yAxis, phoneInWorldSpaceMatrix);
-
-      // Extract the phone's roll and pass it on to touchTracker & renderer. Remapping is required
-      // since we need the calculated roll of the phone to be independent of the phone's pitch &
-      // yaw. Any operation that decomposes rotation to Euler angles needs to be performed
-      // carefully.
-      SensorManager.remapCoordinateSystem(
-          phoneInWorldSpaceMatrix,
-          SensorManager.AXIS_X,
-          SensorManager.AXIS_MINUS_Z,
-          remappedPhoneMatrix);
-      SensorManager.getOrientation(remappedPhoneMatrix, angles);
-      float roll = angles[2];
-      touchTracker.setRoll(roll);
-
-      // Rotate from Android coordinates to OpenGL coordinates. Android's coordinate system
-      // assumes Y points North and Z points to the sky. OpenGL has Y pointing up and Z pointing
-      // toward the user.
-      Matrix.rotateM(phoneInWorldSpaceMatrix, 0, 90, 1, 0, 0);
-      renderer.setDeviceOrientation(phoneInWorldSpaceMatrix, roll);
-    }
-
-    @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
-  }
-
   /**
    * Standard GL Renderer implementation. The notable code is the matrix multiplication in
    * onDrawFrame and updatePitchMatrix.
    */
   // @VisibleForTesting
-  /*package*/ class Renderer implements GLSurfaceView.Renderer, TouchTracker.Listener {
+  /* package */ class Renderer
+      implements GLSurfaceView.Renderer, TouchTracker.Listener, OrientationListener.Listener {
     private final SceneRenderer scene;
     private final float[] projectionMatrix = new float[16];
 
@@ -327,8 +255,8 @@ public final class SphericalSurfaceView extends GLSurfaceView {
     private final float[] viewMatrix = new float[16];
     private final float[] tempMatrix = new float[16];
 
-    public Renderer() {
-      scene = new SceneRenderer();
+    public Renderer(SceneRenderer scene) {
+      this.scene = scene;
       Matrix.setIdentityM(deviceOrientationMatrix, 0);
       Matrix.setIdentityM(touchPitchMatrix, 0);
       Matrix.setIdentityM(touchYawMatrix, 0);
@@ -363,8 +291,9 @@ public final class SphericalSurfaceView extends GLSurfaceView {
     }
 
     /** Adjusts the GL camera's rotation based on device rotation. Runs on the sensor thread. */
+    @Override
     @BinderThread
-    public synchronized void setDeviceOrientation(float[] matrix, float deviceRoll) {
+    public synchronized void onOrientationChange(float[] matrix, float deviceRoll) {
       System.arraycopy(matrix, 0, deviceOrientationMatrix, 0, deviceOrientationMatrix.length);
       this.deviceRoll = -deviceRoll;
       updatePitchMatrix();

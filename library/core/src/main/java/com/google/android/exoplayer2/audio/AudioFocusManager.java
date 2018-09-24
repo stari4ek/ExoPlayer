@@ -21,12 +21,12 @@ import android.media.AudioManager;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
 import android.support.annotation.RequiresApi;
-import android.util.Log;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -52,7 +52,10 @@ public final class AudioFocusManager {
     void executePlayerCommand(@PlayerCommand int playerCommand);
   }
 
-  /** Player commands. */
+  /**
+   * Player commands. One of {@link #PLAYER_COMMAND_DO_NOT_PLAY}, {@link
+   * #PLAYER_COMMAND_WAIT_FOR_CALLBACK} or {@link #PLAYER_COMMAND_PLAY_WHEN_READY}.
+   */
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({
     PLAYER_COMMAND_DO_NOT_PLAY,
@@ -134,8 +137,7 @@ public final class AudioFocusManager {
    *     managed automatically.
    * @param playWhenReady The current state of {@link ExoPlayer#getPlayWhenReady()}.
    * @param playerState The current player state; {@link ExoPlayer#getPlaybackState()}.
-   * @return A command to execute on the player. One of {@link #PLAYER_COMMAND_DO_NOT_PLAY}, {@link
-   *     #PLAYER_COMMAND_WAIT_FOR_CALLBACK}, and {@link #PLAYER_COMMAND_PLAY_WHEN_READY}.
+   * @return A {@link PlayerCommand} to execute on the player.
    */
   public @PlayerCommand int setAudioAttributes(
       @Nullable AudioAttributes audioAttributes, boolean playWhenReady, int playerState) {
@@ -169,8 +171,7 @@ public final class AudioFocusManager {
    * Called by a player as part of {@link ExoPlayer#prepare(MediaSource, boolean, boolean)}.
    *
    * @param playWhenReady The current state of {@link ExoPlayer#getPlayWhenReady()}.
-   * @return A command to execute on the player. One of {@link #PLAYER_COMMAND_DO_NOT_PLAY}, {@link
-   *     #PLAYER_COMMAND_WAIT_FOR_CALLBACK}, and {@link #PLAYER_COMMAND_PLAY_WHEN_READY}.
+   * @return A {@link PlayerCommand} to execute on the player.
    */
   public @PlayerCommand int handlePrepare(boolean playWhenReady) {
     if (audioManager == null) {
@@ -185,8 +186,7 @@ public final class AudioFocusManager {
    *
    * @param playWhenReady The desired value of playWhenReady.
    * @param playerState The current state of the player.
-   * @return A command to execute on the player. One of {@link #PLAYER_COMMAND_DO_NOT_PLAY}, {@link
-   *     #PLAYER_COMMAND_WAIT_FOR_CALLBACK}, and {@link #PLAYER_COMMAND_PLAY_WHEN_READY}.
+   * @return A {@link PlayerCommand} to execute on the player.
    */
   public @PlayerCommand int handleSetPlayWhenReady(boolean playWhenReady, int playerState) {
     if (audioManager == null) {

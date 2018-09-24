@@ -19,6 +19,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.ResultReceiver;
 import android.os.SystemClock;
 import android.support.annotation.NonNull;
@@ -36,6 +37,7 @@ import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.ErrorMessageProvider;
 import com.google.android.exoplayer2.util.RepeatModeUtil;
 import com.google.android.exoplayer2.util.Util;
@@ -248,8 +250,6 @@ public final class MediaSessionConnector {
      * description)}.
      */
     void onRemoveQueueItem(Player player, MediaDescriptionCompat description);
-    /** See {@link MediaSessionCompat.Callback#onRemoveQueueItemAt(int index)}. */
-    void onRemoveQueueItemAt(Player player, int index);
   }
 
   /** Callback receiving a user rating for the active media item. */
@@ -369,8 +369,7 @@ public final class MediaSessionConnector {
   }
 
   /**
-   * Creates an instance. Must be called on the same thread that is used to construct the player
-   * instances passed to {@link #setPlayer(Player, PlaybackPreparer, CustomActionProvider...)}.
+   * Creates an instance.
    *
    * @param mediaSession The {@link MediaSessionCompat} to connect to.
    * @param playbackController A {@link PlaybackController} for handling playback actions, or {@code
@@ -402,15 +401,17 @@ public final class MediaSessionConnector {
    * <p>The order in which any {@link CustomActionProvider}s are passed determines the order of the
    * actions published with the playback state of the session.
    *
-   * @param player The player to be connected to the {@code MediaSession}.
+   * @param player The player to be connected to the {@code MediaSession}, or {@code null} to
+   *     disconnect the current player.
    * @param playbackPreparer An optional {@link PlaybackPreparer} for preparing the player.
    * @param customActionProviders Optional {@link CustomActionProvider}s to publish and handle
    *     custom actions.
    */
   public void setPlayer(
-      Player player,
+      @Nullable Player player,
       @Nullable PlaybackPreparer playbackPreparer,
       CustomActionProvider... customActionProviders) {
+    Assertions.checkArgument(player == null || player.getApplicationLooper() == Looper.myLooper());
     if (this.player != null) {
       this.player.removeListener(exoPlayerEventListener);
       mediaSession.setCallback(null);
@@ -1020,13 +1021,6 @@ public final class MediaSessionConnector {
     public void onRemoveQueueItem(MediaDescriptionCompat description) {
       if (queueEditor != null) {
         queueEditor.onRemoveQueueItem(player, description);
-      }
-    }
-
-    @Override
-    public void onRemoveQueueItemAt(int index) {
-      if (queueEditor != null) {
-        queueEditor.onRemoveQueueItemAt(player, index);
       }
     }
   }

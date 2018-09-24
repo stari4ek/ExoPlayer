@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.ext.ima;
 
+import android.os.Looper;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
@@ -27,9 +28,9 @@ import java.util.ArrayList;
   private final ArrayList<Player.EventListener> listeners;
   private final Timeline.Window window;
   private final Timeline.Period period;
+  private final Timeline timeline;
 
   private boolean prepared;
-  private Timeline timeline;
   private int state;
   private boolean playWhenReady;
   private long position;
@@ -109,6 +110,11 @@ import java.util.ArrayList;
   }
 
   // ExoPlayer methods. Other methods are unsupported.
+
+  @Override
+  public Looper getApplicationLooper() {
+    return Looper.getMainLooper();
+  }
 
   @Override
   public void addListener(Player.EventListener listener) {

@@ -24,11 +24,11 @@ import android.os.ConditionVariable;
 import android.os.SystemClock;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
-import android.util.Log;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -632,7 +632,9 @@ public final class DefaultAudioSink implements AudioSink {
       } else {
         // Sanity check that presentationTimeUs is consistent with the expected value.
         long expectedPresentationTimeUs =
-            startMediaTimeUs + inputFramesToDurationUs(getSubmittedFrames());
+            startMediaTimeUs
+                + inputFramesToDurationUs(
+                    getSubmittedFrames() - trimmingAudioProcessor.getTrimmedFrameCount());
         if (startMediaTimeState == START_IN_SYNC
             && Math.abs(expectedPresentationTimeUs - presentationTimeUs) > 200000) {
           Log.e(TAG, "Discontinuity detected [expected " + expectedPresentationTimeUs + ", got "
@@ -642,9 +644,10 @@ public final class DefaultAudioSink implements AudioSink {
         if (startMediaTimeState == START_NEED_SYNC) {
           // Adjust startMediaTimeUs to be consistent with the current buffer's start time and the
           // number of bytes submitted.
-          startMediaTimeUs += (presentationTimeUs - expectedPresentationTimeUs);
+          long adjustmentUs = presentationTimeUs - expectedPresentationTimeUs;
+          startMediaTimeUs += adjustmentUs;
           startMediaTimeState = START_IN_SYNC;
-          if (listener != null) {
+          if (listener != null && adjustmentUs != 0) {
             listener.onPositionDiscontinuity();
           }
         }
@@ -954,6 +957,7 @@ public final class DefaultAudioSink implements AudioSink {
       playbackParametersCheckpoints.clear();
       playbackParametersOffsetUs = 0;
       playbackParametersPositionUs = 0;
+      trimmingAudioProcessor.resetTrimmedFrameCount();
       inputBuffer = null;
       outputBuffer = null;
       flushAudioProcessors();

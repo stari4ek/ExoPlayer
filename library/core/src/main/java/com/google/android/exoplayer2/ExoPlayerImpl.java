@@ -20,7 +20,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.support.annotation.Nullable;
-import android.util.Log;
 import android.util.Pair;
 import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.source.MediaSource;
@@ -33,6 +32,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -65,6 +65,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   private final Timeline.Period period;
   private final ArrayDeque<PlaybackInfoUpdate> pendingPlaybackInfoUpdates;
 
+  private MediaSource mediaSource;
   private boolean playWhenReady;
   private boolean internalPlayWhenReady;
   private @RepeatMode int repeatMode;
@@ -192,13 +193,22 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  public void retry() {
+    if (mediaSource != null
+        && (playbackError != null || playbackInfo.playbackState == Player.STATE_IDLE)) {
+      prepare(mediaSource, /* resetPosition= */ false, /* resetState= */ false);
+    }
+  }
+
+  @Override
   public void prepare(MediaSource mediaSource) {
-    prepare(mediaSource, true, true);
+    prepare(mediaSource, /* resetPosition= */ true, /* resetState= */ true);
   }
 
   @Override
   public void prepare(MediaSource mediaSource, boolean resetPosition, boolean resetState) {
     playbackError = null;
+    this.mediaSource = mediaSource;
     PlaybackInfo playbackInfo =
         getResetPlaybackInfo(
             resetPosition, resetState, /* playbackState= */ Player.STATE_BUFFERING);
@@ -327,10 +337,10 @@ import java.util.concurrent.CopyOnWriteArraySet;
     } else {
       long windowPositionUs = positionMs == C.TIME_UNSET
           ? timeline.getWindow(windowIndex, window).getDefaultPositionUs() : C.msToUs(positionMs);
-      Pair<Integer, Long> periodIndexAndPosition =
+      Pair<Object, Long> periodUidAndPosition =
           timeline.getPeriodPosition(window, period, windowIndex, windowPositionUs);
       maskingWindowPositionMs = C.usToMs(windowPositionUs);
-      maskingPeriodIndex = periodIndexAndPosition.first;
+      maskingPeriodIndex = timeline.getIndexOfPeriod(periodUidAndPosition.first);
     }
     internalPlayer.seekTo(timeline, windowIndex, C.msToUs(positionMs));
     for (Player.EventListener listener : listeners) {
@@ -370,7 +380,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   @Override
   public @Nullable Object getCurrentTag() {
     int windowIndex = getCurrentWindowIndex();
-    return windowIndex > playbackInfo.timeline.getWindowCount()
+    return windowIndex >= playbackInfo.timeline.getWindowCount()
         ? null
         : playbackInfo.timeline.getWindow(windowIndex, window, /* setTag= */ true).tag;
   }
@@ -384,6 +394,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   public void stop(boolean reset) {
     if (reset) {
       playbackError = null;
+      mediaSource = null;
     }
     PlaybackInfo playbackInfo =
         getResetPlaybackInfo(
@@ -410,11 +421,14 @@ import java.util.concurrent.CopyOnWriteArraySet;
     Log.i(TAG, "Release " + Integer.toHexString(System.identityHashCode(this)) + " ["
         + ExoPlayerLibraryInfo.VERSION_SLASHY + "] [" + Util.DEVICE_DEBUG_INFO + "] ["
         + ExoPlayerLibraryInfo.registeredModules() + "]");
+    mediaSource = null;
     internalPlayer.release();
     eventHandler.removeCallbacksAndMessages(null);
   }
 
   @Override
+  @Deprecated
+  @SuppressWarnings("deprecation")
   public void sendMessages(ExoPlayerMessage... messages) {
     for (ExoPlayerMessage message : messages) {
       createMessage(message.target).setType(message.messageType).setPayload(message.message).send();
@@ -432,6 +446,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  @Deprecated
+  @SuppressWarnings("deprecation")
   public void blockingSendMessages(ExoPlayerMessage... messages) {
     List<PlayerMessage> playerMessages = new ArrayList<>();
     for (ExoPlayerMessage message : messages) {
@@ -464,7 +480,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
     if (shouldMaskPosition()) {
       return maskingPeriodIndex;
     } else {
-      return playbackInfo.periodId.periodIndex;
+      return playbackInfo.timeline.getIndexOfPeriod(playbackInfo.periodId.periodUid);
     }
   }
 
@@ -473,7 +489,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
     if (shouldMaskPosition()) {
       return maskingWindowIndex;
     } else {
-      return playbackInfo.timeline.getPeriod(playbackInfo.periodId.periodIndex, period).windowIndex;
+      return playbackInfo.timeline.getPeriodByUid(playbackInfo.periodId.periodUid, period)
+          .windowIndex;
     }
   }
 
@@ -493,18 +510,13 @@ import java.util.concurrent.CopyOnWriteArraySet;
 
   @Override
   public long getDuration() {
-    Timeline timeline = playbackInfo.timeline;
-    if (timeline.isEmpty()) {
-      return C.TIME_UNSET;
-    }
     if (isPlayingAd()) {
       MediaPeriodId periodId = playbackInfo.periodId;
-      timeline.getPeriod(periodId.periodIndex, period);
+      playbackInfo.timeline.getPeriodByUid(periodId.periodUid, period);
       long adDurationUs = period.getAdDurationUs(periodId.adGroupIndex, periodId.adIndexInAdGroup);
       return C.usToMs(adDurationUs);
-    } else {
-      return timeline.getWindow(getCurrentWindowIndex(), window).getDurationMs();
     }
+    return getContentDuration();
   }
 
   @Override
@@ -570,9 +582,16 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  public long getContentDuration() {
+    return playbackInfo.timeline.isEmpty()
+        ? C.TIME_UNSET
+        : playbackInfo.timeline.getWindow(getCurrentWindowIndex(), window).getDurationMs();
+  }
+
+  @Override
   public long getContentPosition() {
     if (isPlayingAd()) {
-      playbackInfo.timeline.getPeriod(playbackInfo.periodId.periodIndex, period);
+      playbackInfo.timeline.getPeriodByUid(playbackInfo.periodId.periodUid, period);
       return period.getPositionInWindowMs() + C.usToMs(playbackInfo.contentPositionUs);
     } else {
       return getCurrentPosition();
@@ -591,7 +610,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
     long contentBufferedPositionUs = playbackInfo.bufferedPositionUs;
     if (playbackInfo.loadingMediaPeriodId.isAd()) {
       Timeline.Period loadingPeriod =
-          playbackInfo.timeline.getPeriod(playbackInfo.loadingMediaPeriodId.periodIndex, period);
+          playbackInfo.timeline.getPeriodByUid(playbackInfo.loadingMediaPeriodId.periodUid, period);
       contentBufferedPositionUs =
           loadingPeriod.getAdGroupTimeUs(playbackInfo.loadingMediaPeriodId.adGroupIndex);
       if (contentBufferedPositionUs == C.TIME_END_OF_SOURCE) {
@@ -761,7 +780,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 
   private long periodPositionUsToWindowPositionMs(MediaPeriodId periodId, long positionUs) {
     long positionMs = C.usToMs(positionUs);
-    playbackInfo.timeline.getPeriod(periodId.periodIndex, period);
+    playbackInfo.timeline.getPeriodByUid(periodId.periodUid, period);
     positionMs += period.getPositionInWindowMs();
     return positionMs;
   }

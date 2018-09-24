@@ -17,7 +17,6 @@ package com.google.android.exoplayer2.ext.cronet;
 
 import android.net.Uri;
 import android.text.TextUtils;
-import android.util.Log;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.upstream.BaseDataSource;
@@ -27,6 +26,7 @@ import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.ConditionVariable;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Predicate;
 import java.io.IOException;
 import java.net.SocketTimeoutException;
@@ -606,11 +606,9 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
       if (request != currentUrlRequest) {
         return;
       }
-      if (currentDataSpec.postBody != null) {
+      if (currentDataSpec.httpMethod == DataSpec.HTTP_METHOD_POST) {
         int responseCode = info.getHttpStatusCode();
         // The industry standard is to disregard POST redirects when the status code is 307 or 308.
-        // For other redirect response codes the POST request is converted to a GET request and the
-        // redirect is followed.
         if (responseCode == 307 || responseCode == 308) {
           exception =
               new InvalidResponseCodeException(responseCode, info.getAllHeaders(), currentDataSpec);
@@ -627,7 +625,23 @@ public class CronetDataSource extends BaseDataSource implements HttpDataSource {
         request.followRedirect();
       } else {
         currentUrlRequest.cancel();
-        DataSpec redirectUrlDataSpec = currentDataSpec.withUri(Uri.parse(newLocationUrl));
+        DataSpec redirectUrlDataSpec;
+        if (currentDataSpec.httpMethod == DataSpec.HTTP_METHOD_POST) {
+          // For POST redirects that aren't 307 or 308, the redirect is followed but request is
+          // transformed into a GET.
+          redirectUrlDataSpec =
+              new DataSpec(
+                  Uri.parse(newLocationUrl),
+                  DataSpec.HTTP_METHOD_GET,
+                  /* httpBody= */ null,
+                  currentDataSpec.absoluteStreamPosition,
+                  currentDataSpec.position,
+                  currentDataSpec.length,
+                  currentDataSpec.key,
+                  currentDataSpec.flags);
+        } else {
+          redirectUrlDataSpec = currentDataSpec.withUri(Uri.parse(newLocationUrl));
+        }
         UrlRequest.Builder requestBuilder;
         try {
           requestBuilder = buildRequestBuilder(redirectUrlDataSpec);

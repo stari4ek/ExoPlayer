@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.offline;
 import android.net.Uri;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Util;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -157,7 +158,7 @@ public abstract class DownloadAction {
     this.version = version;
     this.uri = uri;
     this.isRemoveAction = isRemoveAction;
-    this.data = data != null ? data : new byte[0];
+    this.data = data != null ? data : Util.EMPTY_BYTE_ARRAY;
   }
 
   /** Serializes itself into a byte array. */
@@ -189,6 +190,7 @@ public abstract class DownloadAction {
   public abstract Downloader createDownloader(
       DownloaderConstructorHelper downloaderConstructorHelper);
 
+  @SuppressWarnings("EqualsGetClass")
   @Override
   public boolean equals(@Nullable Object o) {
     if (o == null || getClass() != o.getClass()) {

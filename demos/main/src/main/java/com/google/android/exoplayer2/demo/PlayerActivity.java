@@ -60,7 +60,7 @@ import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.source.dash.DashMediaSource;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifestParser;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
-import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistParser;
+import com.google.android.exoplayer2.source.hls.playlist.DefaultHlsPlaylistParserFactory;
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifestParser;
 import com.google.android.exoplayer2.trackselection.AdaptiveTrackSelection;
@@ -107,8 +107,8 @@ public class PlayerActivity extends Activity
   public static final String AD_TAG_URI_EXTRA = "ad_tag_uri";
 
   public static final String ABR_ALGORITHM_EXTRA = "abr_algorithm";
-  private static final String ABR_ALGORITHM_DEFAULT = "default";
-  private static final String ABR_ALGORITHM_RANDOM = "random";
+  public static final String ABR_ALGORITHM_DEFAULT = "default";
+  public static final String ABR_ALGORITHM_RANDOM = "random";
 
   public static final String SPHERICAL_STEREO_MODE_EXTRA = "spherical_stereo_mode";
   public static final String SPHERICAL_STEREO_MODE_MONO = "mono";
@@ -190,7 +190,7 @@ public class PlayerActivity extends Activity
         finish();
         return;
       }
-      ((SphericalSurfaceView) playerView.getVideoSurfaceView()).setStereoMode(stereoMode);
+      ((SphericalSurfaceView) playerView.getVideoSurfaceView()).setDefaultStereoMode(stereoMode);
     }
 
     if (savedInstanceState != null) {
@@ -490,8 +490,8 @@ public class PlayerActivity extends Activity
             .createMediaSource(uri);
       case C.TYPE_HLS:
         return new HlsMediaSource.Factory(dataSourceFactory)
-            .setPlaylistParser(
-                new FilteringManifestParser<>(new HlsPlaylistParser(), getOfflineStreamKeys(uri)))
+            .setPlaylistParserFactory(
+                new DefaultHlsPlaylistParserFactory(getOfflineStreamKeys(uri)))
             .createMediaSource(uri);
       case C.TYPE_OTHER:
         return new ExtractorMediaSource.Factory(dataSourceFactory).createMediaSource(uri);

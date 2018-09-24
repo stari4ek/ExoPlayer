@@ -25,12 +25,12 @@ import android.os.Bundle;
 import android.os.ConditionVariable;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
-import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.Window;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 
 /**
@@ -118,13 +118,11 @@ public final class HostActivity extends Activity implements SurfaceHolder.Callba
     forcedStopped = false;
     hostedTestStarted = false;
 
-    runOnUiThread(new Runnable() {
-      @Override
-      public void run() {
-        HostActivity.this.hostedTest = hostedTest;
-        maybeStartHostedTest();
-      }
-    });
+    runOnUiThread(
+        () -> {
+          HostActivity.this.hostedTest = hostedTest;
+          maybeStartHostedTest();
+        });
 
     if (!hostedTestStartedCondition.block(START_TIMEOUT_MS)) {
       String message =
@@ -145,12 +143,7 @@ public final class HostActivity extends Activity implements SurfaceHolder.Callba
         fail(message);
       }
     } else {
-      runOnUiThread(new Runnable() {
-        @Override
-        public void run() {
-          hostedTest.forceStop();
-        }
-      });
+      runOnUiThread(hostedTest::forceStop);
       String message = "Test timed out after " + timeoutMs + " ms.";
       Log.e(TAG, message);
       if (failOnTimeout) {

@@ -15,9 +15,9 @@
  */
 package com.google.android.exoplayer2.ext.cast;
 
+import android.os.Looper;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.util.Log;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.PlaybackParameters;
@@ -29,6 +29,7 @@ import com.google.android.exoplayer2.trackselection.FixedTrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.gms.cast.CastStatusCodes;
@@ -299,6 +300,11 @@ public final class CastPlayer implements Player {
   }
 
   @Override
+  public Looper getApplicationLooper() {
+    return Looper.getMainLooper();
+  }
+
+  @Override
   public void addListener(EventListener listener) {
     listeners.add(listener);
   }
@@ -495,7 +501,7 @@ public final class CastPlayer implements Player {
   @Override
   public @Nullable Object getCurrentTag() {
     int windowIndex = getCurrentWindowIndex();
-    return windowIndex > currentTimeline.getWindowCount()
+    return windowIndex >= currentTimeline.getWindowCount()
         ? null
         : currentTimeline.getWindow(windowIndex, window, /* setTag= */ true).tag;
   }
@@ -565,6 +571,11 @@ public final class CastPlayer implements Player {
   @Override
   public int getCurrentAdIndexInAdGroup() {
     return C.INDEX_UNSET;
+  }
+
+  @Override
+  public long getContentDuration() {
+    return getDuration();
   }
 
   @Override
@@ -838,7 +849,6 @@ public final class CastPlayer implements Player {
 
     @Override
     public void onAdBreakStatusUpdated() {}
-
 
     // SessionManagerListener implementation.
 

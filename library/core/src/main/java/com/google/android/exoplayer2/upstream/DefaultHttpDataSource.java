@@ -18,10 +18,10 @@ package com.google.android.exoplayer2.upstream;
 import android.net.Uri;
 import android.support.annotation.Nullable;
 import android.text.TextUtils;
-import android.util.Log;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.upstream.DataSpec.HttpMethod;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Predicate;
 import com.google.android.exoplayer2.util.Util;
 import java.io.EOFException;
@@ -168,6 +168,7 @@ public class DefaultHttpDataSource extends BaseDataSource implements HttpDataSou
    *     #addTransferListener(TransferListener)}.
    */
   @Deprecated
+  @SuppressWarnings("deprecation")
   public DefaultHttpDataSource(
       String userAgent,
       @Nullable Predicate<String> contentTypePredicate,
@@ -190,6 +191,7 @@ public class DefaultHttpDataSource extends BaseDataSource implements HttpDataSou
    *     #addTransferListener(TransferListener)}.
    */
   @Deprecated
+  @SuppressWarnings("deprecation")
   public DefaultHttpDataSource(
       String userAgent,
       @Nullable Predicate<String> contentTypePredicate,
@@ -379,7 +381,7 @@ public class DefaultHttpDataSource extends BaseDataSource implements HttpDataSou
    *
    * @return The current open connection, or null.
    */
-  protected final HttpURLConnection getConnection() {
+  protected final @Nullable HttpURLConnection getConnection() {
     return connection;
   }
 
