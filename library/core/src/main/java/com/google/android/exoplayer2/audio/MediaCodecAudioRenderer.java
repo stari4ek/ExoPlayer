@@ -18,7 +18,6 @@ package com.google.android.exoplayer2.audio;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
-import android.content.pm.PackageManager;
 import android.media.MediaCodec;
 import android.media.MediaCrypto;
 import android.media.MediaFormat;
@@ -346,7 +345,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     codecMaxInputSize = getCodecMaxInputSize(codecInfo, format, getStreamFormats());
     codecNeedsDiscardChannelsWorkaround = codecNeedsDiscardChannelsWorkaround(codecInfo.name);
     passthroughEnabled = codecInfo.passthrough;
-    String codecMimeType = codecInfo.mimeType == null ? MimeTypes.AUDIO_RAW : codecInfo.mimeType;
+    String codecMimeType = passthroughEnabled ? MimeTypes.AUDIO_RAW : codecInfo.mimeType;
     MediaFormat mediaFormat =
         getMediaFormat(format, codecMimeType, codecMaxInputSize, codecOperatingRate);
     codec.configure(mediaFormat, /* surface= */ null, crypto, /* flags= */ 0);
@@ -362,14 +361,22 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   @Override
   protected @KeepCodecResult int canKeepCodec(
       MediaCodec codec, MediaCodecInfo codecInfo, Format oldFormat, Format newFormat) {
-    if (getCodecMaxInputSize(codecInfo, newFormat) <= codecMaxInputSize
-        && codecInfo.isSeamlessAdaptationSupported(
-            oldFormat, newFormat, /* isNewFormatComplete= */ true)
-        && oldFormat.encoderDelay == 0
-        && oldFormat.encoderPadding == 0
-        && newFormat.encoderDelay == 0
-        && newFormat.encoderPadding == 0) {
+    // TODO: We currently rely on recreating the codec when encoder delay or padding is non-zero.
+    // Re-creating the codec is necessary to guarantee that onOutputFormatChanged is called, which
+    // is where encoder delay and padding are propagated to the sink. We should find a better way to
+    // propagate these values, and then allow the codec to be re-used in cases where this would
+    // otherwise be possible.
+    if (getCodecMaxInputSize(codecInfo, newFormat) > codecMaxInputSize
+        || oldFormat.encoderDelay != 0
+        || oldFormat.encoderPadding != 0
+        || newFormat.encoderDelay != 0
+        || newFormat.encoderPadding != 0) {
+      return KEEP_CODEC_RESULT_NO;
+    } else if (codecInfo.isSeamlessAdaptationSupported(
+        oldFormat, newFormat, /* isNewFormatComplete= */ true)) {
       return KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION;
+    } else if (areCodecConfigurationCompatible(oldFormat, newFormat)) {
+      return KEEP_CODEC_RESULT_YES_WITH_FLUSH;
     } else {
       return KEEP_CODEC_RESULT_NO;
     }
@@ -699,25 +706,34 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
    *     be determined.
    */
   private int getCodecMaxInputSize(MediaCodecInfo codecInfo, Format format) {
-    if (Util.SDK_INT < 24 && "OMX.google.raw.decoder".equals(codecInfo.name)) {
-      // OMX.google.raw.decoder didn't resize its output buffers correctly prior to N, so there's no
-      // point requesting a non-default input size. Doing so may cause a native crash, where-as not
-      // doing so will cause a more controlled failure when attempting to fill an input buffer. See:
-      // https://github.com/google/ExoPlayer/issues/4057.
-      boolean needsRawDecoderWorkaround = true;
-      if (Util.SDK_INT == 23) {
-        PackageManager packageManager = context.getPackageManager();
-        if (packageManager != null
-            && packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-          // The workaround is not required for AndroidTV devices running M.
-          needsRawDecoderWorkaround = false;
-        }
-      }
-      if (needsRawDecoderWorkaround) {
+    if ("OMX.google.raw.decoder".equals(codecInfo.name)) {
+      // OMX.google.raw.decoder didn't resize its output buffers correctly prior to N, except on
+      // Android TV running M, so there's no point requesting a non-default input size. Doing so may
+      // cause a native crash, whereas not doing so will cause a more controlled failure when
+      // attempting to fill an input buffer. See: https://github.com/google/ExoPlayer/issues/4057.
+      if (Util.SDK_INT < 24 && !(Util.SDK_INT == 23 && Util.isTv(context))) {
         return Format.NO_VALUE;
       }
     }
     return format.maxInputSize;
+  }
+
+  /**
+   * Returns whether two {@link Format}s will cause the same codec to be configured in an identical
+   * way, excluding {@link MediaFormat#KEY_MAX_INPUT_SIZE} and configuration that does not come from
+   * the {@link Format}.
+   *
+   * @param oldFormat The first format.
+   * @param newFormat The second format.
+   * @return Whether the two formats will cause a codec to be configured in an identical way,
+   *     excluding {@link MediaFormat#KEY_MAX_INPUT_SIZE} and configuration that does not come from
+   *     the {@link Format}.
+   */
+  protected boolean areCodecConfigurationCompatible(Format oldFormat, Format newFormat) {
+    return Util.areEqual(oldFormat.sampleMimeType, newFormat.sampleMimeType)
+        && oldFormat.channelCount == newFormat.channelCount
+        && oldFormat.sampleRate == newFormat.sampleRate
+        && oldFormat.initializationDataEquals(newFormat);
   }
 
   /**

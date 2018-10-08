@@ -46,6 +46,7 @@ import com.google.android.exoplayer2.util.NalUnitUtil;
 import com.google.android.exoplayer2.util.TimedValueQueue;
 import com.google.android.exoplayer2.util.TraceUtil;
 import com.google.android.exoplayer2.util.Util;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.nio.ByteBuffer;
@@ -182,26 +183,34 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    * The possible return values for {@link #canKeepCodec(MediaCodec, MediaCodecInfo, Format,
    * Format)}.
    */
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef({
     KEEP_CODEC_RESULT_NO,
-    KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION,
-    KEEP_CODEC_RESULT_YES_WITH_RECONFIGURATION
+    KEEP_CODEC_RESULT_YES_WITH_FLUSH,
+    KEEP_CODEC_RESULT_YES_WITH_RECONFIGURATION,
+    KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION
   })
   protected @interface KeepCodecResult {}
   /** The codec cannot be kept. */
   protected static final int KEEP_CODEC_RESULT_NO = 0;
-  /** The codec can be kept. No reconfiguration is required. */
-  protected static final int KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION = 1;
+  /** The codec can be kept, but must be flushed. */
+  protected static final int KEEP_CODEC_RESULT_YES_WITH_FLUSH = 1;
   /**
-   * The codec can be kept, but must be reconfigured by prefixing the next input buffer with the new
-   * format's configuration data.
+   * The codec can be kept. It does not need to be flushed, but must be reconfigured by prefixing
+   * the next input buffer with the new format's configuration data.
    */
-  protected static final int KEEP_CODEC_RESULT_YES_WITH_RECONFIGURATION = 3;
+  protected static final int KEEP_CODEC_RESULT_YES_WITH_RECONFIGURATION = 2;
+  /** The codec can be kept. It does not need to be flushed and no reconfiguration is required. */
+  protected static final int KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION = 3;
 
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
-  @IntDef({RECONFIGURATION_STATE_NONE, RECONFIGURATION_STATE_WRITE_PENDING,
-      RECONFIGURATION_STATE_QUEUE_PENDING})
+  @IntDef({
+    RECONFIGURATION_STATE_NONE,
+    RECONFIGURATION_STATE_WRITE_PENDING,
+    RECONFIGURATION_STATE_QUEUE_PENDING
+  })
   private @interface ReconfigurationState {}
   /**
    * There is no pending adaptive reconfiguration work.
@@ -217,9 +226,13 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    */
   private static final int RECONFIGURATION_STATE_QUEUE_PENDING = 2;
 
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
-  @IntDef({REINITIALIZATION_STATE_NONE, REINITIALIZATION_STATE_SIGNAL_END_OF_STREAM,
-      REINITIALIZATION_STATE_WAIT_END_OF_STREAM})
+  @IntDef({
+    REINITIALIZATION_STATE_NONE,
+    REINITIALIZATION_STATE_SIGNAL_END_OF_STREAM,
+    REINITIALIZATION_STATE_WAIT_END_OF_STREAM
+  })
   private @interface ReinitializationState {}
   /**
    * The codec does not need to be re-initialized.
@@ -238,9 +251,13 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    */
   private static final int REINITIALIZATION_STATE_WAIT_END_OF_STREAM = 2;
 
+  @Documented
   @Retention(RetentionPolicy.SOURCE)
-  @IntDef({ADAPTATION_WORKAROUND_MODE_NEVER, ADAPTATION_WORKAROUND_MODE_SAME_RESOLUTION,
-      ADAPTATION_WORKAROUND_MODE_ALWAYS})
+  @IntDef({
+    ADAPTATION_WORKAROUND_MODE_NEVER,
+    ADAPTATION_WORKAROUND_MODE_SAME_RESOLUTION,
+    ADAPTATION_WORKAROUND_MODE_ALWAYS
+  })
   private @interface AdaptationWorkaroundMode {}
   /**
    * The adaptation workaround is never used.
@@ -309,6 +326,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   private boolean codecReconfigured;
   private @ReconfigurationState int codecReconfigurationState;
   private @ReinitializationState int codecReinitializationState;
+  private boolean codecReinitializationIsRelease;
   private boolean codecReceivedBuffers;
   private boolean codecReceivedEos;
 
@@ -587,6 +605,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     codecReceivedEos = false;
     codecReconfigurationState = RECONFIGURATION_STATE_NONE;
     codecReinitializationState = REINITIALIZATION_STATE_NONE;
+    codecReinitializationIsRelease = false;
     codecConfiguredWithOperatingRate = false;
     if (codec != null) {
       decoderCounters.decoderReleaseCount++;
@@ -682,10 +701,16 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
       releaseCodec();
       maybeInitCodec();
     } else if (codecReinitializationState != REINITIALIZATION_STATE_NONE) {
-      // We're already waiting to release and re-initialize the codec. Since we're now flushing,
-      // there's no need to wait any longer.
-      releaseCodec();
-      maybeInitCodec();
+      // We're already waiting to re-initialize the codec. Since we're now flushing, there's no need
+      // to wait any longer.
+      if (codecReinitializationIsRelease) {
+        releaseCodec();
+        maybeInitCodec();
+      } else {
+        codec.flush();
+        codecReceivedBuffers = false;
+        codecReinitializationState = REINITIALIZATION_STATE_NONE;
+      }
     } else {
       // We can flush and re-use the existing decoder.
       codec.flush();
@@ -865,7 +890,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   private boolean feedInputBuffer() throws ExoPlaybackException {
     if (codec == null || codecReinitializationState == REINITIALIZATION_STATE_WAIT_END_OF_STREAM
         || inputStreamEnded) {
-      // We need to reinitialize the codec or the input stream has ended.
+      // We need to re-initialize the codec or the input stream has ended.
       return false;
     }
 
@@ -1043,7 +1068,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    * Called when a new format is read from the upstream {@link MediaPeriod}.
    *
    * @param newFormat The new format.
-   * @throws ExoPlaybackException If an error occurs reinitializing the {@link MediaCodec}.
+   * @throws ExoPlaybackException If an error occurs re-initializing the {@link MediaCodec}.
    */
   protected void onInputFormatChanged(Format newFormat) throws ExoPlaybackException {
     Format oldFormat = format;
@@ -1067,18 +1092,28 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
       }
     }
 
-    boolean keepingCodec = false;
-    if (pendingDrmSession == drmSession && codec != null) {
+    if (codec == null) {
+      maybeInitCodec();
+      return;
+    }
+
+    // We have an existing codec that we may need to reconfigure or re-initialize. If the existing
+    // codec instance is being kept then its operating rate may need to be updated.
+    if (pendingDrmSession != drmSession) {
+      reinitializeCodec(/* release= */ true);
+    } else {
       switch (canKeepCodec(codec, codecInfo, oldFormat, format)) {
         case KEEP_CODEC_RESULT_NO:
-          // Do nothing.
+          reinitializeCodec(/* release= */ true);
           break;
-        case KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION:
-          keepingCodec = true;
+        case KEEP_CODEC_RESULT_YES_WITH_FLUSH:
+          reinitializeCodec(/* release= */ false);
+          updateCodecOperatingRate();
           break;
         case KEEP_CODEC_RESULT_YES_WITH_RECONFIGURATION:
-          if (!codecNeedsReconfigureWorkaround) {
-            keepingCodec = true;
+          if (codecNeedsReconfigureWorkaround) {
+            reinitializeCodec(/* release= */ true);
+          } else {
             codecReconfigured = true;
             codecReconfigurationState = RECONFIGURATION_STATE_WRITE_PENDING;
             codecNeedsAdaptationWorkaroundBuffer =
@@ -1086,17 +1121,15 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
                     || (codecAdaptationWorkaroundMode == ADAPTATION_WORKAROUND_MODE_SAME_RESOLUTION
                         && format.width == oldFormat.width
                         && format.height == oldFormat.height);
+            updateCodecOperatingRate();
           }
+          break;
+        case KEEP_CODEC_RESULT_YES_WITHOUT_RECONFIGURATION:
+          updateCodecOperatingRate();
           break;
         default:
           throw new IllegalStateException(); // Never happens.
       }
-    }
-
-    if (!keepingCodec) {
-      reinitializeCodec();
-    } else {
-      updateCodecOperatingRate();
     }
   }
 
@@ -1211,13 +1244,15 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     }
 
     this.codecOperatingRate = codecOperatingRate;
-    if (codec == null || codecReinitializationState != REINITIALIZATION_STATE_NONE) {
-      // Either no codec, or it's about to be reinitialized anyway.
+    if (codec == null
+        || (codecReinitializationState != REINITIALIZATION_STATE_NONE
+            && codecReinitializationIsRelease)) {
+      // Either no codec, or it's about to be released due to re-initialization anyway.
     } else if (codecOperatingRate == CODEC_OPERATING_RATE_UNSET
         && codecConfiguredWithOperatingRate) {
       // We need to clear the operating rate. The only way to do so is to instantiate a new codec
       // instance. See [Internal ref: b/71987865].
-      reinitializeCodec();
+      reinitializeCodec(/* release= */ true);
     } else if (codecOperatingRate != CODEC_OPERATING_RATE_UNSET
         && (codecConfiguredWithOperatingRate
             || codecOperatingRate > assumedMinimumCodecOperatingRate)) {
@@ -1231,18 +1266,26 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Starts the process of releasing the existing codec and initializing a new one. This may occur
-   * immediately, or be deferred until any final output buffers have been dequeued.
+   * Starts the process of re-initializing the codec. This may occur immediately, or be deferred
+   * until any final output buffers have been dequeued.
    *
+   * @param release Whether re-initialization requires fully releasing the codec and instantiating a
+   *     new instance, as opposed to flushing and reusing the current instance.
    * @throws ExoPlaybackException If an error occurs releasing or initializing a codec.
    */
-  private void reinitializeCodec() throws ExoPlaybackException {
+  private void reinitializeCodec(boolean release) throws ExoPlaybackException {
     availableCodecInfos = null;
     if (codecReceivedBuffers) {
       // Signal end of stream and wait for any final output buffers before re-initialization.
       codecReinitializationState = REINITIALIZATION_STATE_SIGNAL_END_OF_STREAM;
-    } else {
-      // There aren't any final output buffers, so perform re-initialization immediately.
+      codecReinitializationIsRelease = release;
+      return;
+    }
+
+    // Nothing has been queued to the decoder. If we need to fully release the codec and instantiate
+    // a new instance, do so immediately. If only a flush is required then we can do nothing, since
+    // flushing will be a no-op.
+    if (release) {
       releaseCodec();
       maybeInitCodec();
     }
@@ -1449,8 +1492,12 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   private void processEndOfStream() throws ExoPlaybackException {
     if (codecReinitializationState == REINITIALIZATION_STATE_WAIT_END_OF_STREAM) {
       // We're waiting to re-initialize the codec, and have now processed all final buffers.
-      releaseCodec();
-      maybeInitCodec();
+      if (codecReinitializationIsRelease) {
+        releaseCodec();
+        maybeInitCodec();
+      } else {
+        flushCodec();
+      }
     } else {
       outputStreamEnded = true;
       renderToEndOfStream();
