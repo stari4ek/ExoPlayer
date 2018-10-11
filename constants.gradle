@@ -25,7 +25,7 @@ project.ext {
     // TVirl: do not jump to 28 - don't rush to "no plain text http" yet
     targetSdkVersion = 27
     compileSdkVersion = 28
-    buildToolsVersion = '28.0.2'
+    buildToolsVersion = '28.0.3'
     testSupportLibraryVersion = '0.5'
     supportLibraryVersion = '27.1.1'
     // TVirl: play-services-ads, play-services-cast-framework
