@@ -283,8 +283,12 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   @Override
   protected void onEnabled(boolean joining) throws ExoPlaybackException {
     super.onEnabled(joining);
+    int oldTunnelingAudioSessionId = tunnelingAudioSessionId;
     tunnelingAudioSessionId = getConfiguration().tunnelingAudioSessionId;
     tunneling = tunnelingAudioSessionId != C.AUDIO_SESSION_ID_UNSET;
+    if (tunnelingAudioSessionId != oldTunnelingAudioSessionId) {
+      releaseCodec();
+    }
     eventDispatcher.enabled(decoderCounters);
     frameReleaseTimeHelper.enable();
   }
@@ -361,23 +365,33 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   @Override
   protected void onDisabled() {
-    currentWidth = Format.NO_VALUE;
-    currentHeight = Format.NO_VALUE;
-    currentPixelWidthHeightRatio = Format.NO_VALUE;
-    pendingPixelWidthHeightRatio = Format.NO_VALUE;
-    outputStreamOffsetUs = C.TIME_UNSET;
     lastInputTimeUs = C.TIME_UNSET;
+    outputStreamOffsetUs = C.TIME_UNSET;
     pendingOutputStreamOffsetCount = 0;
     clearReportedVideoSize();
     clearRenderedFirstFrame();
     frameReleaseTimeHelper.disable();
     tunnelingOnFrameRenderedListener = null;
-    tunneling = false;
     try {
       super.onDisabled();
     } finally {
       decoderCounters.ensureUpdated();
       eventDispatcher.disabled(decoderCounters);
+    }
+  }
+
+  @Override
+  protected void onReset() {
+    try {
+      super.onReset();
+    } finally {
+      if (dummySurface != null) {
+        if (surface == dummySurface) {
+          surface = null;
+        }
+        dummySurface.release();
+        dummySurface = null;
+      }
     }
   }
 
@@ -415,10 +429,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     if (this.surface != surface) {
       this.surface = surface;
       @State int state = getState();
-      if (state == STATE_ENABLED || state == STATE_STARTED) {
-        MediaCodec codec = getCodec();
-        if (Util.SDK_INT >= 23 && codec != null && surface != null
-            && !codecNeedsSetOutputSurfaceWorkaround) {
+      MediaCodec codec = getCodec();
+      if (codec != null) {
+        if (Util.SDK_INT >= 23 && surface != null && !codecNeedsSetOutputSurfaceWorkaround) {
           setOutputSurfaceV23(codec, surface);
         } else {
           releaseCodec();
@@ -508,25 +521,21 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       super.releaseCodec();
     } finally {
       buffersInCodecCount = 0;
-      if (dummySurface != null) {
-        if (surface == dummySurface) {
-          surface = null;
-        }
-        dummySurface.release();
-        dummySurface = null;
-      }
     }
   }
 
   @CallSuper
   @Override
-  protected void flushCodec() throws ExoPlaybackException {
-    super.flushCodec();
-    buffersInCodecCount = 0;
+  protected boolean flushOrReleaseCodec() {
+    try {
+      return super.flushOrReleaseCodec();
+    } finally {
+      buffersInCodecCount = 0;
+    }
   }
 
   @Override
-  protected float getCodecOperatingRate(
+  protected float getCodecOperatingRateV23(
       float operatingRate, Format format, Format[] streamFormats) {
     // Use the highest known stream frame-rate up front, to avoid having to reconfigure the codec
     // should an adaptive switch to that stream occur.
@@ -859,7 +868,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     // We dropped some buffers to catch up, so update the decoder counters and flush the codec,
     // which releases all pending buffers buffers including the current output buffer.
     updateDroppedBufferCounters(buffersInCodecCount + droppedSourceBufferCount);
-    flushCodec();
+    flushOrReinitCodec();
     return true;
   }
 

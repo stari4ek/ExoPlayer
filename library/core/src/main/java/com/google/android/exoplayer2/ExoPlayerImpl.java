@@ -71,6 +71,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
   private int pendingOperationAcks;
   private boolean hasPendingPrepare;
   private boolean hasPendingSeek;
+  private boolean foregroundMode;
   private PlaybackParameters playbackParameters;
   private SeekParameters seekParameters;
   private @Nullable ExoPlaybackException playbackError;
@@ -360,6 +361,14 @@ import java.util.concurrent.CopyOnWriteArraySet;
   }
 
   @Override
+  public void setForegroundMode(boolean foregroundMode) {
+    if (this.foregroundMode != foregroundMode) {
+      this.foregroundMode = foregroundMode;
+      internalPlayer.setForegroundMode(foregroundMode);
+    }
+  }
+
+  @Override
   public void stop(boolean reset) {
     if (reset) {
       playbackError = null;
@@ -619,7 +628,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
       if (playbackInfo.startPositionUs == C.TIME_UNSET) {
         // Replace internal unset start position with externally visible start position of zero.
         playbackInfo =
-            playbackInfo.fromNewPosition(
+            playbackInfo.resetToNewPosition(
                 playbackInfo.periodId, /* startPositionUs= */ 0, playbackInfo.contentPositionUs);
       }
       if ((!this.playbackInfo.timeline.isEmpty() || hasPendingPrepare)
@@ -658,20 +667,26 @@ import java.util.concurrent.CopyOnWriteArraySet;
       maskingPeriodIndex = getCurrentPeriodIndex();
       maskingWindowPositionMs = getCurrentPosition();
     }
+    MediaPeriodId mediaPeriodId =
+        resetPosition
+            ? playbackInfo.getDummyFirstMediaPeriodId(shuffleModeEnabled, window)
+            : playbackInfo.periodId;
+    long startPositionUs = resetPosition ? 0 : playbackInfo.positionUs;
+    long contentPositionUs = resetPosition ? C.TIME_UNSET : playbackInfo.contentPositionUs;
     return new PlaybackInfo(
         resetState ? Timeline.EMPTY : playbackInfo.timeline,
         resetState ? null : playbackInfo.manifest,
-        playbackInfo.periodId,
-        playbackInfo.startPositionUs,
-        playbackInfo.contentPositionUs,
+        mediaPeriodId,
+        startPositionUs,
+        contentPositionUs,
         playbackState,
         /* isLoading= */ false,
         resetState ? TrackGroupArray.EMPTY : playbackInfo.trackGroups,
         resetState ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult,
-        playbackInfo.periodId,
-        playbackInfo.startPositionUs,
+        mediaPeriodId,
+        startPositionUs,
         /* totalBufferedDurationUs= */ 0,
-        playbackInfo.startPositionUs);
+        startPositionUs);
   }
 
   private void updatePlaybackInfo(

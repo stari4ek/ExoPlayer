@@ -47,6 +47,8 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     private final long minTimeBetweenBufferReevaluationMs;
     private final Clock clock;
 
+    private TrackBitrateEstimator trackBitrateEstimator;
+
     /** Creates an adaptive track selection factory with default parameters. */
     public Factory() {
       this(
@@ -199,6 +201,18 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
           bufferedFractionToLiveEdgeForQualityIncrease;
       this.minTimeBetweenBufferReevaluationMs = minTimeBetweenBufferReevaluationMs;
       this.clock = clock;
+      trackBitrateEstimator = TrackBitrateEstimator.DEFAULT;
+    }
+
+    /**
+     * Sets a TrackBitrateEstimator.
+     *
+     * <p>This method is experimental, and will be renamed or removed in a future release.
+     *
+     * @param trackBitrateEstimator A {@link TrackBitrateEstimator}.
+     */
+    public void experimental_setTrackBitrateEstimator(TrackBitrateEstimator trackBitrateEstimator) {
+      this.trackBitrateEstimator = trackBitrateEstimator;
     }
 
     @Override
@@ -207,17 +221,20 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
       if (this.bandwidthMeter != null) {
         bandwidthMeter = this.bandwidthMeter;
       }
-      return new AdaptiveTrackSelection(
-          group,
-          tracks,
-          bandwidthMeter,
-          minDurationForQualityIncreaseMs,
-          maxDurationForQualityDecreaseMs,
-          minDurationToRetainAfterDiscardMs,
-          bandwidthFraction,
-          bufferedFractionToLiveEdgeForQualityIncrease,
-          minTimeBetweenBufferReevaluationMs,
-          clock);
+      AdaptiveTrackSelection adaptiveTrackSelection =
+          new AdaptiveTrackSelection(
+              group,
+              tracks,
+              bandwidthMeter,
+              minDurationForQualityIncreaseMs,
+              maxDurationForQualityDecreaseMs,
+              minDurationToRetainAfterDiscardMs,
+              bandwidthFraction,
+              bufferedFractionToLiveEdgeForQualityIncrease,
+              minTimeBetweenBufferReevaluationMs,
+              clock);
+      adaptiveTrackSelection.experimental_setTrackBitrateEstimator(trackBitrateEstimator);
+      return adaptiveTrackSelection;
     }
   }
 
@@ -236,7 +253,11 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
   private final float bufferedFractionToLiveEdgeForQualityIncrease;
   private final long minTimeBetweenBufferReevaluationMs;
   private final Clock clock;
+  private final Format[] formats;
+  private final int[] formatBitrates;
+  private final int[] trackBitrates;
 
+  private TrackBitrateEstimator trackBitrateEstimator;
   private float playbackSpeed;
   private int selectedIndex;
   private int reason;
@@ -314,9 +335,30 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     playbackSpeed = 1f;
     reason = C.SELECTION_REASON_INITIAL;
     lastBufferEvaluationMs = C.TIME_UNSET;
+    trackBitrateEstimator = TrackBitrateEstimator.DEFAULT;
+    formats = new Format[length];
+    formatBitrates = new int[length];
+    trackBitrates = new int[length];
+    for (int i = 0; i < length; i++) {
+      @SuppressWarnings("nullness:method.invocation.invalid")
+      Format format = getFormat(i);
+      formats[i] = format;
+      formatBitrates[i] = formats[i].bitrate;
+    }
     @SuppressWarnings("nullness:method.invocation.invalid")
-    int selectedIndex = determineIdealSelectedIndex(Long.MIN_VALUE);
+    int selectedIndex = determineIdealSelectedIndex(Long.MIN_VALUE, formatBitrates);
     this.selectedIndex = selectedIndex;
+  }
+
+  /**
+   * Sets a TrackBitrateEstimator.
+   *
+   * <p>This method is experimental, and will be renamed or removed in a future release.
+   *
+   * @param trackBitrateEstimator A {@link TrackBitrateEstimator}.
+   */
+  public void experimental_setTrackBitrateEstimator(TrackBitrateEstimator trackBitrateEstimator) {
+    this.trackBitrateEstimator = trackBitrateEstimator;
   }
 
   @Override
@@ -338,9 +380,12 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
       MediaChunkIterator[] mediaChunkIterators) {
     long nowMs = clock.elapsedRealtime();
 
+    // Update the estimated track bitrates.
+    trackBitrateEstimator.getBitrates(formats, queue, mediaChunkIterators, trackBitrates);
+
     // Stash the current selection, then make a new one.
     int currentSelectedIndex = selectedIndex;
-    selectedIndex = determineIdealSelectedIndex(nowMs);
+    selectedIndex = determineIdealSelectedIndex(nowMs, trackBitrates);
     if (selectedIndex == currentSelectedIndex) {
       return;
     }
@@ -385,10 +430,10 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
   @Override
   public int evaluateQueueSize(long playbackPositionUs, List<? extends MediaChunk> queue) {
     long nowMs = clock.elapsedRealtime();
-    if (lastBufferEvaluationMs != C.TIME_UNSET
-        && nowMs - lastBufferEvaluationMs < minTimeBetweenBufferReevaluationMs) {
+    if (!shouldEvaluateQueueSize(nowMs)) {
       return queue.size();
     }
+
     lastBufferEvaluationMs = nowMs;
     if (queue.isEmpty()) {
       return 0;
@@ -399,10 +444,11 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
     long playoutBufferedDurationBeforeLastChunkUs =
         Util.getPlayoutDurationForMediaDuration(
             lastChunk.startTimeUs - playbackPositionUs, playbackSpeed);
+    long minDurationToRetainAfterDiscardUs = getMinDurationToRetainAfterDiscardUs();
     if (playoutBufferedDurationBeforeLastChunkUs < minDurationToRetainAfterDiscardUs) {
       return queueSize;
     }
-    int idealSelectedIndex = determineIdealSelectedIndex(nowMs);
+    int idealSelectedIndex = determineIdealSelectedIndex(nowMs, formatBitrates);
     Format idealFormat = getFormat(idealSelectedIndex);
     // If the chunks contain video, discard from the first SD chunk beyond
     // minDurationToRetainAfterDiscardUs whose resolution and bitrate are both lower than the ideal
@@ -425,18 +471,58 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
   }
 
   /**
+   * Called when updating the selected track to determine whether a candidate track can be selected.
+   *
+   * @param format The {@link Format} of the candidate track.
+   * @param trackBitrate The estimated bitrate of the track. May differ from {@link Format#bitrate}
+   *     if a more accurate estimate of the current track bitrate is available.
+   * @param playbackSpeed The current playback speed.
+   * @param effectiveBitrate The bitrate available to this selection.
+   * @return Whether this {@link Format} can be selected.
+   */
+  @SuppressWarnings("unused")
+  protected boolean canSelectFormat(
+      Format format, int trackBitrate, float playbackSpeed, long effectiveBitrate) {
+    return Math.round(trackBitrate * playbackSpeed) <= effectiveBitrate;
+  }
+
+  /**
+   * Called from {@link #evaluateQueueSize(long, List)} to determine whether an evaluation should be
+   * performed.
+   *
+   * @param nowMs The current value of {@link Clock#elapsedRealtime()}.
+   * @return Whether an evaluation should be performed.
+   */
+  protected boolean shouldEvaluateQueueSize(long nowMs) {
+    return lastBufferEvaluationMs == C.TIME_UNSET
+        || nowMs - lastBufferEvaluationMs >= minTimeBetweenBufferReevaluationMs;
+  }
+
+  /**
+   * Called from {@link #evaluateQueueSize(long, List)} to determine the minimum duration of buffer
+   * to retain after discarding chunks.
+   *
+   * @return The minimum duration of buffer to retain after discarding chunks, in microseconds.
+   */
+  protected long getMinDurationToRetainAfterDiscardUs() {
+    return minDurationToRetainAfterDiscardUs;
+  }
+
+  /**
    * Computes the ideal selected index ignoring buffer health.
    *
    * @param nowMs The current time in the timebase of {@link Clock#elapsedRealtime()}, or {@link
    *     Long#MIN_VALUE} to ignore blacklisting.
+   * @param trackBitrates The estimated track bitrates. May differ from format bitrates if more
+   *     accurate estimates of the current track bitrates are available.
    */
-  private int determineIdealSelectedIndex(long nowMs) {
+  private int determineIdealSelectedIndex(long nowMs, int[] trackBitrates) {
     long effectiveBitrate = (long) (bandwidthMeter.getBitrateEstimate() * bandwidthFraction);
     int lowestBitrateNonBlacklistedIndex = 0;
     for (int i = 0; i < length; i++) {
       if (nowMs == Long.MIN_VALUE || !isBlacklisted(i, nowMs)) {
         Format format = getFormat(i);
-        if (Math.round(format.bitrate * playbackSpeed) <= effectiveBitrate) {
+        if (canSelectFormat(format, trackBitrates[i], playbackSpeed, effectiveBitrate)) {
           return i;
         } else {
           lowestBitrateNonBlacklistedIndex = i;

@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.upstream.cache;
 
+import android.support.annotation.VisibleForTesting;
 import android.util.SparseArray;
 import com.google.android.exoplayer2.upstream.cache.Cache.CacheException;
 import com.google.android.exoplayer2.util.Assertions;
@@ -43,7 +44,7 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /** Maintains the index of cached content. */
-/*package*/ class CachedContentIndex {
+/* package */ class CachedContentIndex {
 
   public static final String FILE_NAME = "cached_content_index.exi";
 
@@ -336,7 +337,7 @@ import javax.crypto.spec.SecretKeySpec;
    * than {@link java.lang.Integer#MAX_VALUE} it just returns the next bigger integer. Otherwise it
    * returns the smallest unused non-negative integer.
    */
-  //@VisibleForTesting
+  @VisibleForTesting
   public static int getNewId(SparseArray<String> idToKey) {
     int size = idToKey.size();
     int id = size == 0 ? 0 : (idToKey.keyAt(size - 1) + 1);

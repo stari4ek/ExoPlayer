@@ -502,9 +502,7 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
         Assertions.checkNotNull(mediaSourceByMediaPeriod.remove(mediaPeriod));
     ((DeferredMediaPeriod) mediaPeriod).releasePeriod();
     holder.activeMediaPeriods.remove(mediaPeriod);
-    if (holder.activeMediaPeriods.isEmpty() && holder.isRemoved) {
-      releaseChildSource(holder);
-    }
+    maybeReleaseChildSource(holder);
   }
 
   @Override
@@ -747,9 +745,7 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
         -oldTimeline.getWindowCount(),
         -oldTimeline.getPeriodCount());
     holder.isRemoved = true;
-    if (holder.activeMediaPeriods.isEmpty()) {
-      releaseChildSource(holder);
-    }
+    maybeReleaseChildSource(holder);
   }
 
   private void moveMediaSourceInternal(int currentIndex, int newIndex) {
@@ -778,6 +774,16 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
     }
   }
 
+  private void maybeReleaseChildSource(MediaSourceHolder mediaSourceHolder) {
+    // Release if the source has been removed from the playlist, but only if it has been previously
+    // prepared and only if we are not waiting for an existing media period to be released.
+    if (mediaSourceHolder.isRemoved
+        && mediaSourceHolder.hasStartedPreparing
+        && mediaSourceHolder.activeMediaPeriods.isEmpty()) {
+      releaseChildSource(mediaSourceHolder);
+    }
+  }
+
   /** Return uid of media source holder from period uid of concatenated source. */
   private static Object getMediaSourceHolderUid(Object periodUid) {
     return ConcatenatedTimeline.getChildTimelineUidFromConcatenatedUid(periodUid);
@@ -801,6 +807,7 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
 
     public final MediaSource mediaSource;
     public final Object uid;
+    public final List<DeferredMediaPeriod> activeMediaPeriods;
 
     public DeferredTimeline timeline;
     public int childIndex;
@@ -809,7 +816,6 @@ public class ConcatenatingMediaSource extends CompositeMediaSource<MediaSourceHo
     public boolean hasStartedPreparing;
     public boolean isPrepared;
     public boolean isRemoved;
-    public List<DeferredMediaPeriod> activeMediaPeriods;
 
     public MediaSourceHolder(MediaSource mediaSource) {
       this.mediaSource = mediaSource;
