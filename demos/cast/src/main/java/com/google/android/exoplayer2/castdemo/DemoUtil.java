@@ -21,9 +21,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * Utility methods and constants for the Cast demo application.
- */
+/** Utility methods and constants for the Cast demo application. */
 /* package */ final class DemoUtil {
 
   public static final String MIME_TYPE_DASH = MimeTypes.APPLICATION_MPD;
@@ -70,11 +68,8 @@ import java.util.List;
             .setMimeType(MIME_TYPE_VIDEO_MP4)
             .setMedia("https://html5demos.com/assets/dizzy.mp4")
             .buildAndClear());
-
     SAMPLES = Collections.unmodifiableList(samples);
-
   }
 
   private DemoUtil() {}
-
 }

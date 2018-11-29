@@ -498,12 +498,12 @@ public final class ExoPlayerTest {
             .waitForPlaybackState(Player.STATE_READY)
             .seek(10)
             // Start playback and wait until playback reaches second window.
-            .play()
-            .waitForPositionDiscontinuity()
+            .playUntilStartOfWindow(/* windowIndex= */ 1)
             // Seek twice in concession, expecting the first seek to be replaced (and thus except
             // only on seek processed callback).
             .seek(5)
             .seek(60)
+            .play()
             .build();
     final List<Integer> playbackStatesWhenSeekProcessed = new ArrayList<>();
     EventListener eventListener =
@@ -773,7 +773,7 @@ public final class ExoPlayerTest {
     }
     // There are 2 renderers, and track selections are made twice. The second time one renderer is
     // disabled, so only one out of the two track selections is enabled.
-    assertThat(createdTrackSelections).hasSize(4);
+    assertThat(createdTrackSelections).hasSize(3);
     assertThat(numSelectionsEnabled).isEqualTo(3);
   }
 
@@ -2058,8 +2058,11 @@ public final class ExoPlayerTest {
             .pause()
             .waitForPlaybackState(Player.STATE_READY)
             .seek(/* windowIndex= */ 0, /* positionMs= */ 9999)
+            .waitForSeekProcessed()
             .seek(/* windowIndex= */ 0, /* positionMs= */ 1)
+            .waitForSeekProcessed()
             .seek(/* windowIndex= */ 0, /* positionMs= */ 9999)
+            .waitForSeekProcessed()
             .play()
             .build();
     ExoPlayerTestRunner testRunner =
