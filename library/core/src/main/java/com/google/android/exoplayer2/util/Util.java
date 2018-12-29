@@ -48,8 +48,15 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.Renderer;
+import com.google.android.exoplayer2.RendererCapabilities;
+import com.google.android.exoplayer2.RenderersFactory;
 import com.google.android.exoplayer2.SeekParameters;
+import com.google.android.exoplayer2.audio.AudioRendererEventListener;
+import com.google.android.exoplayer2.drm.DrmSessionManager;
+import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.video.VideoRendererEventListener;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -204,7 +211,8 @@ public final class Util {
     }
     for (Uri uri : uris) {
       if ("http".equals(uri.getScheme())
-          && !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(uri.getHost())) {
+          && !NetworkSecurityPolicy.getInstance()
+              .isCleartextTrafficPermitted(Assertions.checkNotNull(uri.getHost()))) {
         // The security policy prevents cleartext traffic.
         return false;
       }
@@ -1473,11 +1481,12 @@ public final class Util {
   }
 
   /**
-   * Maps a {@link C} {@code TRACK_TYPE_*} constant to the corresponding {@link C}
-   * {@code DEFAULT_*_BUFFER_SIZE} constant.
+   * Maps a {@link C} {@code TRACK_TYPE_*} constant to the corresponding {@link C} {@code
+   * DEFAULT_*_BUFFER_SIZE} constant.
    *
    * @param trackType The track type.
    * @return The corresponding default buffer size in bytes.
+   * @throws IllegalArgumentException If the track type is an unrecognized or custom track type.
    */
   public static int getDefaultBufferSize(int trackType) {
     switch (trackType) {
@@ -1493,8 +1502,10 @@ public final class Util {
         return C.DEFAULT_METADATA_BUFFER_SIZE;
       case C.TRACK_TYPE_CAMERA_MOTION:
         return C.DEFAULT_CAMERA_MOTION_BUFFER_SIZE;
+      case C.TRACK_TYPE_NONE:
+        return 0;
       default:
-        throw new IllegalStateException();
+        throw new IllegalArgumentException();
     }
   }
 
@@ -1839,6 +1850,32 @@ public final class Util {
       getDisplaySizeV9(display, displaySize);
     }
     return displaySize;
+  }
+
+  /**
+   * Extract renderer capabilities for the renderers created by the provided renderers factory.
+   *
+   * @param renderersFactory A {@link RenderersFactory}.
+   * @param drmSessionManager An optional {@link DrmSessionManager} used by the renderers.
+   * @return The {@link RendererCapabilities} for each renderer created by the {@code
+   *     renderersFactory}.
+   */
+  public static RendererCapabilities[] getRendererCapabilities(
+      RenderersFactory renderersFactory,
+      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
+    Renderer[] renderers =
+        renderersFactory.createRenderers(
+            new Handler(),
+            new VideoRendererEventListener() {},
+            new AudioRendererEventListener() {},
+            (cues) -> {},
+            (metadata) -> {},
+            drmSessionManager);
+    RendererCapabilities[] capabilities = new RendererCapabilities[renderers.length];
+    for (int i = 0; i < renderers.length; i++) {
+      capabilities[i] = renderers[i].getCapabilities();
+    }
+    return capabilities;
   }
 
   @Nullable

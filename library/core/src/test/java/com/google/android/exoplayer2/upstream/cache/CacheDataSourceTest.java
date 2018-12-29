@@ -247,7 +247,8 @@ public final class CacheDataSourceTest {
     // Read partial at EOS but don't cross it so length is unknown.
     CacheDataSource cacheDataSource = createCacheDataSource(false, true);
     assertReadData(cacheDataSource, dataSpec, true);
-    assertThat(cache.getContentLength(defaultCacheKey)).isEqualTo(C.LENGTH_UNSET);
+    assertThat(ContentMetadata.getContentLength(cache.getContentMetadata(defaultCacheKey)))
+        .isEqualTo(C.LENGTH_UNSET);
 
     // Now do an unbounded request for whole data. This will cause a bounded request from upstream.
     // End of data from upstream shouldn't be mixed up with EOS and cause length set wrong.
@@ -285,7 +286,8 @@ public final class CacheDataSourceTest {
     cacheDataSource.close();
 
     assertThat(upstream.getAndClearOpenedDataSpecs()).hasLength(1);
-    assertThat(cache.getContentLength(defaultCacheKey)).isEqualTo(TEST_DATA.length);
+    assertThat(ContentMetadata.getContentLength(cache.getContentMetadata(defaultCacheKey)))
+        .isEqualTo(TEST_DATA.length);
   }
 
   @Test
@@ -338,7 +340,12 @@ public final class CacheDataSourceTest {
                 .appendReadData(1024 * 1024)
                 .endData());
     CacheUtil.cache(
-        unboundedDataSpec, cache, upstream2, /* counters= */ null, /* isCanceled= */ null);
+        unboundedDataSpec,
+        cache,
+        /* cacheKeyFactory= */ null,
+        upstream2,
+        /* counters= */ null,
+        /* isCanceled= */ null);
 
     // Read the rest of the data.
     TestUtil.readToEnd(cacheDataSource);
@@ -382,7 +389,12 @@ public final class CacheDataSourceTest {
                 .appendReadData(1024 * 1024)
                 .endData());
     CacheUtil.cache(
-        unboundedDataSpec, cache, upstream2, /* counters= */ null, /* isCanceled= */ null);
+        unboundedDataSpec,
+        cache,
+        /* cacheKeyFactory= */ null,
+        upstream2,
+        /* counters= */ null,
+        /* isCanceled= */ null);
 
     // Read the rest of the data.
     TestUtil.readToEnd(cacheDataSource);
@@ -400,7 +412,13 @@ public final class CacheDataSourceTest {
     // Cache the latter half of the data.
     int halfDataLength = 512;
     DataSpec dataSpec = buildDataSpec(halfDataLength, C.LENGTH_UNSET);
-    CacheUtil.cache(dataSpec, cache, upstream, /* counters= */ null, /* isCanceled= */ null);
+    CacheUtil.cache(
+        dataSpec,
+        cache,
+        /* cacheKeyFactory= */ null,
+        upstream,
+        /* counters= */ null,
+        /* isCanceled= */ null);
 
     // Create cache read-only CacheDataSource.
     CacheDataSource cacheDataSource =
@@ -411,7 +429,7 @@ public final class CacheDataSourceTest {
     TestUtil.readExactly(cacheDataSource, 100);
 
     // Delete cached data.
-    CacheUtil.remove(cache, defaultCacheKey);
+    CacheUtil.remove(unboundedDataSpec, cache, /* cacheKeyFactory= */ null);
     assertCacheEmpty(cache);
 
     // Read the rest of the data.
@@ -430,7 +448,13 @@ public final class CacheDataSourceTest {
     // Cache the latter half of the data.
     int halfDataLength = 512;
     DataSpec dataSpec = buildDataSpec(/* position= */ 0, halfDataLength);
-    CacheUtil.cache(dataSpec, cache, upstream, /* counters= */ null, /* isCanceled= */ null);
+    CacheUtil.cache(
+        dataSpec,
+        cache,
+        /* cacheKeyFactory= */ null,
+        upstream,
+        /* counters= */ null,
+        /* isCanceled= */ null);
 
     // Create blocking CacheDataSource.
     CacheDataSource cacheDataSource =
@@ -445,11 +469,7 @@ public final class CacheDataSourceTest {
     NavigableSet<CacheSpan> cachedSpans = cache.getCachedSpans(defaultCacheKey);
     for (CacheSpan cachedSpan : cachedSpans) {
       if (cachedSpan.position >= halfDataLength) {
-        try {
-          cache.removeSpan(cachedSpan);
-        } catch (Cache.CacheException e) {
-          // do nothing
-        }
+        cache.removeSpan(cachedSpan);
       }
     }
 
@@ -494,7 +514,9 @@ public final class CacheDataSourceTest {
     // If the request was unbounded then the content length should be cached, either because the
     // content length was known or because EOS was read. If the request was bounded then the content
     // length will not have been determined.
-    assertThat(cache.getContentLength(customCacheKey ? this.customCacheKey : defaultCacheKey))
+    ContentMetadata metadata =
+        cache.getContentMetadata(customCacheKey ? this.customCacheKey : defaultCacheKey);
+    assertThat(ContentMetadata.getContentLength(metadata))
         .isEqualTo(dataSpec.length == C.LENGTH_UNSET ? TEST_DATA.length : C.LENGTH_UNSET);
   }
 
@@ -580,7 +602,6 @@ public final class CacheDataSourceTest {
   }
 
   private DataSpec buildDataSpec(long position, long length, @Nullable String key) {
-    return new DataSpec(
-        testDataUri, position, length, key, DataSpec.FLAG_ALLOW_CACHING_UNKNOWN_LENGTH);
+    return new DataSpec(testDataUri, position, length, key);
   }
 }

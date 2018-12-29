@@ -5,10 +5,45 @@
 * Support for playing spherical videos on Daydream.
 * Improve decoder re-use between playbacks. TODO: Write and link a blog post
   here ([#2826](https://github.com/google/ExoPlayer/issues/2826)).
-* Add options for controlling audio track selections to `DefaultTrackSelector`
-  ([#3314](https://github.com/google/ExoPlayer/issues/3314)).
+* Track selection:
+  * Add options for controlling audio track selections to `DefaultTrackSelector`
+    ([#3314](https://github.com/google/ExoPlayer/issues/3314)).
+  * Update `TrackSelection.Factory` interface to support creating all track
+    selections together.
 * Do not retry failed loads whose error is `FileNotFoundException`.
-* Fix UUID passed to `MediaCrypto` when using `C.CLEARKEY_UUID` before API 27.
+* Offline:
+  * Speed up removal of segmented downloads
+    ([#5136](https://github.com/google/ExoPlayer/issues/5136)).
+  * Add `setStreamKeys` method to factories of DASH, SmoothStreaming and HLS
+    media sources to simplify filtering by downloaded streams.
+* Caching:
+  * Improve performance of `SimpleCache`.
+  * Cache data with unknown length by default. The previous flag to opt in to
+    this behavior (`DataSpec.FLAG_ALLOW_CACHING_UNKNOWN_LENGTH`) has been
+    replaced with an opt out flag
+    (`DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN`).
+* DownloadManager:
+  * Create only one task for all DownloadActions for the same content.
+  * Rename TaskState to DownloadState.
+* Add support for SHOUTcast ICY metadata
+  ([#3735](https://github.com/google/ExoPlayer/issues/3735)).
+
+### 2.9.3 ###
+
+* Captions: Support PNG subtitles in SMPTE-TT
+  ([#1583](https://github.com/google/ExoPlayer/issues/1583)).
+* MPEG-TS: Use random access indicators to minimize the need for
+  `FLAG_ALLOW_NON_IDR_KEYFRAMES`.
+* MP3:
+  * Use the true bitrate for constant-bitrate MP3 seeking.
+  * Fix issue where streams would play twice on some Samsung devices
+    ([#4519](https://github.com/google/ExoPlayer/issues/4519)).
+* Fix regression where some audio formats were incorrectly marked as being
+  unplayable due to under-reporting of platform decoder capabilities
+  ([#5145](https://github.com/google/ExoPlayer/issues/5145)).
+* Fix decode-only frame skipping on Nvidia Shield TV devices.
+* Workaround for MiTV (dangal) issue when swapping output surface
+  ([#5169](https://github.com/google/ExoPlayer/issues/5169)).
 
 ### 2.9.2 ###
 
@@ -35,6 +70,7 @@
 * Fix playback of some invalid but playable MP4 streams by replacing assertions
   with logged warnings in sample table parsing code
   ([#5162](https://github.com/google/ExoPlayer/issues/5162)).
+* Fix UUID passed to `MediaCrypto` when using `C.CLEARKEY_UUID` before API 27.
 
 ### 2.9.1 ###
 
@@ -56,10 +92,10 @@
 * DASH: Parse ProgramInformation element if present in the manifest.
 * HLS:
   * Add constructor to `DefaultHlsExtractorFactory` for adding TS payload
-    reader factory flags.
+    reader factory flags
+    ([#4861](https://github.com/google/ExoPlayer/issues/4861)).
   * Fix bug in segment sniffing
     ([#5039](https://github.com/google/ExoPlayer/issues/5039)).
-  ([#4861](https://github.com/google/ExoPlayer/issues/4861)).
 * SubRip: Add support for alignment tags, and remove tags from the displayed
   captions ([#4306](https://github.com/google/ExoPlayer/issues/4306)).
 * Fix issue with blind seeking to windows with non-zero offset in a
