@@ -17,7 +17,8 @@
   * Add `setStreamKeys` method to factories of DASH, SmoothStreaming and HLS
     media sources to simplify filtering by downloaded streams.
 * Caching:
-  * Improve performance of `SimpleCache`.
+  * Improve performance of `SimpleCache`
+    ([#4253](https://github.com/google/ExoPlayer/issues/4253)).
   * Cache data with unknown length by default. The previous flag to opt in to
     this behavior (`DataSpec.FLAG_ALLOW_CACHING_UNKNOWN_LENGTH`) has been
     replaced with an opt out flag
@@ -25,8 +26,42 @@
 * DownloadManager:
   * Create only one task for all DownloadActions for the same content.
   * Rename TaskState to DownloadState.
+  * Add new states to DownloadState.
+  * Replace DownloadState.action with DownloadAction fields.
 * Add support for SHOUTcast ICY metadata
   ([#3735](https://github.com/google/ExoPlayer/issues/3735)).
+* CEA-608: Improved conformance to the specification
+  ([#3860](https://github.com/google/ExoPlayer/issues/3860)).
+* IMA extension: Require setting the `Player` on `AdsLoader` instances before
+  playback.
+* Add `Handler` parameter to `ConcatenatingMediaSource` methods which take a
+  callback `Runnable`.
+* Remove `player` and `isTopLevelSource` parameters from `MediaSource.prepare`.
+* Change signature of `PlayerNotificationManager.NotificationListener` to better
+  fit service requirements. Remove ability to set a custom stop action.
+* Add `startPositionUs` to `MediaSource.createPeriod`. This fixes an issue where
+  using lazy preparation in `ConcatenatingMediaSource` with an
+  `ExtractorMediaSource` overrides initial seek positions
+  ([#5350](https://github.com/google/ExoPlayer/issues/5350)).
+
+### 2.9.4 ###
+
+* IMA extension: Clear ads loader listeners on release
+  ([#4114](https://github.com/google/ExoPlayer/issues/4114)).
+* SmoothStreaming: Fix support for subtitles in DRM protected streams
+  ([#5378](https://github.com/google/ExoPlayer/issues/5378)).
+* FFmpeg extension: Treat invalid data errors as non-fatal to match the behavior
+  of MediaCodec ([#5293](https://github.com/google/ExoPlayer/issues/5293)).
+* Fix issue where sending callbacks for playlist changes may cause problems
+  because of parallel player access
+  ([#5240](https://github.com/google/ExoPlayer/issues/5240)).
+* Fix issue with reusing a `ClippingMediaSource` with an inner
+  `ExtractorMediaSource` and a non-zero start position
+  ([#5351](https://github.com/google/ExoPlayer/issues/5351)).
+* Fix issue where uneven track durations in MP4 streams can cause OOM problems
+  ([#3670](https://github.com/google/ExoPlayer/issues/3670)).
+* Add the sub text to the MediaDescriptionAdapter of the
+  PlayerNotificationManager.
 
 ### 2.9.3 ###
 
@@ -34,6 +69,8 @@
   ([#1583](https://github.com/google/ExoPlayer/issues/1583)).
 * MPEG-TS: Use random access indicators to minimize the need for
   `FLAG_ALLOW_NON_IDR_KEYFRAMES`.
+* Downloading: Reduce time taken to remove downloads
+  ([#5136](https://github.com/google/ExoPlayer/issues/5136)).
 * MP3:
   * Use the true bitrate for constant-bitrate MP3 seeking.
   * Fix issue where streams would play twice on some Samsung devices
@@ -1157,7 +1194,7 @@
   [here](https://medium.com/google-exoplayer/customizing-exoplayers-ui-components-728cf55ee07a#.9ewjg7avi).
 * Robustness improvements when handling MediaSource timeline changes and
   MediaPeriod transitions.
-* EIA608: Support for caption styling and positioning.
+* CEA-608: Support for caption styling and positioning.
 * MPEG-TS: Improved support:
   * Support injection of custom TS payload readers.
   * Support injection of custom section payload readers.
@@ -1401,8 +1438,8 @@ V2 release.
   (#801).
 * MP3: Fix playback of some streams when stream length is unknown.
 * ID3: Support multiple frames of the same type in a single tag.
-* EIA608: Correctly handle repeated control characters, fixing an issue in which
-  captions would immediately disappear.
+* CEA-608: Correctly handle repeated control characters, fixing an issue in
+  which captions would immediately disappear.
 * AVC3: Fix decoder failures on some MediaTek devices in the case where the
   first buffer fed to the decoder does not start with SPS/PPS NAL units.
 * Misc bug fixes.

@@ -20,8 +20,8 @@ import static org.junit.Assert.fail;
 
 import android.net.Uri;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.offline.DownloadManager.DownloadState;
-import com.google.android.exoplayer2.offline.DownloadManager.DownloadState.State;
+import com.google.android.exoplayer2.offline.DownloadState.State;
+import com.google.android.exoplayer2.scheduler.Requirements;
 import com.google.android.exoplayer2.testutil.DummyMainThread;
 import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import com.google.android.exoplayer2.testutil.TestDownloadManagerListener;
@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.After;
@@ -41,6 +42,7 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLog;
 
 /** Tests {@link DownloadManager}. */
 @RunWith(RobolectricTestRunner.class)
@@ -69,6 +71,7 @@ public class DownloadManagerTest {
 
   @Before
   public void setUp() throws Exception {
+    ShadowLog.stream = System.out;
     MockitoAnnotations.initMocks(this);
     uri1 = Uri.parse("http://abc.com/media1");
     uri2 = Uri.parse("http://abc.com/media2");
@@ -138,7 +141,7 @@ public class DownloadManagerTest {
   public void postDownloadAction_downloads() throws Throwable {
     DownloadRunner runner = new DownloadRunner(uri1);
     TaskWrapper task = runner.postDownloadAction().getTask();
-    task.assertStarted();
+    task.assertDownloading();
     runner.getDownloader(0).unblock().assertReleased().assertStartCount(1);
     task.assertCompleted();
     runner.assertCreatedDownloaderCount(1);
@@ -149,9 +152,9 @@ public class DownloadManagerTest {
   public void postRemoveAction_removes() throws Throwable {
     DownloadRunner runner = new DownloadRunner(uri1);
     TaskWrapper task = runner.postRemoveAction().getTask();
-    task.assertStarted();
+    task.assertRemoving();
     runner.getDownloader(0).unblock().assertReleased().assertStartCount(1);
-    task.assertCompleted();
+    task.assertRemoved();
     runner.assertCreatedDownloaderCount(1);
     downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
   }
@@ -243,7 +246,7 @@ public class DownloadManagerTest {
     runner.postRemoveAction();
 
     downloader1.unblock().assertNotCanceled();
-    runner.getTask().assertCompleted();
+    runner.getTask().assertRemoved();
     runner.assertCreatedDownloaderCount(1);
     downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
   }
@@ -314,6 +317,7 @@ public class DownloadManagerTest {
 
     downloader1.assertStarted();
     downloader2.assertDoesNotStart();
+    runner2.getTask().assertQueued();
     downloader1.unblock();
     downloader2.assertStarted();
     downloader2.unblock();
@@ -338,7 +342,7 @@ public class DownloadManagerTest {
     downloader2.unblock();
 
     runner1.getTask().assertCompleted();
-    runner2.getTask().assertCompleted();
+    runner2.getTask().assertRemoved();
     downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
   }
 
@@ -384,24 +388,24 @@ public class DownloadManagerTest {
     DownloadRunner runner2 = new DownloadRunner(uri2);
     DownloadRunner runner3 = new DownloadRunner(uri3);
 
-    runner1.postDownloadAction().getTask().assertStarted();
-    runner2.postRemoveAction().getTask().assertStarted();
+    runner1.postDownloadAction().getTask().assertDownloading();
+    runner2.postRemoveAction().getTask().assertRemoving();
     runner2.postDownloadAction();
 
     runOnMainThread(() -> downloadManager.stopDownloads());
 
-    runner1.getTask().assertQueued();
+    runner1.getTask().assertStopped();
 
     // remove actions aren't stopped.
     runner2.getDownloader(0).unblock().assertReleased();
-    runner2.getTask().assertQueued();
+    runner2.getTask().assertStopped();
     // Although remove2 is finished, download2 doesn't start.
     runner2.getDownloader(1).assertDoesNotStart();
 
     // When a new remove action is added, it cancels stopped download actions with the same media.
     runner1.postRemoveAction();
     runner1.getDownloader(1).assertStarted().unblock();
-    runner1.getTask().assertCompleted();
+    runner1.getTask().assertRemoved();
 
     // New download actions can be added but they don't start.
     runner3.postDownloadAction().getDownloader(0).assertDoesNotStart();
@@ -423,7 +427,12 @@ public class DownloadManagerTest {
           () -> {
             downloadManager =
                 new DownloadManager(
-                    actionFile, downloaderFactory, maxActiveDownloadTasks, MIN_RETRY_COUNT);
+                    RuntimeEnvironment.application,
+                    actionFile,
+                    downloaderFactory,
+                    maxActiveDownloadTasks,
+                    MIN_RETRY_COUNT,
+                    new Requirements(0));
             downloadManagerListener =
                 new TestDownloadManagerListener(downloadManager, dummyMainThread);
             downloadManager.startDownloads();
@@ -518,12 +527,20 @@ public class DownloadManagerTest {
       this.taskId = taskId;
     }
 
-    private TaskWrapper assertStarted() throws InterruptedException {
-      return assertState(DownloadState.STATE_STARTED);
+    private TaskWrapper assertDownloading() {
+      return assertState(DownloadState.STATE_DOWNLOADING);
     }
 
     private TaskWrapper assertCompleted() {
       return assertState(DownloadState.STATE_COMPLETED);
+    }
+
+    private TaskWrapper assertRemoving() {
+      return assertState(DownloadState.STATE_REMOVING);
+    }
+
+    private TaskWrapper assertRemoved() {
+      return assertState(DownloadState.STATE_REMOVED);
     }
 
     private TaskWrapper assertFailed() {
@@ -534,7 +551,12 @@ public class DownloadManagerTest {
       return assertState(DownloadState.STATE_QUEUED);
     }
 
+    private TaskWrapper assertStopped() {
+      return assertState(DownloadState.STATE_STOPPED);
+    }
+
     private TaskWrapper assertState(@State int expectedState) {
+      ArrayList<Integer> receivedStates = new ArrayList<>();
       while (true) {
         Integer state = null;
         try {
@@ -542,8 +564,25 @@ public class DownloadManagerTest {
         } catch (InterruptedException e) {
           fail(e.getMessage());
         }
-        if (expectedState == state) {
-          return this;
+        if (state != null) {
+          if (expectedState == state) {
+            return this;
+          }
+          receivedStates.add(state);
+        } else {
+          StringBuilder sb = new StringBuilder();
+          for (int i = 0; i < receivedStates.size(); i++) {
+            if (i > 0) {
+              sb.append(',');
+            }
+            sb.append(DownloadState.getStateString(receivedStates.get(i)));
+          }
+          fail(
+              String.format(
+                  Locale.US,
+                  "expected:<%s> but was:<%s>",
+                  DownloadState.getStateString(expectedState),
+                  sb));
         }
       }
     }

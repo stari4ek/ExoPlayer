@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.upstream.cache;
 
 import android.support.annotation.Nullable;
+import com.google.android.exoplayer2.C;
 import java.io.File;
 import java.io.IOException;
 import java.util.NavigableSet;
@@ -140,8 +141,8 @@ public interface Cache {
    * obtains the data from some other source. The returned {@link CacheSpan} serves as a lock.
    * Whilst the caller holds the lock it may write data into the hole. It may split data into
    * multiple files. When the caller has finished writing a file it should commit it to the cache by
-   * calling {@link #commitFile(File)}. When the caller has finished writing, it must release the
-   * lock by calling {@link #releaseHoleSpan}.
+   * calling {@link #commitFile(File, long)}. When the caller has finished writing, it must release
+   * the lock by calling {@link #releaseHoleSpan}.
    *
    * @param key The key of the data being requested.
    * @param position The position of the data being requested.
@@ -169,21 +170,22 @@ public interface Cache {
    *
    * @param key The cache key for the data.
    * @param position The starting position of the data.
-   * @param maxLength The maximum length of the data to be written. Used only to ensure that there
-   *     is enough space in the cache.
+   * @param length The length of the data being written, or {@link C#LENGTH_UNSET} if unknown. Used
+   *     only to ensure that there is enough space in the cache.
    * @return The file into which data should be written.
    * @throws CacheException If an error is encountered.
    */
-  File startFile(String key, long position, long maxLength) throws CacheException;
+  File startFile(String key, long position, long length) throws CacheException;
 
   /**
    * Commits a file into the cache. Must only be called when holding a corresponding hole {@link
    * CacheSpan} obtained from {@link #startReadWrite(String, long)}
    *
    * @param file A newly written cache file.
+   * @param length The length of the newly written cache file in bytes.
    * @throws CacheException If an error is encountered.
    */
-  void commitFile(File file) throws CacheException;
+  void commitFile(File file, long length) throws CacheException;
 
   /**
    * Releases a {@link CacheSpan} obtained from {@link #startReadWrite(String, long)} which

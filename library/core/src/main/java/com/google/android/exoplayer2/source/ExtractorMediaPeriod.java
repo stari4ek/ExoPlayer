@@ -356,18 +356,19 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     } else if (isPendingReset()) {
       return pendingResetPositionUs;
     }
-    long largestQueuedTimestampUs;
+    long largestQueuedTimestampUs = C.TIME_UNSET;
     if (haveAudioVideoTracks) {
       // Ignore non-AV tracks, which may be sparse or poorly interleaved.
       largestQueuedTimestampUs = Long.MAX_VALUE;
       int trackCount = sampleQueues.length;
       for (int i = 0; i < trackCount; i++) {
-        if (trackIsAudioVideoFlags[i]) {
+        if (trackIsAudioVideoFlags[i] && !sampleQueues[i].isLastSampleQueued()) {
           largestQueuedTimestampUs = Math.min(largestQueuedTimestampUs,
               sampleQueues[i].getLargestQueuedTimestampUs());
         }
       }
-    } else {
+    }
+    if (largestQueuedTimestampUs == C.TIME_UNSET) {
       largestQueuedTimestampUs = getLargestQueuedTimestampUs();
     }
     return largestQueuedTimestampUs == Long.MIN_VALUE ? lastSeekPositionUs
@@ -988,7 +989,9 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
           position,
           C.LENGTH_UNSET,
           customCacheKey,
-          DataSpec.FLAG_ALLOW_ICY_METADATA | DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN);
+          DataSpec.FLAG_ALLOW_ICY_METADATA
+              | DataSpec.FLAG_DONT_CACHE_IF_LENGTH_UNKNOWN
+              | DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION);
     }
 
     private void setLoadPosition(long position, long timeUs) {

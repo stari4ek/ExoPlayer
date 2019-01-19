@@ -259,8 +259,7 @@ public final class SimpleCache implements Cache {
   }
 
   @Override
-  public synchronized File startFile(String key, long position, long maxLength)
-      throws CacheException {
+  public synchronized File startFile(String key, long position, long length) throws CacheException {
     Assertions.checkState(!released);
     CachedContent cachedContent = index.get(key);
     Assertions.checkNotNull(cachedContent);
@@ -270,32 +269,30 @@ public final class SimpleCache implements Cache {
       cacheDir.mkdirs();
       removeStaleSpans();
     }
-    evictor.onStartFile(this, key, position, maxLength);
+    evictor.onStartFile(this, key, position, length);
     return SimpleCacheSpan.getCacheFile(
         cacheDir, cachedContent.id, position, System.currentTimeMillis());
   }
 
   @Override
-  public synchronized void commitFile(File file) throws CacheException {
+  public synchronized void commitFile(File file, long length) throws CacheException {
     Assertions.checkState(!released);
-    SimpleCacheSpan span = SimpleCacheSpan.createCacheEntry(file, index);
+    if (!file.exists()) {
+      return;
+    }
+    if (length == 0) {
+      file.delete();
+      return;
+    }
+    SimpleCacheSpan span = SimpleCacheSpan.createCacheEntry(file, length, index);
     Assertions.checkState(span != null);
     CachedContent cachedContent = index.get(span.key);
     Assertions.checkNotNull(cachedContent);
     Assertions.checkState(cachedContent.isLocked());
-    // If the file doesn't exist, don't add it to the in-memory representation.
-    if (!file.exists()) {
-      return;
-    }
-    // If the file has length 0, delete it and don't add it to the in-memory representation.
-    if (file.length() == 0) {
-      file.delete();
-      return;
-    }
     // Check if the span conflicts with the set content length
-    long length = ContentMetadata.getContentLength(cachedContent.getMetadata());
-    if (length != C.LENGTH_UNSET) {
-      Assertions.checkState((span.position + span.length) <= length);
+    long contentLength = ContentMetadata.getContentLength(cachedContent.getMetadata());
+    if (contentLength != C.LENGTH_UNSET) {
+      Assertions.checkState((span.position + span.length) <= contentLength);
     }
     addSpan(span);
     index.store();
@@ -385,29 +382,45 @@ public final class SimpleCache implements Cache {
     }
 
     index.load();
-
-    File[] files = cacheDir.listFiles();
-    if (files == null) {
-      return;
-    }
-    for (File file : files) {
-      if (file.getName().equals(CachedContentIndex.FILE_NAME)) {
-        continue;
-      }
-      SimpleCacheSpan span =
-          file.length() > 0 ? SimpleCacheSpan.createCacheEntry(file, index) : null;
-      if (span != null) {
-        addSpan(span);
-      } else {
-        file.delete();
-      }
-    }
-
+    loadDirectory(cacheDir, /* isRootDirectory= */ true);
     index.removeEmpty();
+
     try {
       index.store();
     } catch (CacheException e) {
       Log.e(TAG, "Storing index file failed", e);
+    }
+  }
+
+  private void loadDirectory(File directory, boolean isRootDirectory) {
+    File[] files = directory.listFiles();
+    if (files == null) {
+      // Not a directory.
+      return;
+    }
+    if (!isRootDirectory && files.length == 0) {
+      // Empty non-root directory.
+      directory.delete();
+      return;
+    }
+    for (File file : files) {
+      String fileName = file.getName();
+      if (fileName.indexOf('.') == -1) {
+        loadDirectory(file, /* isRootDirectory= */ false);
+      } else {
+        if (isRootDirectory && CachedContentIndex.FILE_NAME.equals(fileName)) {
+          // Skip the (expected) index file in the root directory.
+          continue;
+        }
+        long fileLength = file.length();
+        SimpleCacheSpan span =
+            fileLength > 0 ? SimpleCacheSpan.createCacheEntry(file, fileLength, index) : null;
+        if (span != null) {
+          addSpan(span);
+        } else {
+          file.delete();
+        }
+      }
     }
   }
 

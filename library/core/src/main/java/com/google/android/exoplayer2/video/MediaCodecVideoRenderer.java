@@ -375,7 +375,6 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     try {
       super.onDisabled();
     } finally {
-      decoderCounters.ensureUpdated();
       eventDispatcher.disabled(decoderCounters);
     }
   }
@@ -1331,7 +1330,8 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
           // https://github.com/google/ExoPlayer/issues/4315,
           // https://github.com/google/ExoPlayer/issues/4419,
           // https://github.com/google/ExoPlayer/issues/4460,
-          // https://github.com/google/ExoPlayer/issues/4468.
+          // https://github.com/google/ExoPlayer/issues/4468,
+          // https://github.com/google/ExoPlayer/issues/5312.
           switch (Util.DEVICE) {
             case "1601":
             case "1713":
@@ -1387,6 +1387,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
             case "HWBLN-H":
             case "HWCAM-H":
             case "HWVNS-H":
+            case "HWWAS-H":
             case "i9031":
             case "iball8735_9806":
             case "Infinix-X572":
