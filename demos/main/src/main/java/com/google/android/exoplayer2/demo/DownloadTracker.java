@@ -39,13 +39,9 @@ import com.google.android.exoplayer2.offline.DownloadHelper;
 import com.google.android.exoplayer2.offline.DownloadManager;
 import com.google.android.exoplayer2.offline.DownloadService;
 import com.google.android.exoplayer2.offline.DownloadState;
-import com.google.android.exoplayer2.offline.ProgressiveDownloadHelper;
 import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.scheduler.Requirements;
 import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.source.dash.offline.DashDownloadHelper;
-import com.google.android.exoplayer2.source.hls.offline.HlsDownloadHelper;
-import com.google.android.exoplayer2.source.smoothstreaming.offline.SsDownloadHelper;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector.MappedTrackInfo;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
@@ -210,18 +206,18 @@ public class DownloadTracker implements DownloadManager.Listener {
     DownloadService.startWithAction(context, DemoDownloadService.class, action, false);
   }
 
-  private DownloadHelper<?> getDownloadHelper(
+  private DownloadHelper getDownloadHelper(
       Uri uri, String extension, RenderersFactory renderersFactory) {
     int type = Util.inferContentType(uri, extension);
     switch (type) {
       case C.TYPE_DASH:
-        return new DashDownloadHelper(uri, dataSourceFactory, renderersFactory);
+        return DownloadHelper.forDash(uri, dataSourceFactory, renderersFactory);
       case C.TYPE_SS:
-        return new SsDownloadHelper(uri, dataSourceFactory, renderersFactory);
+        return DownloadHelper.forSmoothStreaming(uri, dataSourceFactory, renderersFactory);
       case C.TYPE_HLS:
-        return new HlsDownloadHelper(uri, dataSourceFactory, renderersFactory);
+        return DownloadHelper.forHls(uri, dataSourceFactory, renderersFactory);
       case C.TYPE_OTHER:
-        return new ProgressiveDownloadHelper(uri);
+        return DownloadHelper.forProgressive(uri);
       default:
         throw new IllegalStateException("Unsupported type: " + type);
     }
@@ -231,10 +227,11 @@ public class DownloadTracker implements DownloadManager.Listener {
   private final class StartDownloadDialogHelper
       implements DownloadHelper.Callback,
           DialogInterface.OnClickListener,
+          DialogInterface.OnDismissListener,
           View.OnClickListener,
           TrackSelectionView.DialogCallback {
 
-    private final DownloadHelper<?> downloadHelper;
+    private final DownloadHelper downloadHelper;
     private final String name;
     private final LayoutInflater dialogInflater;
     private final AlertDialog dialog;
@@ -244,20 +241,21 @@ public class DownloadTracker implements DownloadManager.Listener {
     private DefaultTrackSelector.Parameters parameters;
 
     private StartDownloadDialogHelper(
-        Activity activity, DownloadHelper<?> downloadHelper, String name) {
+        Activity activity, DownloadHelper downloadHelper, String name) {
       this.downloadHelper = downloadHelper;
       this.name = name;
       AlertDialog.Builder builder =
           new AlertDialog.Builder(activity)
               .setTitle(R.string.download_preparing)
-              .setPositiveButton(android.R.string.ok, this)
-              .setNegativeButton(android.R.string.cancel, null);
+              .setPositiveButton(android.R.string.ok, /* listener= */ this)
+              .setNegativeButton(android.R.string.cancel, /* listener= */ null);
 
       // Inflate with the builder's context to ensure the correct style is used.
       dialogInflater = LayoutInflater.from(builder.getContext());
       selectionList = (LinearLayout) dialogInflater.inflate(R.layout.start_download_dialog, null);
       builder.setView(selectionList);
       dialog = builder.create();
+      dialog.setOnDismissListener(/* listener= */ this);
       dialog.show();
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
 
@@ -268,19 +266,17 @@ public class DownloadTracker implements DownloadManager.Listener {
     // DownloadHelper.Callback implementation.
 
     @Override
-    public void onPrepared(DownloadHelper<?> helper) {
-      if (helper.getPeriodCount() < 1) {
-        onPrepareError(downloadHelper, new IOException("Content is empty."));
-        return;
+    public void onPrepared(DownloadHelper helper) {
+      if (helper.getPeriodCount() > 0) {
+        mappedTrackInfo = downloadHelper.getMappedTrackInfo(/* periodIndex= */ 0);
+        updateSelectionList();
       }
-      mappedTrackInfo = downloadHelper.getMappedTrackInfo(/* periodIndex= */ 0);
-      updateSelectionList();
       dialog.setTitle(R.string.exo_download_description);
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
     }
 
     @Override
-    public void onPrepareError(DownloadHelper<?> helper, IOException e) {
+    public void onPrepareError(DownloadHelper helper, IOException e) {
       Toast.makeText(
               context.getApplicationContext(), R.string.download_start_error, Toast.LENGTH_LONG)
           .show();
@@ -324,6 +320,13 @@ public class DownloadTracker implements DownloadManager.Listener {
     public void onClick(DialogInterface dialog, int which) {
       DownloadAction downloadAction = downloadHelper.getDownloadAction(Util.getUtf8Bytes(name));
       startDownload(downloadAction);
+    }
+
+    // DialogInterface.OnDismissListener implementation.
+
+    @Override
+    public void onDismiss(DialogInterface dialog) {
+      downloadHelper.release();
     }
 
     // Internal methods.

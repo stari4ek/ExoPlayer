@@ -2,6 +2,9 @@
 
 ### dev-v2 (not yet released) ###
 
+* `ExtractorMediaSource` renamed to `ProgressiveMediaSource`.
+* HLS:
+  * Parse CHANNELS attribute from EXT-X-MEDIA.
 * Support for playing spherical videos on Daydream.
 * Improve decoder re-use between playbacks. TODO: Write and link a blog post
   here ([#2826](https://github.com/google/ExoPlayer/issues/2826)).
@@ -28,6 +31,8 @@
   * Rename TaskState to DownloadState.
   * Add new states to DownloadState.
   * Replace DownloadState.action with DownloadAction fields.
+* DRM: Fix black flicker when keys rotate in DRM protected content
+  ([#3561](https://github.com/google/ExoPlayer/issues/3561)).
 * Add support for SHOUTcast ICY metadata
   ([#3735](https://github.com/google/ExoPlayer/issues/3735)).
 * CEA-608: Improved conformance to the specification
@@ -37,12 +42,11 @@
 * Add `Handler` parameter to `ConcatenatingMediaSource` methods which take a
   callback `Runnable`.
 * Remove `player` and `isTopLevelSource` parameters from `MediaSource.prepare`.
+* VP9 extension: Remove RGB output mode and libyuv dependency, and switch to
+  surface YUV output as the default. Remove constructor parameters `scaleToFit`
+  and `useSurfaceYuvOutput`.
 * Change signature of `PlayerNotificationManager.NotificationListener` to better
   fit service requirements. Remove ability to set a custom stop action.
-* Add `startPositionUs` to `MediaSource.createPeriod`. This fixes an issue where
-  using lazy preparation in `ConcatenatingMediaSource` with an
-  `ExtractorMediaSource` overrides initial seek positions
-  ([#5350](https://github.com/google/ExoPlayer/issues/5350)).
 
 ### 2.9.4 ###
 
@@ -52,6 +56,18 @@
   ([#5378](https://github.com/google/ExoPlayer/issues/5378)).
 * FFmpeg extension: Treat invalid data errors as non-fatal to match the behavior
   of MediaCodec ([#5293](https://github.com/google/ExoPlayer/issues/5293)).
+* GVR extension: upgrade GVR SDK dependency to 1.190.0.
+* Associate fatal player errors of type SOURCE with the loading source in
+  `AnalyticsListener.EventTime`
+  ([#5407](https://github.com/google/ExoPlayer/issues/5407)).
+* Add `startPositionUs` to `MediaSource.createPeriod`. This fixes an issue where
+  using lazy preparation in `ConcatenatingMediaSource` with an
+  `ExtractorMediaSource` overrides initial seek positions
+  ([#5350](https://github.com/google/ExoPlayer/issues/5350)).
+* Add subtext to the `MediaDescriptionAdapter` of the
+  `PlayerNotificationManager`.
+* Add workaround for video quality problems with Amlogic decoders
+  ([#5003](https://github.com/google/ExoPlayer/issues/5003)).
 * Fix issue where sending callbacks for playlist changes may cause problems
   because of parallel player access
   ([#5240](https://github.com/google/ExoPlayer/issues/5240)).
@@ -60,8 +76,6 @@
   ([#5351](https://github.com/google/ExoPlayer/issues/5351)).
 * Fix issue where uneven track durations in MP4 streams can cause OOM problems
   ([#3670](https://github.com/google/ExoPlayer/issues/3670)).
-* Add the sub text to the MediaDescriptionAdapter of the
-  PlayerNotificationManager.
 
 ### 2.9.3 ###
 

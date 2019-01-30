@@ -15,15 +15,14 @@
  */
 package com.google.android.exoplayer2.offline;
 
-import static com.google.android.exoplayer2.offline.DefaultDownloadIndex.VersionTable.FEATURE_CACHE;
-import static com.google.android.exoplayer2.offline.DefaultDownloadIndex.VersionTable.FEATURE_OFFLINE;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.net.Uri;
 import android.support.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.database.ExoDatabaseProvider;
+import com.google.android.exoplayer2.database.VersionTable;
 import java.util.Arrays;
 import org.junit.After;
 import org.junit.Before;
@@ -36,16 +35,18 @@ import org.robolectric.RuntimeEnvironment;
 @RunWith(RobolectricTestRunner.class)
 public class DefaultDownloadIndexTest {
 
+  private ExoDatabaseProvider databaseProvider;
   private DefaultDownloadIndex downloadIndex;
 
   @Before
   public void setUp() {
-    downloadIndex = new DefaultDownloadIndex(RuntimeEnvironment.application);
+    databaseProvider = new ExoDatabaseProvider(RuntimeEnvironment.application);
+    downloadIndex = new DefaultDownloadIndex(databaseProvider);
   }
 
   @After
   public void tearDown() {
-    downloadIndex.release();
+    databaseProvider.close();
   }
 
   @Test
@@ -80,13 +81,14 @@ public class DefaultDownloadIndexTest {
             .setDownloadedBytes(200)
             .setTotalBytes(400)
             .setFailureReason(DownloadState.FAILURE_REASON_UNKNOWN)
-            .setStopFlags(DownloadState.STOP_FLAG_STOPPED)
+            .setStopFlags(DownloadState.STOP_FLAG_REQUIREMENTS_NOT_MET)
+            .setNotMetRequirements(0x87654321)
             .setStartTimeMs(10)
             .setUpdateTimeMs(20)
             .setStreamKeys(
                 new StreamKey(/* periodIndex= */ 0, /* groupIndex= */ 1, /* trackIndex= */ 2),
                 new StreamKey(/* periodIndex= */ 3, /* groupIndex= */ 4, /* trackIndex= */ 5))
-            .setCustomMetadata(new byte[] {0, 1, 2, 3})
+            .setCustomMetadata(new byte[] {0, 1, 2, 3, 7, 8, 9, 10})
             .build();
     downloadIndex.putDownloadState(downloadState);
     DownloadState readDownloadState = downloadIndex.getDownloadState(id);
@@ -99,29 +101,12 @@ public class DefaultDownloadIndexTest {
   public void releaseAndRecreateDownloadIndex_returnsTheSameDownloadState() {
     String id = "id";
     DownloadState downloadState = new DownloadStateBuilder(id).build();
-
     downloadIndex.putDownloadState(downloadState);
-    downloadIndex.release();
-    downloadIndex = new DefaultDownloadIndex(RuntimeEnvironment.application);
-    DownloadState readDownloadState = downloadIndex.getDownloadState(id);
 
-    assertThat(readDownloadState).isNotNull();
-    assertEqual(readDownloadState, downloadState);
-  }
-
-  @Test
-  public void customDatabaseProvider_getDownloadStateReturnsNull() {
-    String id = "id";
-    DownloadState downloadState = new DownloadStateBuilder(id).build();
-
-    downloadIndex.putDownloadState(downloadState);
-    downloadIndex.release();
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
     downloadIndex = new DefaultDownloadIndex(databaseProvider);
     DownloadState readDownloadState = downloadIndex.getDownloadState(id);
-
-    assertThat(readDownloadState).isNull();
-    databaseProvider.close();
+    assertThat(readDownloadState).isNotNull();
+    assertEqual(readDownloadState, downloadState);
   }
 
   @Test
@@ -134,10 +119,9 @@ public class DefaultDownloadIndexTest {
     String id = "id";
     DownloadState downloadState = new DownloadStateBuilder(id).build();
     downloadIndex.putDownloadState(downloadState);
-
     downloadIndex.removeDownloadState(id);
-    DownloadState readDownloadState = downloadIndex.getDownloadState(id);
 
+    DownloadState readDownloadState = downloadIndex.getDownloadState(id);
     assertThat(readDownloadState).isNull();
   }
 
@@ -160,6 +144,7 @@ public class DefaultDownloadIndexTest {
     assertEqual(cursor.getDownloadState(), downloadState2);
     cursor.moveToNext();
     assertEqual(cursor.getDownloadState(), downloadState1);
+    cursor.close();
   }
 
   @Test
@@ -191,111 +176,39 @@ public class DefaultDownloadIndexTest {
     assertEqual(cursor.getDownloadState(), downloadState1);
     cursor.moveToNext();
     assertEqual(cursor.getDownloadState(), downloadState3);
+    cursor.close();
   }
 
   @Test
-  public void doesTableExist_nonExistingTable_returnsFalse() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
+  public void putDownloadState_setsVersion() {
+    SQLiteDatabase readableDatabase = databaseProvider.getReadableDatabase();
+    assertThat(VersionTable.getVersion(readableDatabase, VersionTable.FEATURE_OFFLINE))
+        .isEqualTo(VersionTable.VERSION_UNSET);
 
-    assertThat(DefaultDownloadIndex.doesTableExist(databaseProvider, "NonExistingTable")).isFalse();
+    downloadIndex.putDownloadState(new DownloadStateBuilder("id1").build());
 
-    databaseProvider.close();
+    assertThat(VersionTable.getVersion(readableDatabase, VersionTable.FEATURE_OFFLINE))
+        .isEqualTo(DefaultDownloadIndex.TABLE_VERSION);
   }
 
   @Test
-  public void doesTableExist_existingTable_returnsTrue() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
-    String tableName = "ExistingTable";
-    databaseProvider.getWritableDatabase().execSQL("CREATE TABLE " + tableName + "(dummy)");
+  public void downloadIndex_versionDowngradeWipesData() {
+    DownloadState downloadState1 = new DownloadStateBuilder("id1").build();
+    downloadIndex.putDownloadState(downloadState1);
+    DownloadStateCursor cursor = downloadIndex.getDownloadStates();
+    assertThat(cursor.getCount()).isEqualTo(1);
+    cursor.close();
 
-    assertThat(DefaultDownloadIndex.doesTableExist(databaseProvider, tableName)).isTrue();
+    SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
+    VersionTable.setVersion(writableDatabase, VersionTable.FEATURE_OFFLINE, Integer.MAX_VALUE);
 
-    databaseProvider.close();
-  }
+    downloadIndex = new DefaultDownloadIndex(databaseProvider);
 
-  @Test
-  public void getVersion_nonExistingTable_returnsZero() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
-    DefaultDownloadIndex.VersionTable versionTable =
-        new DefaultDownloadIndex.VersionTable(databaseProvider);
-
-    int version = versionTable.getVersion(FEATURE_OFFLINE);
-
-    assertThat(version).isEqualTo(0);
-    databaseProvider.close();
-  }
-
-  @Test
-  public void getVersion_returnsSetVersion() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
-    DefaultDownloadIndex.VersionTable versionTable =
-        new DefaultDownloadIndex.VersionTable(databaseProvider);
-
-    versionTable.setVersion(FEATURE_OFFLINE, 1);
-    assertThat(versionTable.getVersion(FEATURE_OFFLINE)).isEqualTo(1);
-
-    versionTable.setVersion(FEATURE_OFFLINE, 10);
-    assertThat(versionTable.getVersion(FEATURE_OFFLINE)).isEqualTo(10);
-
-    versionTable.setVersion(FEATURE_CACHE, 5);
-    assertThat(versionTable.getVersion(FEATURE_CACHE)).isEqualTo(5);
-    assertThat(versionTable.getVersion(FEATURE_OFFLINE)).isEqualTo(10);
-
-    databaseProvider.close();
-  }
-
-  @Test
-  public void downloadStateTableConstructor_noTable_createsTable() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
-    assertThat(
-            DefaultDownloadIndex.doesTableExist(
-                databaseProvider, DefaultDownloadIndex.DownloadStateTable.TABLE_NAME))
-        .isFalse();
-
-    new DefaultDownloadIndex.DownloadStateTable(databaseProvider);
-
-    assertThat(
-            DefaultDownloadIndex.doesTableExist(
-                databaseProvider, DefaultDownloadIndex.DownloadStateTable.TABLE_NAME))
-        .isTrue();
-
-    databaseProvider.close();
-  }
-
-  @Test
-  public void downloadStateTableConstructor_versionZero_versionSet() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
-
-    new DefaultDownloadIndex.DownloadStateTable(databaseProvider);
-
-    DefaultDownloadIndex.VersionTable versionTable =
-        new DefaultDownloadIndex.VersionTable(databaseProvider);
-    assertThat(versionTable.getVersion(FEATURE_OFFLINE))
-        .isEqualTo(DefaultDownloadIndex.DownloadStateTable.TABLE_VERSION);
-    databaseProvider.close();
-  }
-
-  @Test
-  public void downloadStateTableConstructor_greaterVersion_tableRecreated() {
-    DatabaseProviderImpl databaseProvider = new DatabaseProviderImpl();
-    databaseProvider
-        .getWritableDatabase()
-        .execSQL("CREATE TABLE " + DefaultDownloadIndex.DownloadStateTable.TABLE_NAME + "(dummy)");
-    DefaultDownloadIndex.VersionTable versionTable =
-        new DefaultDownloadIndex.VersionTable(databaseProvider);
-    versionTable.setVersion(FEATURE_OFFLINE, Integer.MAX_VALUE);
-
-    DefaultDownloadIndex.DownloadStateTable downloadStateTable =
-        new DefaultDownloadIndex.DownloadStateTable(databaseProvider);
-    String id = "id";
-    DownloadState downloadState = new DownloadStateBuilder(id).build();
-    downloadStateTable.replace(downloadState);
-    DownloadState readDownloadState = downloadStateTable.get(id);
-    assertEqual(readDownloadState, downloadState);
-
-    assertThat(versionTable.getVersion(FEATURE_OFFLINE))
-        .isEqualTo(DefaultDownloadIndex.DownloadStateTable.TABLE_VERSION);
-    databaseProvider.close();
+    cursor = downloadIndex.getDownloadStates();
+    assertThat(cursor.getCount()).isEqualTo(0);
+    cursor.close();
+    assertThat(VersionTable.getVersion(writableDatabase, VersionTable.FEATURE_OFFLINE))
+        .isEqualTo(DefaultDownloadIndex.TABLE_VERSION);
   }
 
   private static void assertEqual(DownloadState downloadState, DownloadState expected) {
@@ -325,6 +238,9 @@ public class DefaultDownloadIndexTest {
       return false;
     }
     if (downloadState.stopFlags != that.stopFlags) {
+      return false;
+    }
+    if (downloadState.notMetRequirements != that.notMetRequirements) {
       return false;
     }
     if (!downloadState.id.equals(that.id)) {
@@ -358,6 +274,7 @@ public class DefaultDownloadIndexTest {
     private long totalBytes;
     private int failureReason;
     private int stopFlags;
+    private int notMetRequirements;
     private long startTimeMs;
     private long updateTimeMs;
     private StreamKey[] streamKeys;
@@ -430,6 +347,11 @@ public class DefaultDownloadIndexTest {
       return this;
     }
 
+    public DownloadStateBuilder setNotMetRequirements(int notMetRequirements) {
+      this.notMetRequirements = notMetRequirements;
+      return this;
+    }
+
     public DownloadStateBuilder setStartTimeMs(long startTimeMs) {
       this.startTimeMs = startTimeMs;
       return this;
@@ -462,30 +384,11 @@ public class DefaultDownloadIndexTest {
           totalBytes,
           failureReason,
           stopFlags,
+          notMetRequirements,
           startTimeMs,
           updateTimeMs,
           streamKeys,
           customMetadata);
-    }
-  }
-
-  private static final class DatabaseProviderImpl extends SQLiteOpenHelper
-      implements DefaultDownloadIndex.DatabaseProvider {
-    private static final int DATABASE_VERSION = 1;
-    private static final String DATABASE_NAME = "TestExoPlayerDownloadIndex.db";
-
-    public DatabaseProviderImpl() {
-      super(RuntimeEnvironment.application, DATABASE_NAME, null, DATABASE_VERSION);
-    }
-
-    @Override
-    public void onCreate(SQLiteDatabase db) {
-      // Do nothing.
-    }
-
-    @Override
-    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-      // Do nothing.
     }
   }
 }

@@ -19,6 +19,7 @@ import static com.google.android.exoplayer2.offline.DownloadAction.TYPE_DASH;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.net.Uri;
+import com.google.android.exoplayer2.database.ExoDatabaseProvider;
 import com.google.android.exoplayer2.util.Util;
 import java.io.File;
 import java.util.Arrays;
@@ -34,18 +35,20 @@ import org.robolectric.RuntimeEnvironment;
 @RunWith(RobolectricTestRunner.class)
 public class DownloadIndexUtilTest {
 
-  private DefaultDownloadIndex downloadIndex;
   private File tempFile;
+  private ExoDatabaseProvider databaseProvider;
+  private DefaultDownloadIndex downloadIndex;
 
   @Before
   public void setUp() throws Exception {
     tempFile = Util.createTempFile(RuntimeEnvironment.application, "ExoPlayerTest");
-    downloadIndex = new DefaultDownloadIndex(RuntimeEnvironment.application);
+    databaseProvider = new ExoDatabaseProvider(RuntimeEnvironment.application);
+    downloadIndex = new DefaultDownloadIndex(databaseProvider);
   }
 
   @After
   public void tearDown() {
-    downloadIndex.release();
+    databaseProvider.close();
     tempFile.delete();
   }
 
@@ -97,7 +100,7 @@ public class DownloadIndexUtilTest {
     assertThat(downloadState.cacheKey).isEqualTo(action2.customCacheKey);
     assertThat(downloadState.customMetadata).isEqualTo(action2.data);
     assertThat(downloadState.uri).isEqualTo(action2.uri);
-    assertThat(downloadState.streamKeys).isEqualTo(new StreamKey[] {streamKey2, streamKey1});
+    assertThat(Arrays.asList(downloadState.streamKeys)).containsExactly(streamKey1, streamKey2);
     assertThat(downloadState.state).isEqualTo(DownloadState.STATE_QUEUED);
   }
 
@@ -142,7 +145,7 @@ public class DownloadIndexUtilTest {
     assertThat(downloadState.cacheKey).isEqualTo(action.customCacheKey);
     assertThat(downloadState.customMetadata).isEqualTo(action.data);
     assertThat(downloadState.uri).isEqualTo(action.uri);
-    assertThat(downloadState.streamKeys).isEqualTo(action.keys.toArray(new StreamKey[0]));
+    assertThat(Arrays.asList(downloadState.streamKeys)).containsExactlyElementsIn(action.keys);
     assertThat(downloadState.state).isEqualTo(state);
   }
 
