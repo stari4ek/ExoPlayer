@@ -15,8 +15,8 @@
  */
 package com.google.android.exoplayer2;
 
-import android.support.annotation.IntDef;
-import android.support.annotation.Nullable;
+import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
@@ -31,11 +31,12 @@ public final class ExoPlaybackException extends Exception {
 
   /**
    * The type of source that produced the error. One of {@link #TYPE_SOURCE}, {@link #TYPE_RENDERER}
-   * or {@link #TYPE_UNEXPECTED}.
+   * {@link #TYPE_UNEXPECTED}, {@link #TYPE_REMOTE} or {@link #TYPE_OUT_OF_MEMORY}. Note that new
+   * types may be added in the future and error handling should handle unknown type values.
    */
   @Documented
   @Retention(RetentionPolicy.SOURCE)
-  @IntDef({TYPE_SOURCE, TYPE_RENDERER, TYPE_UNEXPECTED, TYPE_REMOTE})
+  @IntDef({TYPE_SOURCE, TYPE_RENDERER, TYPE_UNEXPECTED, TYPE_REMOTE, TYPE_OUT_OF_MEMORY})
   public @interface Type {}
   /**
    * The error occurred loading data from a {@link MediaSource}.
@@ -61,11 +62,10 @@ public final class ExoPlaybackException extends Exception {
    * <p>Call {@link #getMessage()} to retrieve the message associated with the error.
    */
   public static final int TYPE_REMOTE = 3;
+  /** The error was an {@link OutOfMemoryError}. */
+  public static final int TYPE_OUT_OF_MEMORY = 4;
 
-  /**
-   * The type of the playback failure. One of {@link #TYPE_SOURCE}, {@link #TYPE_RENDERER} and
-   * {@link #TYPE_UNEXPECTED}.
-   */
+  /** The {@link Type} of the playback failure. */
   @Type public final int type;
 
   /**
@@ -82,7 +82,7 @@ public final class ExoPlaybackException extends Exception {
    * @return The created instance.
    */
   public static ExoPlaybackException createForSource(IOException cause) {
-    return new ExoPlaybackException(TYPE_SOURCE, cause, C.INDEX_UNSET);
+    return new ExoPlaybackException(TYPE_SOURCE, cause, /* rendererIndex= */ C.INDEX_UNSET);
   }
 
   /**
@@ -102,8 +102,8 @@ public final class ExoPlaybackException extends Exception {
    * @param cause The cause of the failure.
    * @return The created instance.
    */
-  /* package */ static ExoPlaybackException createForUnexpected(RuntimeException cause) {
-    return new ExoPlaybackException(TYPE_UNEXPECTED, cause, C.INDEX_UNSET);
+  public static ExoPlaybackException createForUnexpected(RuntimeException cause) {
+    return new ExoPlaybackException(TYPE_UNEXPECTED, cause, /* rendererIndex= */ C.INDEX_UNSET);
   }
 
   /**
@@ -114,6 +114,16 @@ public final class ExoPlaybackException extends Exception {
    */
   public static ExoPlaybackException createForRemote(String message) {
     return new ExoPlaybackException(TYPE_REMOTE, message);
+  }
+
+  /**
+   * Creates an instance of type {@link #TYPE_OUT_OF_MEMORY}.
+   *
+   * @param cause The cause of the failure.
+   * @return The created instance.
+   */
+  public static ExoPlaybackException createForOutOfMemoryError(OutOfMemoryError cause) {
+    return new ExoPlaybackException(TYPE_OUT_OF_MEMORY, cause, /* rendererIndex= */ C.INDEX_UNSET);
   }
 
   private ExoPlaybackException(@Type int type, Throwable cause, int rendererIndex) {
@@ -160,4 +170,13 @@ public final class ExoPlaybackException extends Exception {
     return (RuntimeException) Assertions.checkNotNull(cause);
   }
 
+  /**
+   * Retrieves the underlying error when {@link #type} is {@link #TYPE_OUT_OF_MEMORY}.
+   *
+   * @throws IllegalStateException If {@link #type} is not {@link #TYPE_OUT_OF_MEMORY}.
+   */
+  public OutOfMemoryError getOutOfMemoryError() {
+    Assertions.checkState(type == TYPE_OUT_OF_MEMORY);
+    return (OutOfMemoryError) Assertions.checkNotNull(cause);
+  }
 }

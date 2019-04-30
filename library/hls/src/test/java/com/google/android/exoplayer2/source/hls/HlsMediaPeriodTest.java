@@ -19,17 +19,19 @@ import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import android.net.Uri;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist;
-import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist.HlsUrl;
+import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist.Rendition;
+import com.google.android.exoplayer2.source.hls.playlist.HlsMasterPlaylist.Variant;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylist;
 import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistTracker;
 import com.google.android.exoplayer2.testutil.MediaPeriodAsserts;
 import com.google.android.exoplayer2.testutil.MediaPeriodAsserts.FilterableManifestMediaPeriodFactory;
-import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
@@ -40,32 +42,31 @@ import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
+import org.robolectric.annotation.LooperMode;
 
 /** Unit test for {@link HlsMediaPeriod}. */
-@RunWith(RobolectricTestRunner.class)
-@Config(shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class})
+@RunWith(AndroidJUnit4.class)
+@LooperMode(LooperMode.Mode.PAUSED)
 public final class HlsMediaPeriodTest {
 
   @Test
-  public void getSteamKeys_isCompatibleWithhHlsMasterPlaylistFilter() {
+  public void getSteamKeys_isCompatibleWithHlsMasterPlaylistFilter() {
     HlsMasterPlaylist testMasterPlaylist =
         createMasterPlaylist(
             /* variants= */ Arrays.asList(
-                createAudioOnlyVariantHlsUrl(/* bitrate= */ 10000),
-                createMuxedVideoAudioVariantHlsUrl(/* bitrate= */ 200000),
-                createAudioOnlyVariantHlsUrl(/* bitrate= */ 300000),
-                createMuxedVideoAudioVariantHlsUrl(/* bitrate= */ 400000),
-                createMuxedVideoAudioVariantHlsUrl(/* bitrate= */ 600000)),
+                createAudioOnlyVariant(/* bitrate= */ 10000),
+                createMuxedVideoAudioVariant(/* bitrate= */ 200000),
+                createAudioOnlyVariant(/* bitrate= */ 300000),
+                createMuxedVideoAudioVariant(/* bitrate= */ 400000),
+                createMuxedVideoAudioVariant(/* bitrate= */ 600000)),
             /* audios= */ Arrays.asList(
-                createAudioHlsUrl(/* language= */ "spa"),
-                createAudioHlsUrl(/* language= */ "ger"),
-                createAudioHlsUrl(/* language= */ "tur")),
+                createAudioRendition(/* language= */ "spa"),
+                createAudioRendition(/* language= */ "ger"),
+                createAudioRendition(/* language= */ "tur")),
             /* subtitles= */ Arrays.asList(
-                createSubtitleHlsUrl(/* language= */ "spa"),
-                createSubtitleHlsUrl(/* language= */ "ger"),
-                createSubtitleHlsUrl(/* language= */ "tur")),
+                createSubtitleRendition(/* language= */ "spa"),
+                createSubtitleRendition(/* language= */ "ger"),
+                createSubtitleRendition(/* language= */ "tur")),
             /* muxedAudioFormat= */ createAudioFormat("eng"),
             /* muxedCaptionFormats= */ Arrays.asList(
                 createSubtitleFormat("eng"), createSubtitleFormat("gsw")));
@@ -88,7 +89,8 @@ public final class HlsMediaPeriodTest {
                       /* mediaTimeOffsetMs= */ 0),
               mock(Allocator.class),
               mock(CompositeSequenceableLoaderFactory.class),
-              /* allowChunklessPreparation =*/ true);
+              /* allowChunklessPreparation =*/ true,
+              /* useSessionKeys= */ false);
         };
 
     MediaPeriodAsserts.assertGetStreamKeysAndManifestFilterIntegration(
@@ -96,26 +98,28 @@ public final class HlsMediaPeriodTest {
   }
 
   private static HlsMasterPlaylist createMasterPlaylist(
-      List<HlsUrl> variants,
-      List<HlsUrl> audios,
-      List<HlsUrl> subtitles,
+      List<Variant> variants,
+      List<Rendition> audios,
+      List<Rendition> subtitles,
       Format muxedAudioFormat,
       List<Format> muxedCaptionFormats) {
     return new HlsMasterPlaylist(
         "http://baseUri",
         /* tags= */ Collections.emptyList(),
         variants,
+        /* videos= */ Collections.emptyList(),
         audios,
         subtitles,
+        /* closedCaptions= */ Collections.emptyList(),
         muxedAudioFormat,
         muxedCaptionFormats,
         /* hasIndependentSegments= */ true,
-        /* variableDefinitions= */ Collections.emptyMap());
+        /* variableDefinitions= */ Collections.emptyMap(),
+        /* sessionKeyDrmInitData= */ Collections.emptyList());
   }
 
-  private static HlsUrl createMuxedVideoAudioVariantHlsUrl(int bitrate) {
-    return new HlsUrl(
-        "http://url",
+  private static Variant createMuxedVideoAudioVariant(int bitrate) {
+    return createVariant(
         Format.createVideoContainerFormat(
             /* id= */ null,
             /* label= */ null,
@@ -127,12 +131,12 @@ public final class HlsMediaPeriodTest {
             /* height= */ Format.NO_VALUE,
             /* frameRate= */ Format.NO_VALUE,
             /* initializationData= */ null,
-            /* selectionFlags= */ 0));
+            /* selectionFlags= */ 0,
+            /* roleFlags= */ 0));
   }
 
-  private static HlsUrl createAudioOnlyVariantHlsUrl(int bitrate) {
-    return new HlsUrl(
-        "http://url",
+  private static Variant createAudioOnlyVariant(int bitrate) {
+    return createVariant(
         Format.createVideoContainerFormat(
             /* id= */ null,
             /* label= */ null,
@@ -144,15 +148,24 @@ public final class HlsMediaPeriodTest {
             /* height= */ Format.NO_VALUE,
             /* frameRate= */ Format.NO_VALUE,
             /* initializationData= */ null,
-            /* selectionFlags= */ 0));
+            /* selectionFlags= */ 0,
+            /* roleFlags= */ 0));
   }
 
-  private static HlsUrl createAudioHlsUrl(String language) {
-    return new HlsUrl("http://url", createAudioFormat(language));
+  private static Rendition createAudioRendition(String language) {
+    return createRendition(createAudioFormat(language), "", "");
   }
 
-  private static HlsUrl createSubtitleHlsUrl(String language) {
-    return new HlsUrl("http://url", createSubtitleFormat(language));
+  private static Rendition createSubtitleRendition(String language) {
+    return createRendition(createSubtitleFormat(language), "", "");
+  }
+
+  private static Variant createVariant(Format format) {
+    return new Variant(Uri.parse("https://variant"), format, null, null, null, null);
+  }
+
+  private static Rendition createRendition(Format format, String groupId, String name) {
+    return new Rendition(Uri.parse("https://rendition"), format, groupId, name);
   }
 
   private static Format createAudioFormat(String language) {
@@ -167,6 +180,7 @@ public final class HlsMediaPeriodTest {
         /* sampleRate= */ Format.NO_VALUE,
         /* initializationData= */ null,
         /* selectionFlags= */ 0,
+        /* roleFlags= */ 0,
         language);
   }
 
@@ -179,6 +193,7 @@ public final class HlsMediaPeriodTest {
         /* codecs= */ null,
         /* bitrate= */ Format.NO_VALUE,
         /* selectionFlags= */ 0,
+        /* roleFlags= */ 0,
         language);
   }
 }

@@ -17,7 +17,7 @@ package com.google.android.exoplayer2.testutil;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.offline.FilterableManifest;
@@ -176,8 +176,8 @@ public final class MediaPeriodAsserts {
     for (int i = 0; i < trackGroup.length; i++) {
       allFormats.add(trackGroup.getFormat(i));
     }
-    for (int i = 0; i < formats.length; i++) {
-      if (!allFormats.remove(formats[i])) {
+    for (Format format : formats) {
+      if (!allFormats.remove(format)) {
         return false;
       }
     }
@@ -187,29 +187,28 @@ public final class MediaPeriodAsserts {
   private static TrackGroupArray getTrackGroups(MediaPeriod mediaPeriod) {
     AtomicReference<TrackGroupArray> trackGroupArray = new AtomicReference<>(null);
     DummyMainThread dummyMainThread = new DummyMainThread();
+    ConditionVariable preparedCondition = new ConditionVariable();
     dummyMainThread.runOnMainThread(
-        () -> {
-          ConditionVariable preparedCondition = new ConditionVariable();
-          mediaPeriod.prepare(
-              new Callback() {
-                @Override
-                public void onPrepared(MediaPeriod mediaPeriod) {
-                  preparedCondition.open();
-                }
+        () ->
+            mediaPeriod.prepare(
+                new Callback() {
+                  @Override
+                  public void onPrepared(MediaPeriod mediaPeriod) {
+                    trackGroupArray.set(mediaPeriod.getTrackGroups());
+                    preparedCondition.open();
+                  }
 
-                @Override
-                public void onContinueLoadingRequested(MediaPeriod source) {
-                  // Ignore.
-                }
-              },
-              /* positionUs= */ 0);
-          try {
-            preparedCondition.block();
-          } catch (InterruptedException e) {
-            // Ignore.
-          }
-          trackGroupArray.set(mediaPeriod.getTrackGroups());
-        });
+                  @Override
+                  public void onContinueLoadingRequested(MediaPeriod source) {
+                    // Ignore.
+                  }
+                },
+                /* positionUs= */ 0));
+    try {
+      preparedCondition.block();
+    } catch (InterruptedException e) {
+      // Ignore.
+    }
     dummyMainThread.release();
     return trackGroupArray.get();
   }

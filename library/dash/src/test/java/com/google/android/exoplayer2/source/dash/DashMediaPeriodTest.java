@@ -18,7 +18,8 @@ package com.google.android.exoplayer2.source.dash;
 import static org.mockito.Mockito.mock;
 
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
@@ -34,7 +35,6 @@ import com.google.android.exoplayer2.source.dash.manifest.SegmentBase.SingleSegm
 import com.google.android.exoplayer2.source.dash.manifest.UtcTimingElement;
 import com.google.android.exoplayer2.testutil.MediaPeriodAsserts;
 import com.google.android.exoplayer2.testutil.MediaPeriodAsserts.FilterableManifestMediaPeriodFactory;
-import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.LoaderErrorThrower;
@@ -44,12 +44,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
+import org.robolectric.annotation.LooperMode;
 
 /** Unit tests for {@link DashMediaPeriod}. */
-@RunWith(RobolectricTestRunner.class)
-@Config(shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class})
+@RunWith(AndroidJUnit4.class)
+@LooperMode(LooperMode.Mode.PAUSED)
 public final class DashMediaPeriodTest {
 
   @Test
@@ -193,6 +192,7 @@ public final class DashMediaPeriodTest {
         /* codecs= */ null,
         bitrate,
         /* selectionFlags= */ 0,
+        /* roleFlags= */ 0,
         /* language= */ null);
   }
 
@@ -207,6 +207,7 @@ public final class DashMediaPeriodTest {
             /* codecs= */ null,
             bitrate,
             /* selectionFlags= */ 0,
+            /* roleFlags= */ 0,
             /* language= */ null),
         /* baseUrl= */ "",
         new SingleSegmentBase());
@@ -223,6 +224,7 @@ public final class DashMediaPeriodTest {
             /* codecs= */ null,
             /* bitrate= */ Format.NO_VALUE,
             /* selectionFlags= */ 0,
+            /* roleFlags= */ 0,
             language),
         /* baseUrl= */ "",
         new SingleSegmentBase());

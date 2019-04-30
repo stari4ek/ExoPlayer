@@ -15,8 +15,8 @@
  */
 package com.google.android.exoplayer2;
 
-import android.support.annotation.CheckResult;
-import android.support.annotation.Nullable;
+import androidx.annotation.CheckResult;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
@@ -52,7 +52,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
    */
   public final long contentPositionUs;
   /** The current playback state. One of the {@link Player}.STATE_ constants. */
-  public final int playbackState;
+  @Player.State public final int playbackState;
   /** Whether the player is currently loading. */
   public final boolean isLoading;
   /** The currently available track groups. */
@@ -128,7 +128,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
       MediaPeriodId periodId,
       long startPositionUs,
       long contentPositionUs,
-      int playbackState,
+      @Player.State int playbackState,
       boolean isLoading,
       TrackGroupArray trackGroups,
       TrackSelectorResult trackSelectorResult,
@@ -170,35 +170,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
   }
 
   /**
-   * Copies playback info and resets playing and loading position.
-   *
-   * @param periodId New playing and loading {@link MediaPeriodId}.
-   * @param startPositionUs New start position. See {@link #startPositionUs}.
-   * @param contentPositionUs New content position. See {@link #contentPositionUs}. Value is ignored
-   *     if {@code periodId.isAd()} is true.
-   * @return Copied playback info with reset position.
-   */
-  @CheckResult
-  public PlaybackInfo resetToNewPosition(
-      MediaPeriodId periodId, long startPositionUs, long contentPositionUs) {
-    return new PlaybackInfo(
-        timeline,
-        manifest,
-        periodId,
-        startPositionUs,
-        periodId.isAd() ? contentPositionUs : C.TIME_UNSET,
-        playbackState,
-        isLoading,
-        trackGroups,
-        trackSelectorResult,
-        periodId,
-        startPositionUs,
-        /* totalBufferedDurationUs= */ 0,
-        startPositionUs);
-  }
-
-  /**
-   * Copied playback info with new playing position.
+   * Copies playback info with new playing position.
    *
    * @param periodId New playing media period. See {@link #periodId}.
    * @param positionUs New position. See {@link #positionUs}.

@@ -16,12 +16,15 @@
 package com.google.android.exoplayer2.testutil;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.fail;
 
 import android.os.ConditionVariable;
+import com.google.android.exoplayer2.offline.Download;
+import com.google.android.exoplayer2.offline.Download.State;
 import com.google.android.exoplayer2.offline.DownloadManager;
-import com.google.android.exoplayer2.offline.DownloadState;
-import com.google.android.exoplayer2.scheduler.Requirements;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -31,30 +34,34 @@ public final class TestDownloadManagerListener implements DownloadManager.Listen
 
   private static final int TIMEOUT = 1000;
   private static final int INITIALIZATION_TIMEOUT = 10000;
+  private static final int STATE_REMOVED = -1;
 
   private final DownloadManager downloadManager;
   private final DummyMainThread dummyMainThread;
-  private final HashMap<String, ArrayBlockingQueue<Integer>> actionStates;
+  private final HashMap<String, ArrayBlockingQueue<Integer>> downloadStates;
   private final ConditionVariable initializedCondition;
+  private final int timeout;
 
   private CountDownLatch downloadFinishedCondition;
-  @DownloadState.FailureReason private int failureReason;
+  @Download.FailureReason private int failureReason;
 
   public TestDownloadManagerListener(
       DownloadManager downloadManager, DummyMainThread dummyMainThread) {
+    this(downloadManager, dummyMainThread, TIMEOUT);
+  }
+
+  public TestDownloadManagerListener(
+      DownloadManager downloadManager, DummyMainThread dummyMainThread, int timeout) {
     this.downloadManager = downloadManager;
     this.dummyMainThread = dummyMainThread;
-    actionStates = new HashMap<>();
+    this.timeout = timeout;
+    downloadStates = new HashMap<>();
     initializedCondition = new ConditionVariable();
     downloadManager.addListener(this);
   }
 
   public Integer pollStateChange(String taskId, long timeoutMs) throws InterruptedException {
     return getStateQueue(taskId).poll(timeoutMs, TimeUnit.MILLISECONDS);
-  }
-
-  public void clearDownloadError() {
-    this.failureReason = DownloadState.FAILURE_REASON_NONE;
   }
 
   @Override
@@ -69,11 +76,16 @@ public final class TestDownloadManagerListener implements DownloadManager.Listen
   }
 
   @Override
-  public void onDownloadStateChanged(DownloadManager downloadManager, DownloadState downloadState) {
-    if (downloadState.state == DownloadState.STATE_FAILED) {
-      failureReason = downloadState.failureReason;
+  public void onDownloadChanged(DownloadManager downloadManager, Download download) {
+    if (download.state == Download.STATE_FAILED) {
+      failureReason = download.failureReason;
     }
-    getStateQueue(downloadState.id).add(downloadState.state);
+    getStateQueue(download.request.id).add(download.state);
+  }
+
+  @Override
+  public void onDownloadRemoved(DownloadManager downloadManager, Download download) {
+    getStateQueue(download.request.id).add(STATE_REMOVED);
   }
 
   @Override
@@ -83,20 +95,14 @@ public final class TestDownloadManagerListener implements DownloadManager.Listen
     }
   }
 
-  @Override
-  public void onRequirementsStateChanged(
-      DownloadManager downloadManager, Requirements requirements, int notMetRequirements) {
-    // Do nothing.
-  }
-
   /**
    * Blocks until all remove and download tasks are complete and throws an exception if there was an
    * error.
    */
   public void blockUntilTasksCompleteAndThrowAnyDownloadError() throws Throwable {
     blockUntilTasksComplete();
-    if (failureReason != DownloadState.FAILURE_REASON_NONE) {
-      throw new Exception("Failure reason: " + DownloadState.getFailureString(failureReason));
+    if (failureReason != Download.FAILURE_REASON_NONE) {
+      throw new Exception("Failure reason: " + failureReason);
     }
   }
 
@@ -111,15 +117,59 @@ public final class TestDownloadManagerListener implements DownloadManager.Listen
             downloadFinishedCondition.countDown();
           }
         });
-    assertThat(downloadFinishedCondition.await(TIMEOUT, TimeUnit.MILLISECONDS)).isTrue();
+    assertThat(downloadFinishedCondition.await(timeout, TimeUnit.MILLISECONDS)).isTrue();
   }
 
   private ArrayBlockingQueue<Integer> getStateQueue(String taskId) {
-    synchronized (actionStates) {
-      if (!actionStates.containsKey(taskId)) {
-        actionStates.put(taskId, new ArrayBlockingQueue<>(10));
+    synchronized (downloadStates) {
+      if (!downloadStates.containsKey(taskId)) {
+        downloadStates.put(taskId, new ArrayBlockingQueue<>(10));
       }
-      return actionStates.get(taskId);
+      return downloadStates.get(taskId);
+    }
+  }
+
+  public void assertRemoved(String taskId, int timeoutMs) {
+    assertStateInternal(taskId, STATE_REMOVED, timeoutMs);
+  }
+
+  public void assertState(String taskId, @State int expectedState, int timeoutMs) {
+    assertStateInternal(taskId, expectedState, timeoutMs);
+  }
+
+  private void assertStateInternal(String taskId, int expectedState, int timeoutMs) {
+    ArrayList<Integer> receivedStates = new ArrayList<>();
+    while (true) {
+      Integer state = null;
+      try {
+        state = pollStateChange(taskId, timeoutMs);
+      } catch (InterruptedException e) {
+        fail(e.getMessage());
+      }
+      if (state != null) {
+        if (expectedState == state) {
+          return;
+        }
+        receivedStates.add(state);
+      } else {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < receivedStates.size(); i++) {
+          if (i > 0) {
+            sb.append(',');
+          }
+          int receivedState = receivedStates.get(i);
+          String receivedStateString =
+              receivedState == STATE_REMOVED ? "REMOVED" : Download.getStateString(receivedState);
+          sb.append(receivedStateString);
+        }
+        fail(
+            String.format(
+                Locale.US,
+                "for download (%s) expected:<%s> but was:<%s>",
+                taskId,
+                Download.getStateString(expectedState),
+                sb));
+      }
     }
   }
 }

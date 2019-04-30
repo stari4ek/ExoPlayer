@@ -16,7 +16,7 @@
 package com.google.android.exoplayer2.source;
 
 import android.os.Handler;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Timeline;
@@ -238,6 +238,7 @@ public interface MediaSource {
   default Object getTag() {
     return null;
   }
+
   /**
    * Starts source preparation if not yet started, and adds a listener for timeline and/or manifest
    * updates.

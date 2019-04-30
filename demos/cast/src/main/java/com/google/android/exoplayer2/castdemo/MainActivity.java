@@ -17,13 +17,13 @@ package com.google.android.exoplayer2.castdemo;
 
 import android.content.Context;
 import android.os.Bundle;
-import android.support.v4.graphics.ColorUtils;
-import android.support.v7.app.AlertDialog;
-import android.support.v7.app.AppCompatActivity;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
-import android.support.v7.widget.RecyclerView.ViewHolder;
-import android.support.v7.widget.helper.ItemTouchHelper;
+import androidx.core.graphics.ColorUtils;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.recyclerview.widget.RecyclerView.ViewHolder;
+import androidx.recyclerview.widget.ItemTouchHelper;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -33,6 +33,7 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.Toast;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.ext.cast.MediaItem;
@@ -49,7 +50,7 @@ import java.util.Collections;
  * Cast extension.
  */
 public class MainActivity extends AppCompatActivity
-    implements OnClickListener, PlayerManager.QueueChangesListener {
+    implements OnClickListener, PlayerManager.Listener {
 
   private final MediaItem.Builder mediaItemBuilder;
 
@@ -76,7 +77,7 @@ public class MainActivity extends AppCompatActivity
       Throwable cause = e.getCause();
       while (cause != null) {
         if (cause instanceof DynamiteModule.LoadingException) {
-          setContentView(R.layout.cast_context_error_message_layout);
+          setContentView(R.layout.cast_context_error);
           return;
         }
         cause = cause.getCause();
@@ -122,7 +123,7 @@ public class MainActivity extends AppCompatActivity
       case CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID:
         playerManager =
             new DefaultReceiverPlayerManager(
-                /* queueChangesListener= */ this,
+                /* listener= */ this,
                 localPlayerView,
                 castControlView,
                 /* context= */ this,
@@ -157,12 +158,15 @@ public class MainActivity extends AppCompatActivity
 
   @Override
   public void onClick(View view) {
-    new AlertDialog.Builder(this).setTitle(R.string.sample_list_dialog_title)
-        .setView(buildSampleListView()).setPositiveButton(android.R.string.ok, null).create()
+    new AlertDialog.Builder(this)
+        .setTitle(R.string.add_samples)
+        .setView(buildSampleListView())
+        .setPositiveButton(android.R.string.ok, null)
+        .create()
         .show();
   }
 
-  // PlayerManager.QueueChangesListener implementation.
+  // PlayerManager.Listener implementation.
 
   @Override
   public void onQueuePositionChanged(int previousIndex, int newIndex) {
@@ -177,6 +181,11 @@ public class MainActivity extends AppCompatActivity
   @Override
   public void onQueueContentsExternallyChanged() {
     mediaQueueListAdapter.notifyDataSetChanged();
+  }
+
+  @Override
+  public void onPlayerError() {
+    Toast.makeText(getApplicationContext(), R.string.player_error_msg, Toast.LENGTH_LONG).show();
   }
 
   // Internal methods.
@@ -207,23 +216,6 @@ public class MainActivity extends AppCompatActivity
 
   // Internal classes.
 
-  private class QueueItemViewHolder extends RecyclerView.ViewHolder implements OnClickListener {
-
-    public final TextView textView;
-
-    public QueueItemViewHolder(TextView textView) {
-      super(textView);
-      this.textView = textView;
-      textView.setOnClickListener(this);
-    }
-
-    @Override
-    public void onClick(View v) {
-      playerManager.selectQueueItem(getAdapterPosition());
-    }
-
-  }
-
   private class MediaQueueListAdapter extends RecyclerView.Adapter<QueueItemViewHolder> {
 
     @Override
@@ -235,8 +227,9 @@ public class MainActivity extends AppCompatActivity
 
     @Override
     public void onBindViewHolder(QueueItemViewHolder holder, int position) {
+      holder.item = playerManager.getItem(position);
       TextView view = holder.textView;
-      view.setText(playerManager.getItem(position).title);
+      view.setText(holder.item.title);
       // TODO: Solve coloring using the theme's ColorStateList.
       view.setTextColor(ColorUtils.setAlphaComponent(view.getCurrentTextColor(),
            position == playerManager.getCurrentItemIndex() ? 255 : 100));
@@ -277,7 +270,8 @@ public class MainActivity extends AppCompatActivity
     @Override
     public void onSwiped(RecyclerView.ViewHolder viewHolder, int direction) {
       int position = viewHolder.getAdapterPosition();
-      if (playerManager.removeItem(position)) {
+      QueueItemViewHolder queueItemHolder = (QueueItemViewHolder) viewHolder;
+      if (playerManager.removeItem(queueItemHolder.item)) {
         mediaQueueListAdapter.notifyItemRemoved(position);
         // Update whichever item took its place, in case it became the new selected item.
         mediaQueueListAdapter.notifyItemChanged(position);
@@ -288,8 +282,9 @@ public class MainActivity extends AppCompatActivity
     public void clearView(RecyclerView recyclerView, ViewHolder viewHolder) {
       super.clearView(recyclerView, viewHolder);
       if (draggingFromPosition != C.INDEX_UNSET) {
+        QueueItemViewHolder queueItemHolder = (QueueItemViewHolder) viewHolder;
         // A drag has ended. We reflect the media queue change in the player.
-        if (!playerManager.moveItem(draggingFromPosition, draggingToPosition)) {
+        if (!playerManager.moveItem(queueItemHolder.item, draggingToPosition)) {
           // The move failed. The entire sequence of onMove calls since the drag started needs to be
           // invalidated.
           mediaQueueListAdapter.notifyDataSetChanged();
@@ -298,7 +293,23 @@ public class MainActivity extends AppCompatActivity
       draggingFromPosition = C.INDEX_UNSET;
       draggingToPosition = C.INDEX_UNSET;
     }
+  }
 
+  private class QueueItemViewHolder extends RecyclerView.ViewHolder implements OnClickListener {
+
+    public final TextView textView;
+    public MediaItem item;
+
+    public QueueItemViewHolder(TextView textView) {
+      super(textView);
+      this.textView = textView;
+      textView.setOnClickListener(this);
+    }
+
+    @Override
+    public void onClick(View v) {
+      playerManager.selectQueueItem(getAdapterPosition());
+    }
   }
 
   private static final class SampleListAdapter extends ArrayAdapter<DemoUtil.Sample> {

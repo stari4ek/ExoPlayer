@@ -17,7 +17,7 @@ package com.google.android.exoplayer2.castdemo;
 
 import android.content.Context;
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.view.KeyEvent;
 import android.view.View;
 import com.google.android.exoplayer2.C;
@@ -52,7 +52,7 @@ import java.util.ArrayList;
 
 /** Manages players and an internal media queue for the ExoPlayer/Cast demo app. */
 /* package */ class DefaultReceiverPlayerManager
-    implements EventListener, SessionAvailabilityListener, PlayerManager {
+    implements PlayerManager, EventListener, SessionAvailabilityListener {
 
   private static final String USER_AGENT = "ExoCastDemoPlayer";
   private static final DefaultHttpDataSourceFactory DATA_SOURCE_FACTORY =
@@ -63,7 +63,7 @@ import java.util.ArrayList;
   private final SimpleExoPlayer exoPlayer;
   private final CastPlayer castPlayer;
   private final ArrayList<MediaItem> mediaQueue;
-  private final QueueChangesListener queueChangesListener;
+  private final Listener listener;
   private final ConcatenatingMediaSource concatenatingMediaSource;
 
   private boolean castMediaQueueCreationPending;
@@ -73,19 +73,19 @@ import java.util.ArrayList;
   /**
    * Creates a new manager for {@link SimpleExoPlayer} and {@link CastPlayer}.
    *
-   * @param queueChangesListener A {@link QueueChangesListener} for queue position changes.
+   * @param listener A {@link Listener} for queue position changes.
    * @param localPlayerView The {@link PlayerView} for local playback.
    * @param castControlView The {@link PlayerControlView} to control remote playback.
    * @param context A {@link Context}.
    * @param castContext The {@link CastContext}.
    */
   public DefaultReceiverPlayerManager(
-      QueueChangesListener queueChangesListener,
+      Listener listener,
       PlayerView localPlayerView,
       PlayerControlView castControlView,
       Context context,
       CastContext castContext) {
-    this.queueChangesListener = queueChangesListener;
+    this.listener = listener;
     this.localPlayerView = localPlayerView;
     this.castControlView = castControlView;
     mediaQueue = new ArrayList<>();
@@ -113,13 +113,13 @@ import java.util.ArrayList;
    *
    * @param itemIndex The index of the item to play.
    */
+  @Override
   public void selectQueueItem(int itemIndex) {
     setCurrentItem(itemIndex, C.TIME_UNSET, true);
   }
 
-  /**
-   * Returns the index of the currently played item.
-   */
+  /** Returns the index of the currently played item. */
+  @Override
   public int getCurrentItemIndex() {
     return currentItemIndex;
   }
@@ -129,6 +129,7 @@ import java.util.ArrayList;
    *
    * @param item The {@link MediaItem} to append.
    */
+  @Override
   public void addItem(MediaItem item) {
     mediaQueue.add(item);
     concatenatingMediaSource.addMediaSource(buildMediaSource(item));
@@ -137,9 +138,8 @@ import java.util.ArrayList;
     }
   }
 
-  /**
-   * Returns the size of the media queue.
-   */
+  /** Returns the size of the media queue. */
+  @Override
   public int getMediaQueueSize() {
     return mediaQueue.size();
   }
@@ -150,6 +150,7 @@ import java.util.ArrayList;
    * @param position The index of the item.
    * @return The item at the given index in the media queue.
    */
+  @Override
   public MediaItem getItem(int position) {
     return mediaQueue.get(position);
   }
@@ -157,10 +158,15 @@ import java.util.ArrayList;
   /**
    * Removes the item at the given index from the media queue.
    *
-   * @param itemIndex The index of the item to remove.
+   * @param item The item to remove.
    * @return Whether the removal was successful.
    */
-  public boolean removeItem(int itemIndex) {
+  @Override
+  public boolean removeItem(MediaItem item) {
+    int itemIndex = mediaQueue.indexOf(item);
+    if (itemIndex == -1) {
+      return false;
+    }
     concatenatingMediaSource.removeMediaSource(itemIndex);
     if (currentPlayer == castPlayer) {
       if (castPlayer.getPlaybackState() != Player.STATE_IDLE) {
@@ -183,11 +189,16 @@ import java.util.ArrayList;
   /**
    * Moves an item within the queue.
    *
-   * @param fromIndex The index of the item to move.
+   * @param item The item to move.
    * @param toIndex The target index of the item in the queue.
    * @return Whether the item move was successful.
    */
-  public boolean moveItem(int fromIndex, int toIndex) {
+  @Override
+  public boolean moveItem(MediaItem item, int toIndex) {
+    int fromIndex = mediaQueue.indexOf(item);
+    if (fromIndex == -1) {
+      return false;
+    }
     // Player update.
     concatenatingMediaSource.moveMediaSource(fromIndex, toIndex);
     if (currentPlayer == castPlayer && castPlayer.getPlaybackState() != Player.STATE_IDLE) {
@@ -214,14 +225,13 @@ import java.util.ArrayList;
     return true;
   }
 
-  // Miscellaneous methods.
-
   /**
    * Dispatches a given {@link KeyEvent} to the corresponding view of the current player.
    *
    * @param event The {@link KeyEvent}.
    * @return Whether the event was handled by the target view.
    */
+  @Override
   public boolean dispatchKeyEvent(KeyEvent event) {
     if (currentPlayer == exoPlayer) {
       return localPlayerView.dispatchKeyEvent(event);
@@ -230,9 +240,8 @@ import java.util.ArrayList;
     }
   }
 
-  /**
-   * Releases the manager and the players that it holds.
-   */
+  /** Releases the manager and the players that it holds. */
+  @Override
   public void release() {
     currentItemIndex = C.INDEX_UNSET;
     mediaQueue.clear();
@@ -246,7 +255,7 @@ import java.util.ArrayList;
   // Player.EventListener implementation.
 
   @Override
-  public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+  public void onPlayerStateChanged(boolean playWhenReady, @Player.State int playbackState) {
     updateCurrentItemIndex();
   }
 
@@ -282,7 +291,8 @@ import java.util.ArrayList;
     int playbackState = currentPlayer.getPlaybackState();
     maybeSetCurrentItemAndNotify(
         playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED
-        ? currentPlayer.getCurrentWindowIndex() : C.INDEX_UNSET);
+            ? currentPlayer.getCurrentWindowIndex()
+            : C.INDEX_UNSET);
   }
 
   private void setCurrentPlayer(Player currentPlayer) {
@@ -359,7 +369,7 @@ import java.util.ArrayList;
     if (this.currentItemIndex != currentItemIndex) {
       int oldIndex = this.currentItemIndex;
       this.currentItemIndex = currentItemIndex;
-      queueChangesListener.onQueuePositionChanged(oldIndex, currentItemIndex);
+      listener.onQueuePositionChanged(oldIndex, currentItemIndex);
     }
   }
 
@@ -374,9 +384,10 @@ import java.util.ArrayList;
         return new HlsMediaSource.Factory(DATA_SOURCE_FACTORY).createMediaSource(uri);
       case DemoUtil.MIME_TYPE_VIDEO_MP4:
         return new ProgressiveMediaSource.Factory(DATA_SOURCE_FACTORY).createMediaSource(uri);
-      default: {
+      default:
+        {
           throw new IllegalStateException("Unsupported type: " + item.mimeType);
-      }
+        }
     }
   }
 
@@ -391,5 +402,4 @@ import java.util.ArrayList;
             .build();
     return new MediaQueueItem.Builder(mediaInfo).build();
   }
-
 }

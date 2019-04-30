@@ -19,8 +19,8 @@ import android.content.Context;
 import android.graphics.Point;
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -888,7 +888,8 @@ public class DefaultTrackSelector extends MappingTrackSelector {
       this.rendererDisabledFlags = rendererDisabledFlags;
     }
 
-    /* package */ Parameters(Parcel in) {
+    /* package */
+    Parameters(Parcel in) {
       super(in);
       // Video
       this.maxVideoWidth = in.readInt();
@@ -914,7 +915,7 @@ public class DefaultTrackSelector extends MappingTrackSelector {
       this.tunnelingAudioSessionId = in.readInt();
       // Overrides
       this.selectionOverrides = readSelectionOverrides(in);
-      this.rendererDisabledFlags = in.readSparseBooleanArray();
+      this.rendererDisabledFlags = Util.castNonNull(in.readSparseBooleanArray());
       // Deprecated fields.
       this.allowMixedMimeAdaptiveness = allowVideoMixedMimeTypeAdaptiveness;
       this.allowNonSeamlessAdaptiveness = allowVideoNonSeamlessAdaptiveness;
@@ -1172,15 +1173,29 @@ public class DefaultTrackSelector extends MappingTrackSelector {
     public final int groupIndex;
     public final int[] tracks;
     public final int length;
+    public final int reason;
+    public final int data;
 
     /**
      * @param groupIndex The overriding track group index.
      * @param tracks The overriding track indices within the track group.
      */
     public SelectionOverride(int groupIndex, int... tracks) {
+      this(groupIndex, tracks, C.SELECTION_REASON_MANUAL, /* data= */ 0);
+    }
+
+    /**
+     * @param groupIndex The overriding track group index.
+     * @param tracks The overriding track indices within the track group.
+     * @param reason The reason for the override. One of the {@link C} SELECTION_REASON_ constants.
+     * @param data Optional data associated with this override.
+     */
+    public SelectionOverride(int groupIndex, int[] tracks, int reason, int data) {
       this.groupIndex = groupIndex;
       this.tracks = Arrays.copyOf(tracks, tracks.length);
       this.length = tracks.length;
+      this.reason = reason;
+      this.data = data;
       Arrays.sort(this.tracks);
     }
 
@@ -1189,6 +1204,8 @@ public class DefaultTrackSelector extends MappingTrackSelector {
       length = in.readByte();
       tracks = new int[length];
       in.readIntArray(tracks);
+      reason = in.readInt();
+      data = in.readInt();
     }
 
     /** Returns whether this override contains the specified track index. */
@@ -1203,7 +1220,9 @@ public class DefaultTrackSelector extends MappingTrackSelector {
 
     @Override
     public int hashCode() {
-      return 31 * groupIndex + Arrays.hashCode(tracks);
+      int hash = 31 * groupIndex + Arrays.hashCode(tracks);
+      hash = 31 * hash + reason;
+      return 31 * hash + data;
     }
 
     @Override
@@ -1215,7 +1234,10 @@ public class DefaultTrackSelector extends MappingTrackSelector {
         return false;
       }
       SelectionOverride other = (SelectionOverride) obj;
-      return groupIndex == other.groupIndex && Arrays.equals(tracks, other.tracks);
+      return groupIndex == other.groupIndex
+          && Arrays.equals(tracks, other.tracks)
+          && reason == other.reason
+          && data == other.data;
     }
 
     // Parcelable implementation.
@@ -1230,6 +1252,8 @@ public class DefaultTrackSelector extends MappingTrackSelector {
       dest.writeInt(groupIndex);
       dest.writeInt(tracks.length);
       dest.writeIntArray(tracks);
+      dest.writeInt(reason);
+      dest.writeInt(data);
     }
 
     public static final Parcelable.Creator<SelectionOverride> CREATOR =
@@ -1258,6 +1282,8 @@ public class DefaultTrackSelector extends MappingTrackSelector {
 
   private final TrackSelection.Factory trackSelectionFactory;
   private final AtomicReference<Parameters> parametersReference;
+
+  private boolean allowMultipleAdaptiveSelections;
 
   public DefaultTrackSelector() {
     this(new AdaptiveTrackSelection.Factory());
@@ -1373,6 +1399,15 @@ public class DefaultTrackSelector extends MappingTrackSelector {
     setParameters(buildUponParameters().setTunnelingAudioSessionId(tunnelingAudioSessionId));
   }
 
+  /**
+   * Allows the creation of multiple adaptive track selections.
+   *
+   * <p>This method is experimental, and will be renamed or removed in a future release.
+   */
+  public void experimental_allowMultipleAdaptiveSelections() {
+    this.allowMultipleAdaptiveSelections = true;
+  }
+
   // MappingTrackSelector implementation.
 
   @Override
@@ -1404,7 +1439,10 @@ public class DefaultTrackSelector extends MappingTrackSelector {
             override == null
                 ? null
                 : new TrackSelection.Definition(
-                    rendererTrackGroups.get(override.groupIndex), override.tracks);
+                    rendererTrackGroups.get(override.groupIndex),
+                    override.tracks,
+                    override.reason,
+                    override.data);
       }
     }
 
@@ -1483,39 +1521,53 @@ public class DefaultTrackSelector extends MappingTrackSelector {
     }
 
     AudioTrackScore selectedAudioTrackScore = null;
+    String selectedAudioLanguage = null;
     int selectedAudioRendererIndex = C.INDEX_UNSET;
+    for (int i = 0; i < rendererCount; i++) {
+      if (C.TRACK_TYPE_AUDIO == mappedTrackInfo.getRendererType(i)) {
+        boolean enableAdaptiveTrackSelection =
+            allowMultipleAdaptiveSelections || !seenVideoRendererWithMappedTracks;
+        Pair<TrackSelection.Definition, AudioTrackScore> audioSelection =
+            selectAudioTrack(
+                mappedTrackInfo.getTrackGroups(i),
+                rendererFormatSupports[i],
+                rendererMixedMimeTypeAdaptationSupports[i],
+                params,
+                enableAdaptiveTrackSelection);
+        if (audioSelection != null
+            && (selectedAudioTrackScore == null
+                || audioSelection.second.compareTo(selectedAudioTrackScore) > 0)) {
+          if (selectedAudioRendererIndex != C.INDEX_UNSET) {
+            // We've already made a selection for another audio renderer, but it had a lower
+            // score. Clear the selection for that renderer.
+            definitions[selectedAudioRendererIndex] = null;
+          }
+          TrackSelection.Definition definition = audioSelection.first;
+          definitions[i] = definition;
+          // We assume that audio tracks in the same group have matching language.
+          selectedAudioLanguage = definition.group.getFormat(definition.tracks[0]).language;
+          selectedAudioTrackScore = audioSelection.second;
+          selectedAudioRendererIndex = i;
+        }
+      }
+    }
+
     int selectedTextTrackScore = Integer.MIN_VALUE;
     int selectedTextRendererIndex = C.INDEX_UNSET;
     for (int i = 0; i < rendererCount; i++) {
       int trackType = mappedTrackInfo.getRendererType(i);
       switch (trackType) {
         case C.TRACK_TYPE_VIDEO:
-          // Already done. Do nothing.
-          break;
         case C.TRACK_TYPE_AUDIO:
-          Pair<TrackSelection.Definition, AudioTrackScore> audioSelection =
-              selectAudioTrack(
-                  mappedTrackInfo.getTrackGroups(i),
-                  rendererFormatSupports[i],
-                  rendererMixedMimeTypeAdaptationSupports[i],
-                  params,
-                  !seenVideoRendererWithMappedTracks);
-          if (audioSelection != null
-              && (selectedAudioTrackScore == null
-                  || audioSelection.second.compareTo(selectedAudioTrackScore) > 0)) {
-            if (selectedAudioRendererIndex != C.INDEX_UNSET) {
-              // We've already made a selection for another audio renderer, but it had a lower
-              // score. Clear the selection for that renderer.
-              definitions[selectedAudioRendererIndex] = null;
-            }
-            definitions[i] = audioSelection.first;
-            selectedAudioTrackScore = audioSelection.second;
-            selectedAudioRendererIndex = i;
-          }
+          // Already done. Do nothing.
           break;
         case C.TRACK_TYPE_TEXT:
           Pair<TrackSelection.Definition, Integer> textSelection =
-              selectTextTrack(mappedTrackInfo.getTrackGroups(i), rendererFormatSupports[i], params);
+              selectTextTrack(
+                  mappedTrackInfo.getTrackGroups(i),
+                  rendererFormatSupports[i],
+                  params,
+                  selectedAudioLanguage);
           if (textSelection != null && textSelection.second > selectedTextTrackScore) {
             if (selectedTextRendererIndex != C.INDEX_UNSET) {
               // We've already made a selection for another text renderer, but it had a lower score.
@@ -1989,13 +2041,18 @@ public class DefaultTrackSelector extends MappingTrackSelector {
    * @param formatSupport The result of {@link RendererCapabilities#supportsFormat} for each mapped
    *     track, indexed by track group index and track index (in that order).
    * @param params The selector's current constraint parameters.
+   * @param selectedAudioLanguage The language of the selected audio track. May be null if the
+   *     selected audio track declares no language or no audio track was selected.
    * @return The {@link TrackSelection.Definition} and corresponding track score, or null if no
    *     selection was made.
    * @throws ExoPlaybackException If an error occurs while selecting the tracks.
    */
   @Nullable
   protected Pair<TrackSelection.Definition, Integer> selectTextTrack(
-      TrackGroupArray groups, int[][] formatSupport, Parameters params)
+      TrackGroupArray groups,
+      int[][] formatSupport,
+      Parameters params,
+      @Nullable String selectedAudioLanguage)
       throws ExoPlaybackException {
     TrackGroup selectedGroup = null;
     int selectedTrackIndex = 0;
@@ -2012,28 +2069,26 @@ public class DefaultTrackSelector extends MappingTrackSelector {
           boolean isDefault = (maskedSelectionFlags & C.SELECTION_FLAG_DEFAULT) != 0;
           boolean isForced = (maskedSelectionFlags & C.SELECTION_FLAG_FORCED) != 0;
           int trackScore;
-          boolean preferredLanguageFound = formatHasLanguage(format, params.preferredTextLanguage);
-          if (preferredLanguageFound
-              || (params.selectUndeterminedTextLanguage && formatHasNoLanguage(format))) {
+          int languageScore = getFormatLanguageScore(format, params.preferredTextLanguage);
+          boolean trackHasNoLanguage = formatHasNoLanguage(format);
+          if (languageScore > 0 || (params.selectUndeterminedTextLanguage && trackHasNoLanguage)) {
             if (isDefault) {
-              trackScore = 8;
+              trackScore = 11;
             } else if (!isForced) {
               // Prefer non-forced to forced if a preferred text language has been specified. Where
               // both are provided the non-forced track will usually contain the forced subtitles as
               // a subset.
-              trackScore = 6;
+              trackScore = 7;
             } else {
-              trackScore = 4;
+              trackScore = 3;
             }
-            trackScore += preferredLanguageFound ? 1 : 0;
+            trackScore += languageScore;
           } else if (isDefault) {
-            trackScore = 3;
-          } else if (isForced) {
-            if (formatHasLanguage(format, params.preferredAudioLanguage)) {
-              trackScore = 2;
-            } else {
-              trackScore = 1;
-            }
+            trackScore = 2;
+          } else if (isForced
+              && (getFormatLanguageScore(format, selectedAudioLanguage) > 0
+                  || (trackHasNoLanguage && stringDefinesNoLanguage(selectedAudioLanguage)))) {
+            trackScore = 1;
           } else {
             // Track should not be selected.
             continue;
@@ -2222,27 +2277,48 @@ public class DefaultTrackSelector extends MappingTrackSelector {
         && maskedSupport == RendererCapabilities.FORMAT_EXCEEDS_CAPABILITIES);
   }
 
-  /**
-   * Returns whether a {@link Format} does not define a language.
-   *
-   * @param format The {@link Format}.
-   * @return Whether the {@link Format} does not define a language.
-   */
+  /** Equivalent to {@link #stringDefinesNoLanguage stringDefinesNoLanguage(format.language)}. */
   protected static boolean formatHasNoLanguage(Format format) {
-    return TextUtils.isEmpty(format.language) || formatHasLanguage(format, C.LANGUAGE_UNDETERMINED);
+    return stringDefinesNoLanguage(format.language);
   }
 
   /**
-   * Returns whether a {@link Format} specifies a particular language, or {@code false} if {@code
-   * language} is null.
+   * Returns whether the given string does not define a language.
+   *
+   * @param language The string.
+   * @return Whether the given string does not define a language.
+   */
+  protected static boolean stringDefinesNoLanguage(@Nullable String language) {
+    return TextUtils.isEmpty(language) || TextUtils.equals(language, C.LANGUAGE_UNDETERMINED);
+  }
+
+  /**
+   * Returns a score for how well a language specified in a {@link Format} matches a given language.
    *
    * @param format The {@link Format}.
-   * @param language The language.
-   * @return Whether the format specifies the language, or {@code false} if {@code language} is
-   *     null.
+   * @param language The language, or null.
+   * @return A score of 3 if the languages match fully, a score of 2 if the languages match partly,
+   *     a score of 1 if the languages don't match but belong to the same main language, and a score
+   *     of 0 if the languages don't match at all.
    */
-  protected static boolean formatHasLanguage(Format format, @Nullable String language) {
-    return language != null && TextUtils.equals(language, format.language);
+  protected static int getFormatLanguageScore(Format format, @Nullable String language) {
+    if (format.language == null || language == null) {
+      return 0;
+    }
+    if (TextUtils.equals(format.language, language)) {
+      return 3;
+    }
+    // Partial match where one language is a subset of the other (e.g. "zho-hans" and "zho-hans-hk")
+    if (format.language.startsWith(language) || language.startsWith(format.language)) {
+      return 2;
+    }
+    // Partial match where only the main language tag is the same (e.g. "fra-fr" and "fra-ca")
+    if (format.language.length() >= 3
+        && language.length() >= 3
+        && format.language.substring(0, 3).equals(language.substring(0, 3))) {
+      return 1;
+    }
+    return 0;
   }
 
   private static List<Integer> getViewportFilteredTrackIndices(TrackGroup group, int viewportWidth,
@@ -2320,18 +2396,20 @@ public class DefaultTrackSelector extends MappingTrackSelector {
     public final boolean isWithinConstraints;
 
     private final Parameters parameters;
-    private final int withinRendererCapabilitiesScore;
-    private final int matchLanguageScore;
-    private final int defaultSelectionFlagScore;
+    private final boolean isWithinRendererCapabilities;
+    private final int preferredLanguageScore;
+    private final int localeLanguageMatchIndex;
+    private final int localeLanguageScore;
+    private final boolean isDefaultSelectionFlag;
     private final int channelCount;
     private final int sampleRate;
     private final int bitrate;
 
     public AudioTrackScore(Format format, Parameters parameters, int formatSupport) {
       this.parameters = parameters;
-      withinRendererCapabilitiesScore = isSupported(formatSupport, false) ? 1 : 0;
-      matchLanguageScore = formatHasLanguage(format, parameters.preferredAudioLanguage) ? 1 : 0;
-      defaultSelectionFlagScore = (format.selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0 ? 1 : 0;
+      isWithinRendererCapabilities = isSupported(formatSupport, false);
+      preferredLanguageScore = getFormatLanguageScore(format, parameters.preferredAudioLanguage);
+      isDefaultSelectionFlag = (format.selectionFlags & C.SELECTION_FLAG_DEFAULT) != 0;
       channelCount = format.channelCount;
       sampleRate = format.sampleRate;
       bitrate = format.bitrate;
@@ -2339,6 +2417,19 @@ public class DefaultTrackSelector extends MappingTrackSelector {
           (format.bitrate == Format.NO_VALUE || format.bitrate <= parameters.maxAudioBitrate)
               && (format.channelCount == Format.NO_VALUE
                   || format.channelCount <= parameters.maxAudioChannelCount);
+      String[] localeLanguages = Util.getSystemLanguageCodes();
+      int bestMatchIndex = Integer.MAX_VALUE;
+      int bestMatchScore = 0;
+      for (int i = 0; i < localeLanguages.length; i++) {
+        int score = getFormatLanguageScore(format, localeLanguages[i]);
+        if (score > 0) {
+          bestMatchIndex = i;
+          bestMatchScore = score;
+          break;
+        }
+      }
+      localeLanguageMatchIndex = bestMatchIndex;
+      localeLanguageScore = bestMatchScore;
     }
 
     /**
@@ -2350,12 +2441,11 @@ public class DefaultTrackSelector extends MappingTrackSelector {
      */
     @Override
     public int compareTo(@NonNull AudioTrackScore other) {
-      if (this.withinRendererCapabilitiesScore != other.withinRendererCapabilitiesScore) {
-        return compareInts(this.withinRendererCapabilitiesScore,
-            other.withinRendererCapabilitiesScore);
+      if (this.isWithinRendererCapabilities != other.isWithinRendererCapabilities) {
+        return this.isWithinRendererCapabilities ? 1 : -1;
       }
-      if (this.matchLanguageScore != other.matchLanguageScore) {
-        return compareInts(this.matchLanguageScore, other.matchLanguageScore);
+      if (this.preferredLanguageScore != other.preferredLanguageScore) {
+        return compareInts(this.preferredLanguageScore, other.preferredLanguageScore);
       }
       if (this.isWithinConstraints != other.isWithinConstraints) {
         return this.isWithinConstraints ? 1 : -1;
@@ -2366,12 +2456,18 @@ public class DefaultTrackSelector extends MappingTrackSelector {
           return bitrateComparison > 0 ? -1 : 1;
         }
       }
-      if (this.defaultSelectionFlagScore != other.defaultSelectionFlagScore) {
-        return compareInts(this.defaultSelectionFlagScore, other.defaultSelectionFlagScore);
+      if (this.isDefaultSelectionFlag != other.isDefaultSelectionFlag) {
+        return this.isDefaultSelectionFlag ? 1 : -1;
+      }
+      if (this.localeLanguageMatchIndex != other.localeLanguageMatchIndex) {
+        return -compareInts(this.localeLanguageMatchIndex, other.localeLanguageMatchIndex);
+      }
+      if (this.localeLanguageScore != other.localeLanguageScore) {
+        return compareInts(this.localeLanguageScore, other.localeLanguageScore);
       }
       // If the formats are within constraints and renderer capabilities then prefer higher values
       // of channel count, sample rate and bit rate in that order. Otherwise, prefer lower values.
-      int resultSign = isWithinConstraints && withinRendererCapabilitiesScore == 1 ? 1 : -1;
+      int resultSign = isWithinConstraints && isWithinRendererCapabilities ? 1 : -1;
       if (this.channelCount != other.channelCount) {
         return resultSign * compareInts(this.channelCount, other.channelCount);
       }

@@ -15,12 +15,14 @@
  */
 package com.google.android.exoplayer2.ext.vp9;
 
+import static java.lang.Runtime.getRuntime;
+
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.support.annotation.CallSuper;
-import android.support.annotation.IntDef;
-import android.support.annotation.Nullable;
+import androidx.annotation.CallSuper;
+import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 import android.view.Surface;
 import com.google.android.exoplayer2.BaseRenderer;
 import com.google.android.exoplayer2.C;
@@ -95,18 +97,17 @@ public class LibvpxVideoRenderer extends BaseRenderer {
    */
   public static final int MSG_SET_OUTPUT_BUFFER_RENDERER = C.MSG_CUSTOM_BASE;
 
-  /**
-   * The number of input buffers.
-   */
-  private static final int NUM_INPUT_BUFFERS = 8;
+  /** The number of input buffers. */
+  private final int numInputBuffers;
   /**
    * The number of output buffers. The renderer may limit the minimum possible value due to
    * requiring multiple output buffers to be dequeued at a time for it to make progress.
    */
-  private static final int NUM_OUTPUT_BUFFERS = 8;
+  private final int numOutputBuffers;
   /** The default input buffer size. */
   private static final int DEFAULT_INPUT_BUFFER_SIZE = 768 * 1024; // Value based on cs/SoftVpx.cpp.
 
+  private final boolean enableRowMultiThreadMode;
   private final boolean disableLoopFilter;
   private final long allowedJoiningTimeMs;
   private final int maxDroppedFramesToNotify;
@@ -116,6 +117,7 @@ public class LibvpxVideoRenderer extends BaseRenderer {
   private final TimedValueQueue<Format> formatQueue;
   private final DecoderInputBuffer flagsOnlyBuffer;
   private final DrmSessionManager<ExoMediaCrypto> drmSessionManager;
+  private final int threads;
 
   private Format format;
   private Format pendingFormat;
@@ -209,12 +211,63 @@ public class LibvpxVideoRenderer extends BaseRenderer {
       DrmSessionManager<ExoMediaCrypto> drmSessionManager,
       boolean playClearSamplesWithoutKeys,
       boolean disableLoopFilter) {
+    this(
+        allowedJoiningTimeMs,
+        eventHandler,
+        eventListener,
+        maxDroppedFramesToNotify,
+        drmSessionManager,
+        playClearSamplesWithoutKeys,
+        disableLoopFilter,
+        /* enableRowMultiThreadMode= */ false,
+        getRuntime().availableProcessors(),
+        /* numInputBuffers= */ 4,
+        /* numOutputBuffers= */ 4);
+  }
+
+  /**
+   * @param allowedJoiningTimeMs The maximum duration in milliseconds for which this video renderer
+   *     can attempt to seamlessly join an ongoing playback.
+   * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
+   *     null if delivery of events is not required.
+   * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
+   *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
+   * @param drmSessionManager For use with encrypted media. May be null if support for encrypted
+   *     media is not required.
+   * @param playClearSamplesWithoutKeys Encrypted media may contain clear (un-encrypted) regions.
+   *     For example a media file may start with a short clear region so as to allow playback to
+   *     begin in parallel with key acquisition. This parameter specifies whether the renderer is
+   *     permitted to play clear regions of encrypted media files before {@code drmSessionManager}
+   *     has obtained the keys necessary to decrypt encrypted regions of the media.
+   * @param disableLoopFilter Disable the libvpx in-loop smoothing filter.
+   * @param enableRowMultiThreadMode Whether row multi threading decoding is enabled.
+   * @param threads Number of threads libvpx will use to decode.
+   * @param numInputBuffers Number of input buffers.
+   * @param numOutputBuffers Number of output buffers.
+   */
+  public LibvpxVideoRenderer(
+      long allowedJoiningTimeMs,
+      Handler eventHandler,
+      VideoRendererEventListener eventListener,
+      int maxDroppedFramesToNotify,
+      DrmSessionManager<ExoMediaCrypto> drmSessionManager,
+      boolean playClearSamplesWithoutKeys,
+      boolean disableLoopFilter,
+      boolean enableRowMultiThreadMode,
+      int threads,
+      int numInputBuffers,
+      int numOutputBuffers) {
     super(C.TRACK_TYPE_VIDEO);
     this.disableLoopFilter = disableLoopFilter;
     this.allowedJoiningTimeMs = allowedJoiningTimeMs;
     this.maxDroppedFramesToNotify = maxDroppedFramesToNotify;
     this.drmSessionManager = drmSessionManager;
     this.playClearSamplesWithoutKeys = playClearSamplesWithoutKeys;
+    this.enableRowMultiThreadMode = enableRowMultiThreadMode;
+    this.threads = threads;
+    this.numInputBuffers = numInputBuffers;
+    this.numOutputBuffers = numOutputBuffers;
     joiningDeadlineMs = C.TIME_UNSET;
     clearReportedVideoSize();
     formatHolder = new FormatHolder();
@@ -717,11 +770,13 @@ public class LibvpxVideoRenderer extends BaseRenderer {
           format.maxInputSize != Format.NO_VALUE ? format.maxInputSize : DEFAULT_INPUT_BUFFER_SIZE;
       decoder =
           new VpxDecoder(
-              NUM_INPUT_BUFFERS,
-              NUM_OUTPUT_BUFFERS,
+              numInputBuffers,
+              numOutputBuffers,
               initialInputBufferSize,
               mediaCrypto,
-              disableLoopFilter);
+              disableLoopFilter,
+              enableRowMultiThreadMode,
+              threads);
       decoder.setOutputMode(outputMode);
       TraceUtil.endSection();
       long decoderInitializedTimestamp = SystemClock.elapsedRealtime();

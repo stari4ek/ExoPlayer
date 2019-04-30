@@ -15,14 +15,14 @@
  */
 package com.google.android.exoplayer2.ext.vp9;
 
-import static androidx.test.InstrumentationRegistry.getContext;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
 import android.content.Context;
 import android.net.Uri;
 import android.os.Looper;
-import androidx.test.runner.AndroidJUnit4;
+import androidx.test.core.app.ApplicationProvider;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.ExoPlayerFactory;
@@ -89,7 +89,7 @@ public class VpxPlaybackTest {
 
   private void playUri(String uri) throws Exception {
     TestPlaybackRunnable testPlaybackRunnable =
-        new TestPlaybackRunnable(Uri.parse(uri), getContext());
+        new TestPlaybackRunnable(Uri.parse(uri), ApplicationProvider.getApplicationContext());
     Thread thread = new Thread(testPlaybackRunnable);
     thread.start();
     thread.join();
@@ -120,8 +120,8 @@ public class VpxPlaybackTest {
       player.addListener(this);
       MediaSource mediaSource =
           new ProgressiveMediaSource.Factory(
-                  new DefaultDataSourceFactory(context, "ExoPlayerExtVp9Test"))
-              .setExtractorsFactory(MatroskaExtractor.FACTORY)
+                  new DefaultDataSourceFactory(context, "ExoPlayerExtVp9Test"),
+                  MatroskaExtractor.FACTORY)
               .createMediaSource(uri);
       player
           .createMessage(videoRenderer)
@@ -139,7 +139,7 @@ public class VpxPlaybackTest {
     }
 
     @Override
-    public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+    public void onPlayerStateChanged(boolean playWhenReady, @Player.State int playbackState) {
       if (playbackState == Player.STATE_ENDED
           || (playbackState == Player.STATE_IDLE && playbackException != null)) {
         player.release();

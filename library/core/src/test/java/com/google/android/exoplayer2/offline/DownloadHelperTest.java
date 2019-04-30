@@ -16,8 +16,10 @@
 package com.google.android.exoplayer2.offline;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.robolectric.shadows.ShadowBaseLooper.shadowMainLooper;
 
 import android.net.Uri;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.Renderer;
@@ -25,7 +27,6 @@ import com.google.android.exoplayer2.RenderersFactory;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.offline.DownloadHelper.Callback;
 import com.google.android.exoplayer2.source.MediaPeriod;
-import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
@@ -34,7 +35,6 @@ import com.google.android.exoplayer2.testutil.FakeMediaSource;
 import com.google.android.exoplayer2.testutil.FakeRenderer;
 import com.google.android.exoplayer2.testutil.FakeTimeline;
 import com.google.android.exoplayer2.testutil.FakeTimeline.TimelineWindowDefinition;
-import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector.ParametersBuilder;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector.MappedTrackInfo;
@@ -51,13 +51,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
-import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.annotation.LooperMode;
 
 /** Unit tests for {@link DownloadHelper}. */
-@RunWith(RobolectricTestRunner.class)
-@Config(shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class})
+@RunWith(AndroidJUnit4.class)
+@LooperMode(LooperMode.Mode.PAUSED)
 public class DownloadHelperTest {
 
   private static final String TEST_DOWNLOAD_TYPE = "downloadType";
@@ -380,7 +378,7 @@ public class DownloadHelperTest {
   }
 
   @Test
-  public void getDownloadAction_createsDownloadAction_withAllSelectedTracks() throws Exception {
+  public void getDownloadRequest_createsDownloadRequest_withAllSelectedTracks() throws Exception {
     prepareDownloadHelper(downloadHelper);
     // Ensure we have track groups with multiple indices, renderers with multiple track groups and
     // also renderers without any track groups.
@@ -393,14 +391,13 @@ public class DownloadHelperTest {
     byte[] data = new byte[10];
     Arrays.fill(data, (byte) 123);
 
-    DownloadAction downloadAction = downloadHelper.getDownloadAction(data);
+    DownloadRequest downloadRequest = downloadHelper.getDownloadRequest(data);
 
-    assertThat(downloadAction.type).isEqualTo(TEST_DOWNLOAD_TYPE);
-    assertThat(downloadAction.uri).isEqualTo(testUri);
-    assertThat(downloadAction.customCacheKey).isEqualTo(TEST_CACHE_KEY);
-    assertThat(downloadAction.isRemoveAction).isFalse();
-    assertThat(downloadAction.data).isEqualTo(data);
-    assertThat(downloadAction.keys)
+    assertThat(downloadRequest.type).isEqualTo(TEST_DOWNLOAD_TYPE);
+    assertThat(downloadRequest.uri).isEqualTo(testUri);
+    assertThat(downloadRequest.customCacheKey).isEqualTo(TEST_CACHE_KEY);
+    assertThat(downloadRequest.data).isEqualTo(data);
+    assertThat(downloadRequest.streamKeys)
         .containsExactly(
             new StreamKey(/* periodIndex= */ 0, /* groupIndex= */ 0, /* trackIndex= */ 0),
             new StreamKey(/* periodIndex= */ 0, /* groupIndex= */ 0, /* trackIndex= */ 1),
@@ -409,16 +406,6 @@ public class DownloadHelperTest {
             new StreamKey(/* periodIndex= */ 0, /* groupIndex= */ 3, /* trackIndex= */ 0),
             new StreamKey(/* periodIndex= */ 1, /* groupIndex= */ 0, /* trackIndex= */ 0),
             new StreamKey(/* periodIndex= */ 1, /* groupIndex= */ 1, /* trackIndex= */ 0));
-  }
-
-  @Test
-  public void getRemoveAction_returnsRemoveAction() {
-    DownloadAction removeAction = downloadHelper.getRemoveAction();
-
-    assertThat(removeAction.type).isEqualTo(TEST_DOWNLOAD_TYPE);
-    assertThat(removeAction.uri).isEqualTo(testUri);
-    assertThat(removeAction.customCacheKey).isEqualTo(TEST_CACHE_KEY);
-    assertThat(removeAction.isRemoveAction).isTrue();
   }
 
   private static void prepareDownloadHelper(DownloadHelper downloadHelper) throws Exception {
@@ -438,7 +425,7 @@ public class DownloadHelperTest {
           }
         });
     while (!preparedCondition.block(0)) {
-      ShadowLooper.runMainLooperToNextTask();
+      shadowMainLooper().idleFor(shadowMainLooper().getNextScheduledTaskTime());
     }
     if (prepareException.get() != null) {
       throw prepareException.get();

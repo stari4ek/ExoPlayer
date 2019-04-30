@@ -29,6 +29,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.graphics.Point;
 import android.media.AudioFormat;
 import android.net.ConnectivityManager;
@@ -39,7 +40,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcel;
 import android.security.NetworkSecurityPolicy;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.view.Display;
@@ -162,6 +163,7 @@ public final class Util {
    * @param intent The intent to pass to the called method.
    * @return The result of the called method.
    */
+  @Nullable
   public static ComponentName startForegroundService(Context context, Intent intent) {
     if (Util.SDK_INT >= 26) {
       return context.startForegroundService(intent);
@@ -314,6 +316,25 @@ public final class Util {
   }
 
   /**
+   * Concatenates two non-null type arrays.
+   *
+   * @param first The first array.
+   * @param second The second array.
+   * @return The concatenated result.
+   */
+  @SuppressWarnings({"nullness:assignment.type.incompatible"})
+  public static <T> T[] nullSafeArrayConcatenation(T[] first, T[] second) {
+    T[] concatenation = Arrays.copyOf(first, first.length + second.length);
+    System.arraycopy(
+        /* src= */ second,
+        /* srcPos= */ 0,
+        /* dest= */ concatenation,
+        /* destPos= */ first.length,
+        /* length= */ second.length);
+    return concatenation;
+  }
+
+  /**
    * Creates a {@link Handler} with the specified {@link Handler.Callback} on the current {@link
    * Looper} thread. The method accepts partially initialized objects as callback under the
    * assumption that the Handler won't be used to send messages until the callback is fully
@@ -418,16 +439,26 @@ public final class Util {
   }
 
   /**
-   * Returns a normalized ISO 639-2/T code for {@code language}.
+   * Returns a normalized IETF BCP 47 language tag for {@code language}.
    *
-   * @param language A case-insensitive ISO 639-1 two-letter or ISO 639-2 three-letter language
-   *     code.
+   * @param language A case-insensitive language code supported by {@link
+   *     Locale#forLanguageTag(String)}.
    * @return The all-lowercase normalized code, or null if the input was null, or {@code
    *     language.toLowerCase()} if the language could not be normalized.
    */
-  public static @Nullable String normalizeLanguageCode(@Nullable String language) {
+  public static @PolyNull String normalizeLanguageCode(@PolyNull String language) {
+    if (language == null) {
+      return null;
+    }
     try {
-      return language == null ? null : new Locale(language).getISO3Language();
+      Locale locale = getLocaleForLanguageTag(language);
+      int localeLanguageLength = locale.getLanguage().length();
+      String normLanguage = locale.getISO3Language();
+      if (normLanguage.isEmpty()) {
+        return toLowerInvariant(language);
+      }
+      String normTag = getLocaleLanguageTag(locale);
+      return toLowerInvariant(normLanguage + normTag.substring(localeLanguageLength));
     } catch (MissingResourceException e) {
       return toLowerInvariant(language);
     }
@@ -1724,6 +1755,18 @@ public final class Util {
   }
 
   /**
+   * Returns a non-empty array of normalized IETF BCP 47 language tags for the system languages
+   * ordered by preference.
+   */
+  public static String[] getSystemLanguageCodes() {
+    String[] systemLocales = getSystemLocales();
+    for (int i = 0; i < systemLocales.length; i++) {
+      systemLocales[i] = normalizeLanguageCode(systemLocales[i]);
+    }
+    return systemLocales;
+  }
+
+  /**
    * Uncompresses the data in {@code input}.
    *
    * @param input Wraps the compressed input data.
@@ -1904,6 +1947,35 @@ public final class Util {
 
   private static void getDisplaySizeV16(Display display, Point outSize) {
     display.getSize(outSize);
+  }
+
+  private static String[] getSystemLocales() {
+    return SDK_INT >= 24
+        ? getSystemLocalesV24()
+        : new String[] {getLocaleLanguageTag(Resources.getSystem().getConfiguration().locale)};
+  }
+
+  @TargetApi(24)
+  private static String[] getSystemLocalesV24() {
+    return Util.split(Resources.getSystem().getConfiguration().getLocales().toLanguageTags(), ",");
+  }
+
+  private static Locale getLocaleForLanguageTag(String languageTag) {
+    return Util.SDK_INT >= 21 ? getLocaleForLanguageTagV21(languageTag) : new Locale(languageTag);
+  }
+
+  @TargetApi(21)
+  private static Locale getLocaleForLanguageTagV21(String languageTag) {
+    return Locale.forLanguageTag(languageTag);
+  }
+
+  private static String getLocaleLanguageTag(Locale locale) {
+    return SDK_INT >= 21 ? getLocaleLanguageTagV21(locale) : locale.toString();
+  }
+
+  @TargetApi(21)
+  private static String getLocaleLanguageTagV21(Locale locale) {
+    return locale.toLanguageTag();
   }
 
   private static @C.NetworkType int getMobileNetworkType(NetworkInfo networkInfo) {

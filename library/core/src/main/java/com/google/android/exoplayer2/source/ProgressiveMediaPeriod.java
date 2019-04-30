@@ -17,10 +17,11 @@ package com.google.android.exoplayer2.source;
 
 import android.net.Uri;
 import android.os.Handler;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
+import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.extractor.DefaultExtractorInput;
@@ -30,6 +31,7 @@ import com.google.android.exoplayer2.extractor.ExtractorOutput;
 import com.google.android.exoplayer2.extractor.PositionHolder;
 import com.google.android.exoplayer2.extractor.SeekMap;
 import com.google.android.exoplayer2.extractor.SeekMap.SeekPoints;
+import com.google.android.exoplayer2.extractor.SeekMap.Unseekable;
 import com.google.android.exoplayer2.extractor.TrackOutput;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.icy.IcyHeaders;
@@ -218,6 +220,9 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   @Override
   public void maybeThrowPrepareError() throws IOException {
     maybeThrowError();
+    if (loadingFinished && !prepared) {
+      throw new ParserException("Loading finished before preparation is complete.");
+    }
   }
 
   @Override
@@ -512,12 +517,12 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   @Override
   public void onLoadCompleted(ExtractingLoadable loadable, long elapsedRealtimeMs,
       long loadDurationMs) {
-    if (durationUs == C.TIME_UNSET) {
-      SeekMap seekMap = Assertions.checkNotNull(this.seekMap);
+    if (durationUs == C.TIME_UNSET && seekMap != null) {
+      boolean isSeekable = seekMap.isSeekable();
       long largestQueuedTimestampUs = getLargestQueuedTimestampUs();
       durationUs = largestQueuedTimestampUs == Long.MIN_VALUE ? 0
           : largestQueuedTimestampUs + DEFAULT_LAST_SAMPLE_DURATION_US;
-      listener.onSourceInfoRefreshed(durationUs, seekMap.isSeekable());
+      listener.onSourceInfoRefreshed(durationUs, isSeekable);
     }
     eventDispatcher.loadCompleted(
         loadable.dataSpec,
@@ -576,7 +581,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     copyLengthFromLoader(loadable);
     LoadErrorAction loadErrorAction;
     long retryDelayMs =
-        loadErrorHandlingPolicy.getRetryDelayMsFor(dataType, durationUs, error, errorCount);
+        loadErrorHandlingPolicy.getRetryDelayMsFor(dataType, loadDurationMs, error, errorCount);
     if (retryDelayMs == C.TIME_UNSET) {
       loadErrorAction = Loader.DONT_RETRY_FATAL;
     } else /* the load should be retried */ {
@@ -622,7 +627,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
 
   @Override
   public void seekMap(SeekMap seekMap) {
-    this.seekMap = seekMap;
+    this.seekMap = icyHeaders == null ? seekMap : new Unseekable(/* durationUs */ C.TIME_UNSET);
     handler.post(maybeFinishPrepareRunnable);
   }
 

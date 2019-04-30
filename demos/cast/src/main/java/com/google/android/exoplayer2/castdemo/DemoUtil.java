@@ -16,7 +16,7 @@
 package com.google.android.exoplayer2.castdemo;
 
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.MimeTypes;
 import java.util.ArrayList;
@@ -97,6 +97,7 @@ import java.util.UUID;
     samples.add(
         new Sample(
             "https://html5demos.com/assets/dizzy.mp4", "Clear MP4: Dizzy", MIME_TYPE_VIDEO_MP4));
+
     SAMPLES = Collections.unmodifiableList(samples);
   }
 

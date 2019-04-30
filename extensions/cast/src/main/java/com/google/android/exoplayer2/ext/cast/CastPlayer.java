@@ -16,8 +16,8 @@
 package com.google.android.exoplayer2.ext.cast;
 
 import android.os.Looper;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.BasePlayer;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
@@ -94,7 +94,7 @@ public final class CastPlayer extends BasePlayer {
   private CastTimeline currentTimeline;
   private TrackGroupArray currentTrackGroups;
   private TrackSelectionArray currentTrackSelection;
-  private int playbackState;
+  @Player.State private int playbackState;
   private int repeatMode;
   private int currentWindowIndex;
   private boolean playWhenReady;
@@ -305,6 +305,7 @@ public final class CastPlayer extends BasePlayer {
   }
 
   @Override
+  @Player.State
   public int getPlaybackState() {
     return playbackState;
   }
@@ -574,7 +575,9 @@ public final class CastPlayer extends BasePlayer {
     CastTimeline oldTimeline = currentTimeline;
     MediaStatus status = getMediaStatus();
     currentTimeline =
-        status != null ? timelineTracker.getCastTimeline(status) : CastTimeline.EMPTY_CAST_TIMELINE;
+        status != null
+            ? timelineTracker.getCastTimeline(remoteMediaClient)
+            : CastTimeline.EMPTY_CAST_TIMELINE;
     return !oldTimeline.equals(currentTimeline);
   }
 

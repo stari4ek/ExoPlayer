@@ -16,8 +16,8 @@
 package com.google.android.exoplayer2.trackselection;
 
 import static com.google.common.truth.Truth.assertThat;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.argThat;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
@@ -26,6 +26,7 @@ import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.MockitoAnnotations.initMocks;
 
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.source.TrackGroup;
@@ -44,10 +45,9 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentMatcher;
 import org.mockito.Mock;
-import org.robolectric.RobolectricTestRunner;
 
 /** Unit test for {@link AdaptiveTrackSelection}. */
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public final class AdaptiveTrackSelectionTest {
 
   private static final MediaChunkIterator[] THREE_EMPTY_MEDIA_CHUNK_ITERATORS =
@@ -266,14 +266,9 @@ public final class AdaptiveTrackSelectionTest {
         /* mediaChunkIterators= */ THREE_EMPTY_MEDIA_CHUNK_ITERATORS);
 
     ArgumentMatcher<Format[]> matcher =
-        new ArgumentMatcher<Format[]>() {
-          @Override
-          public boolean matches(Object argument) {
-            Format[] formats = (Format[]) argument;
-            return formats.length == 3
+        formats ->
+            formats.length == 3
                 && Arrays.asList(formats).containsAll(Arrays.asList(format1, format2, format3));
-          }
-        };
     verify(estimator)
         .getBitrates(
             argThat(matcher),

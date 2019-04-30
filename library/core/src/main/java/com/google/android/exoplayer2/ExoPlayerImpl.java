@@ -19,7 +19,7 @@ import android.annotation.SuppressLint;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.util.Pair;
 import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.source.MediaSource;
@@ -193,6 +193,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
   }
 
   @Override
+  @Player.State
   public int getPlaybackState() {
     return playbackInfo.playbackState;
   }
@@ -401,6 +402,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
     mediaSource = null;
     internalPlayer.release();
     eventHandler.removeCallbacksAndMessages(null);
+    playbackInfo =
+        getResetPlaybackInfo(
+            /* resetPosition= */ false,
+            /* resetState= */ false,
+            /* playbackState= */ Player.STATE_IDLE);
   }
 
   @Override
@@ -623,11 +629,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
       if (playbackInfo.startPositionUs == C.TIME_UNSET) {
         // Replace internal unset start position with externally visible start position of zero.
         playbackInfo =
-            playbackInfo.resetToNewPosition(
-                playbackInfo.periodId, /* startPositionUs= */ 0, playbackInfo.contentPositionUs);
+            playbackInfo.copyWithNewPosition(
+                playbackInfo.periodId,
+                /* positionUs= */ 0,
+                playbackInfo.contentPositionUs,
+                playbackInfo.totalBufferedDurationUs);
       }
-      if ((!this.playbackInfo.timeline.isEmpty() || hasPendingPrepare)
-          && playbackInfo.timeline.isEmpty()) {
+      if (!this.playbackInfo.timeline.isEmpty() && playbackInfo.timeline.isEmpty()) {
         // Update the masking variables, which are used when the timeline becomes empty.
         maskingPeriodIndex = 0;
         maskingWindowIndex = 0;
@@ -651,7 +659,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
   }
 
   private PlaybackInfo getResetPlaybackInfo(
-      boolean resetPosition, boolean resetState, int playbackState) {
+      boolean resetPosition, boolean resetState, @Player.State int playbackState) {
     if (resetPosition) {
       maskingWindowIndex = 0;
       maskingPeriodIndex = 0;
@@ -661,6 +669,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
       maskingPeriodIndex = getCurrentPeriodIndex();
       maskingWindowPositionMs = getCurrentPosition();
     }
+    // Also reset period-based PlaybackInfo positions if resetting the state.
+    resetPosition = resetPosition || resetState;
     MediaPeriodId mediaPeriodId =
         resetPosition
             ? playbackInfo.getDummyFirstMediaPeriodId(shuffleModeEnabled, window)

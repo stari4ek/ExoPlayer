@@ -24,16 +24,14 @@ import static com.google.android.exoplayer2.text.ttml.TtmlStyle.STYLE_BOLD_ITALI
 import static com.google.common.truth.Truth.assertThat;
 
 import android.graphics.Color;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
 
-/**
- * Unit test for {@link TtmlRenderUtil}.
- */
-@RunWith(RobolectricTestRunner.class)
+/** Unit test for {@link TtmlRenderUtil}. */
+@RunWith(AndroidJUnit4.class)
 public final class TtmlRenderUtilTest {
 
   @Test
@@ -56,8 +54,8 @@ public final class TtmlRenderUtilTest {
     String[] styleIds = {"s0", "s1"};
 
     TtmlStyle resolved = TtmlRenderUtil.resolveStyle(null, styleIds, globalStyles);
-    assertThat(resolved).isNotSameAs(globalStyles.get("s0"));
-    assertThat(resolved).isNotSameAs(globalStyles.get("s1"));
+    assertThat(resolved).isNotSameInstanceAs(globalStyles.get("s0"));
+    assertThat(resolved).isNotSameInstanceAs(globalStyles.get("s1"));
     assertThat(resolved.getId()).isNull();
 
     // inherited from s0

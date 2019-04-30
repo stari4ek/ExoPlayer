@@ -16,13 +16,14 @@
 package com.google.android.exoplayer2.demo;
 
 import android.app.Notification;
+import com.google.android.exoplayer2.offline.Download;
 import com.google.android.exoplayer2.offline.DownloadManager;
 import com.google.android.exoplayer2.offline.DownloadService;
-import com.google.android.exoplayer2.offline.DownloadState;
 import com.google.android.exoplayer2.scheduler.PlatformScheduler;
 import com.google.android.exoplayer2.ui.DownloadNotificationHelper;
 import com.google.android.exoplayer2.util.NotificationUtil;
 import com.google.android.exoplayer2.util.Util;
+import java.util.List;
 
 /** A service for downloading media. */
 public class DemoDownloadService extends DownloadService {
@@ -61,26 +62,26 @@ public class DemoDownloadService extends DownloadService {
   }
 
   @Override
-  protected Notification getForegroundNotification(DownloadState[] downloadStates) {
+  protected Notification getForegroundNotification(List<Download> downloads) {
     return notificationHelper.buildProgressNotification(
-        R.drawable.ic_download, /* contentIntent= */ null, /* message= */ null, downloadStates);
+        R.drawable.ic_download, /* contentIntent= */ null, /* message= */ null, downloads);
   }
 
   @Override
-  protected void onDownloadStateChanged(DownloadState downloadState) {
+  protected void onDownloadChanged(Download download) {
     Notification notification;
-    if (downloadState.state == DownloadState.STATE_COMPLETED) {
+    if (download.state == Download.STATE_COMPLETED) {
       notification =
           notificationHelper.buildDownloadCompletedNotification(
               R.drawable.ic_download_done,
               /* contentIntent= */ null,
-              Util.fromUtf8Bytes(downloadState.customMetadata));
-    } else if (downloadState.state == DownloadState.STATE_FAILED) {
+              Util.fromUtf8Bytes(download.request.data));
+    } else if (download.state == Download.STATE_FAILED) {
       notification =
           notificationHelper.buildDownloadFailedNotification(
               R.drawable.ic_download_done,
               /* contentIntent= */ null,
-              Util.fromUtf8Bytes(downloadState.customMetadata));
+              Util.fromUtf8Bytes(download.request.data));
     } else {
       return;
     }

@@ -17,7 +17,6 @@ package com.google.android.exoplayer2.ui;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.app.Activity;
 import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
@@ -28,9 +27,9 @@ import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Looper;
-import android.support.annotation.IntDef;
-import android.support.annotation.Nullable;
-import android.support.v4.content.ContextCompat;
+import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 import android.util.AttributeSet;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -54,6 +53,7 @@ import com.google.android.exoplayer2.Player.VideoComponent;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.id3.ApicFrame;
 import com.google.android.exoplayer2.source.TrackGroupArray;
+import com.google.android.exoplayer2.source.ads.AdsLoader;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
@@ -69,6 +69,7 @@ import com.google.android.exoplayer2.video.VideoListener;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -221,6 +222,11 @@ import java.util.List;
  *       <ul>
  *         <li>Type: {@link PlayerControlView}
  *       </ul>
+ *   <li><b>{@code exo_ad_overlay}</b> - A {@link FrameLayout} positioned on top of the player which
+ *       is used to show ad UI (if applicable).
+ *       <ul>
+ *         <li>Type: {@link FrameLayout}
+ *       </ul>
  *   <li><b>{@code exo_overlay}</b> - A {@link FrameLayout} positioned on top of the player which
  *       the app can access via {@link #getOverlayFrameLayout()}, provided for convenience.
  *       <ul>
@@ -239,7 +245,7 @@ import java.util.List;
  * PlayerView. This will cause the specified layout to be inflated instead of {@code
  * exo_player_view.xml} for only the instance on which the attribute is set.
  */
-public class PlayerView extends FrameLayout {
+public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider {
 
   // LINT.IfChange
   /**
@@ -278,9 +284,10 @@ public class PlayerView extends FrameLayout {
   private final SubtitleView subtitleView;
   @Nullable private final View bufferingView;
   @Nullable private final TextView errorMessageView;
-  private final PlayerControlView controller;
+  @Nullable private final PlayerControlView controller;
   private final ComponentListener componentListener;
-  private final FrameLayout overlayFrameLayout;
+  @Nullable private final FrameLayout adOverlayFrameLayout;
+  @Nullable private final FrameLayout overlayFrameLayout;
 
   private Player player;
   private boolean useController;
@@ -295,6 +302,7 @@ public class PlayerView extends FrameLayout {
   private boolean controllerHideDuringAds;
   private boolean controllerHideOnTouch;
   private int textureViewRotation;
+  private boolean isTouching;
 
   public PlayerView(Context context) {
     this(context, null);
@@ -317,6 +325,7 @@ public class PlayerView extends FrameLayout {
       errorMessageView = null;
       controller = null;
       componentListener = null;
+      adOverlayFrameLayout = null;
       overlayFrameLayout = null;
       ImageView logo = new ImageView(context);
       if (Util.SDK_INT >= 23) {
@@ -395,7 +404,6 @@ public class PlayerView extends FrameLayout {
           surfaceView = new TextureView(context);
           break;
         case SURFACE_TYPE_MONO360_VIEW:
-          Assertions.checkState(Util.SDK_INT >= 15);
           SphericalSurfaceView sphericalSurfaceView = new SphericalSurfaceView(context);
           sphericalSurfaceView.setSurfaceListener(componentListener);
           sphericalSurfaceView.setSingleTapListener(componentListener);
@@ -410,6 +418,9 @@ public class PlayerView extends FrameLayout {
     } else {
       surfaceView = null;
     }
+
+    // Ad overlay frame layout.
+    adOverlayFrameLayout = findViewById(R.id.exo_ad_overlay);
 
     // Overlay frame layout.
     overlayFrameLayout = findViewById(R.id.exo_overlay);
@@ -1012,6 +1023,7 @@ public class PlayerView extends FrameLayout {
    * @return The overlay {@link FrameLayout}, or {@code null} if the layout has been customized and
    *     the overlay is not present.
    */
+  @Nullable
   public FrameLayout getOverlayFrameLayout() {
     return overlayFrameLayout;
   }
@@ -1027,11 +1039,21 @@ public class PlayerView extends FrameLayout {
   }
 
   @Override
-  public boolean onTouchEvent(MotionEvent ev) {
-    if (ev.getActionMasked() != MotionEvent.ACTION_DOWN) {
-      return false;
+  public boolean onTouchEvent(MotionEvent event) {
+    switch (event.getAction()) {
+      case MotionEvent.ACTION_DOWN:
+        isTouching = true;
+        return true;
+      case MotionEvent.ACTION_UP:
+        if (isTouching) {
+          isTouching = false;
+          performClick();
+          return true;
+        }
+        return false;
+      default:
+        return false;
     }
-    return performClick();
   }
 
   @Override
@@ -1053,8 +1075,8 @@ public class PlayerView extends FrameLayout {
    * Should be called when the player is visible to the user and if {@code surface_type} is {@code
    * spherical_view}. It is the counterpart to {@link #onPause()}.
    *
-   * <p>This method should typically be called in {@link Activity#onStart()}, or {@link
-   * Activity#onResume()} for API versions &lt;= 23.
+   * <p>This method should typically be called in {@code Activity.onStart()}, or {@code
+   * Activity.onResume()} for API versions &lt;= 23.
    */
   public void onResume() {
     if (surfaceView instanceof SphericalSurfaceView) {
@@ -1066,8 +1088,8 @@ public class PlayerView extends FrameLayout {
    * Should be called when the player is no longer visible to the user and if {@code surface_type}
    * is {@code spherical_view}. It is the counterpart to {@link #onResume()}.
    *
-   * <p>This method should typically be called in {@link Activity#onStop()}, or {@link
-   * Activity#onPause()} for API versions &lt;= 23.
+   * <p>This method should typically be called in {@code Activity.onStop()}, or {@code
+   * Activity.onPause()} for API versions &lt;= 23.
    */
   public void onPause() {
     if (surfaceView instanceof SphericalSurfaceView) {
@@ -1094,6 +1116,28 @@ public class PlayerView extends FrameLayout {
           contentView instanceof SphericalSurfaceView ? 0 : contentAspectRatio);
     }
   }
+
+  // AdsLoader.AdViewProvider implementation.
+
+  @Override
+  public ViewGroup getAdViewGroup() {
+    return Assertions.checkNotNull(
+        adOverlayFrameLayout, "exo_ad_overlay must be present for ad playback");
+  }
+
+  @Override
+  public View[] getAdOverlayViews() {
+    ArrayList<View> overlayViews = new ArrayList<>();
+    if (overlayFrameLayout != null) {
+      overlayViews.add(overlayFrameLayout);
+    }
+    if (controller != null) {
+      overlayViews.add(controller);
+    }
+    return overlayViews.toArray(new View[0]);
+  }
+
+  // Internal methods.
 
   private boolean toggleControllerVisibility() {
     if (!useController || player == null) {
@@ -1271,7 +1315,6 @@ public class PlayerView extends FrameLayout {
     logo.setBackgroundColor(resources.getColor(R.color.exo_edit_mode_background_color, null));
   }
 
-  @SuppressWarnings("deprecation")
   private static void configureEditModeLogo(Resources resources, ImageView logo) {
     logo.setImageDrawable(resources.getDrawable(R.drawable.exo_edit_mode_logo));
     logo.setBackgroundColor(resources.getColor(R.color.exo_edit_mode_background_color));
@@ -1382,7 +1425,7 @@ public class PlayerView extends FrameLayout {
     // Player.EventListener implementation
 
     @Override
-    public void onPlayerStateChanged(boolean playWhenReady, int playbackState) {
+    public void onPlayerStateChanged(boolean playWhenReady, @Player.State int playbackState) {
       updateBuffering();
       updateErrorMessage();
       if (isPlayingAd() && controllerHideDuringAds) {

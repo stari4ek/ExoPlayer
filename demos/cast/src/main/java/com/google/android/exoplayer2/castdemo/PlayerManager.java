@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,19 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ext.cast.MediaItem;
 
 /** Manages the players in the Cast demo app. */
-interface PlayerManager {
+/* package */ interface PlayerManager {
 
-  /** Listener for changes in the media queue. */
-  interface QueueChangesListener {
+  /** Listener for events. */
+  interface Listener {
 
     /** Called when the currently played item of the media queue changes. */
     void onQueuePositionChanged(int previousIndex, int newIndex);
 
     /** Called when the media queue changes due to modifications not caused by this manager. */
     void onQueueContentsExternallyChanged();
+
+    /** Called when an error occurs in the current player. */
+    void onPlayerError();
   }
 
   /** Redirects the given {@code keyEvent} to the active player. */
@@ -54,10 +57,10 @@ interface PlayerManager {
   MediaItem getItem(int position);
 
   /** Moves the item at position {@code from} to position {@code to}. */
-  boolean moveItem(int from, int to);
+  boolean moveItem(MediaItem item, int to);
 
   /** Removes the item at position {@code index}. */
-  boolean removeItem(int index);
+  boolean removeItem(MediaItem item);
 
   /** Releases any acquired resources. */
   void release();

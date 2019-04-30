@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.util;
 
-import android.support.annotation.NonNull;
+import androidx.annotation.NonNull;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -52,7 +52,7 @@ public final class AtomicFile {
     backupName = new File(baseName.getPath() + ".bak");
   }
 
-  /** Whether the file or its backup exists. */
+  /** Returns whether the file or its backup exists. */
   public boolean exists() {
     return baseName.exists() || backupName.exists();
   }

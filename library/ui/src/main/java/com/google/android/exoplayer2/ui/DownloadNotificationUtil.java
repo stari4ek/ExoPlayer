@@ -18,10 +18,11 @@ package com.google.android.exoplayer2.ui;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.content.Context;
-import android.support.annotation.DrawableRes;
-import android.support.annotation.Nullable;
-import com.google.android.exoplayer2.offline.DownloadState;
+import androidx.annotation.DrawableRes;
+import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.offline.Download;
 import com.google.android.exoplayer2.util.Util;
+import java.util.List;
 
 /**
  * @deprecated Using this class can cause notifications to flicker on devices with {@link
@@ -33,14 +34,14 @@ public final class DownloadNotificationUtil {
   private DownloadNotificationUtil() {}
 
   /**
-   * Returns a progress notification for the given download states.
+   * Returns a progress notification for the given downloads.
    *
    * @param context A context for accessing resources.
    * @param smallIcon A small icon for the notification.
    * @param channelId The id of the notification channel to use.
    * @param contentIntent An optional content intent to send when the notification is clicked.
    * @param message An optional message to display on the notification.
-   * @param downloadStates The download states.
+   * @param downloads The downloads.
    * @return The notification.
    */
   public static Notification buildProgressNotification(
@@ -49,9 +50,9 @@ public final class DownloadNotificationUtil {
       String channelId,
       @Nullable PendingIntent contentIntent,
       @Nullable String message,
-      DownloadState[] downloadStates) {
+      List<Download> downloads) {
     return new DownloadNotificationHelper(context, channelId)
-        .buildProgressNotification(smallIcon, contentIntent, message, downloadStates);
+        .buildProgressNotification(smallIcon, contentIntent, message, downloads);
   }
 
   /**

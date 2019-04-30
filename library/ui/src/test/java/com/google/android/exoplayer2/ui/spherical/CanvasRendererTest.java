@@ -18,13 +18,13 @@ package com.google.android.exoplayer2.ui.spherical;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.graphics.PointF;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
 
 /** Tests for {@link CanvasRenderer}. */
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class CanvasRendererTest {
 
   private static final float JUST_BELOW_45_DEGREES = (float) (Math.PI / 4 - 1.0E-08);

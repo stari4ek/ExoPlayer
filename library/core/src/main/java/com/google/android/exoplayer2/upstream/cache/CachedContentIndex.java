@@ -15,18 +15,19 @@
  */
 package com.google.android.exoplayer2.upstream.cache;
 
+import android.annotation.SuppressLint;
 import android.content.ContentValues;
 import android.database.Cursor;
+import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
-import android.support.annotation.Nullable;
-import android.support.annotation.VisibleForTesting;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import android.util.SparseArray;
 import android.util.SparseBooleanArray;
+import com.google.android.exoplayer2.database.DatabaseIOException;
 import com.google.android.exoplayer2.database.DatabaseProvider;
-import com.google.android.exoplayer2.database.ExoDatabaseProvider;
 import com.google.android.exoplayer2.database.VersionTable;
-import com.google.android.exoplayer2.upstream.cache.Cache.CacheException;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.AtomicFile;
 import com.google.android.exoplayer2.util.ReusableBufferedOutputStream;
@@ -61,13 +62,8 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
 /* package */ class CachedContentIndex {
 
   /* package */ static final String FILE_NAME_ATOMIC = "cached_content_index.exi";
-  private static final String FILE_NAME_DATABASE = "cached_content_index.db";
 
-  private static final int VERSION = 2;
-  private static final int VERSION_METADATA_INTRODUCED = 2;
   private static final int INCREMENTAL_METADATA_READ_LENGTH = 10 * 1024 * 1024;
-
-  private static final int FLAG_ENCRYPTED_INDEX = 1;
 
   private final HashMap<String, CachedContent> keyToContent;
   /**
@@ -97,95 +93,112 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   private Storage storage;
   @Nullable private Storage previousStorage;
 
-  /**
-   * Returns whether the file is an index file, or an auxiliary file associated with an index file
-   * (e.g. an atomic file backup or auxiliary database file).
-   */
-  public static final boolean isIndexFile(String fileName) {
-    // Atomic file backups and auxiliary database files add additional suffixes to the file name.
-    return fileName.startsWith(FILE_NAME_ATOMIC) || fileName.startsWith(FILE_NAME_DATABASE);
+  /** Returns whether the file is an index file. */
+  public static boolean isIndexFile(String fileName) {
+    // Atomic file backups add additional suffixes to the file name.
+    return fileName.startsWith(FILE_NAME_ATOMIC);
   }
 
   /**
-   * Creates a CachedContentIndex which works on the index file in the given cacheDir.
+   * Deletes index data for the specified cache.
    *
-   * @param cacheDir Directory where the index file is kept.
+   * @param databaseProvider Provides the database in which the index is stored.
+   * @param uid The cache UID.
+   * @throws DatabaseIOException If an error occurs deleting the index data.
    */
-  public CachedContentIndex(File cacheDir) {
-    this(cacheDir, null);
+  public static void delete(DatabaseProvider databaseProvider, long uid)
+      throws DatabaseIOException {
+    DatabaseStorage.delete(databaseProvider, uid);
   }
 
   /**
-   * Creates a CachedContentIndex which works on the index file in the given cacheDir.
+   * Creates an instance supporting database storage only.
    *
-   * @param cacheDir Directory where the index file is kept.
-   * @param secretKey 16 byte AES key for reading and writing the cache index.
+   * @param databaseProvider Provides the database in which the index is stored.
    */
-  public CachedContentIndex(File cacheDir, byte[] secretKey) {
-    this(cacheDir, secretKey, secretKey != null);
+  public CachedContentIndex(DatabaseProvider databaseProvider) {
+    this(
+        databaseProvider,
+        /* legacyStorageDir= */ null,
+        /* legacyStorageSecretKey= */ null,
+        /* legacyStorageEncrypt= */ false,
+        /* preferLegacyStorage= */ false);
   }
 
   /**
-   * Creates a CachedContentIndex which works on the index file in the given cacheDir.
+   * Creates an instance supporting either or both of database and legacy storage.
    *
-   * @param cacheDir Directory where the index file is kept.
-   * @param secretKey 16 byte AES key for reading, and optionally writing, the cache index.
-   * @param encrypt Whether the index will be encrypted when written. Must be false if {@code
-   *     secretKey} is null.
+   * @param databaseProvider Provides the database in which the index is stored, or {@code null} to
+   *     use only legacy storage.
+   * @param legacyStorageDir The directory in which any legacy storage is stored, or {@code null} to
+   *     use only database storage.
+   * @param legacyStorageSecretKey A 16 byte AES key for reading, and optionally writing, legacy
+   *     storage.
+   * @param legacyStorageEncrypt Whether to encrypt when writing to legacy storage. Must be false if
+   *     {@code legacyStorageSecretKey} is null.
+   * @param preferLegacyStorage Whether to use prefer legacy storage if both storage types are
+   *     enabled. This option is only useful for downgrading from database storage back to legacy
+   *     storage.
    */
-  public CachedContentIndex(File cacheDir, byte[] secretKey, boolean encrypt) {
-    Cipher cipher = null;
-    SecretKeySpec secretKeySpec = null;
-    if (secretKey != null) {
-      Assertions.checkArgument(secretKey.length == 16);
-      try {
-        cipher = getCipher();
-        secretKeySpec = new SecretKeySpec(secretKey, "AES");
-      } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
-        throw new IllegalStateException(e); // Should never happen.
-      }
-    } else {
-      Assertions.checkState(!encrypt);
-    }
+  public CachedContentIndex(
+      @Nullable DatabaseProvider databaseProvider,
+      @Nullable File legacyStorageDir,
+      @Nullable byte[] legacyStorageSecretKey,
+      boolean legacyStorageEncrypt,
+      boolean preferLegacyStorage) {
+    Assertions.checkState(databaseProvider != null || legacyStorageDir != null);
     keyToContent = new HashMap<>();
     idToKey = new SparseArray<>();
     removedIds = new SparseBooleanArray();
-    Random random = new Random();
-    Storage atomicFileStorage =
-        new AtomicFileStorage(
-            new File(cacheDir, FILE_NAME_ATOMIC), random, encrypt, cipher, secretKeySpec);
-    // Storage sqliteStorage =
-    //     new SQLiteStorage(
-    //         new File(cacheDir, FILE_NAME_DATABASE), random, encrypt, cipher, secretKeySpec);
-    storage = atomicFileStorage;
-    previousStorage = null;
+    Storage databaseStorage =
+        databaseProvider != null ? new DatabaseStorage(databaseProvider) : null;
+    Storage legacyStorage =
+        legacyStorageDir != null
+            ? new LegacyStorage(
+                new File(legacyStorageDir, FILE_NAME_ATOMIC),
+                legacyStorageSecretKey,
+                legacyStorageEncrypt)
+            : null;
+    if (databaseStorage == null || (legacyStorage != null && preferLegacyStorage)) {
+      storage = legacyStorage;
+      previousStorage = databaseStorage;
+    } else {
+      storage = databaseStorage;
+      previousStorage = legacyStorage;
+    }
   }
 
-  /** Loads the index file. */
-  public void load() {
+  /**
+   * Loads the index data for the given cache UID.
+   *
+   * @param uid The UID of the cache whose index is to be loaded.
+   * @throws IOException If an error occurs initializing the index data.
+   */
+  public void initialize(long uid) throws IOException {
+    storage.initialize(uid);
+    if (previousStorage != null) {
+      previousStorage.initialize(uid);
+    }
     if (!storage.exists() && previousStorage != null && previousStorage.exists()) {
       // Copy from previous storage into current storage.
-      loadFrom(previousStorage);
-      try {
-        storage.storeFully(keyToContent);
-      } catch (CacheException e) {
-        // We failed to copy into current storage, so keep using previous storage.
-        storage.release();
-        storage = previousStorage;
-        previousStorage = null;
-      }
+      previousStorage.load(keyToContent, idToKey);
+      storage.storeFully(keyToContent);
     } else {
       // Load from the current storage.
-      loadFrom(storage);
+      storage.load(keyToContent, idToKey);
     }
     if (previousStorage != null) {
-      previousStorage.release(/* delete= */ true);
+      previousStorage.delete();
       previousStorage = null;
     }
   }
 
-  /** Stores the index data to index file if there is a change. */
-  public void store() throws CacheException {
+  /**
+   * Stores the index data to index file if there is a change.
+   *
+   * @throws IOException If an error occurs storing the index data.
+   */
+  public void store() throws IOException {
     storage.storeIncremental(keyToContent);
     // Make ids that were removed since the index was last stored eligible for re-use.
     int removedIdCount = removedIds.size();
@@ -193,14 +206,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       idToKey.remove(removedIds.keyAt(i));
     }
     removedIds.clear();
-  }
-
-  /** Releases any underlying resources. */
-  public void release() {
-    storage.release();
-    if (previousStorage != null) {
-      previousStorage.release();
-    }
   }
 
   /**
@@ -289,14 +294,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     return cachedContent != null ? cachedContent.getMetadata() : DefaultContentMetadata.EMPTY;
   }
 
-  /** Loads the index from the specified storage. */
-  private void loadFrom(Storage storage) {
-    if (!storage.load(keyToContent, idToKey)) {
-      keyToContent.clear();
-      idToKey.clear();
-    }
-  }
-
   private CachedContent addNew(String key) {
     int id = getNewId(idToKey);
     CachedContent cachedContent = new CachedContent(id, key);
@@ -306,6 +303,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     return cachedContent;
   }
 
+  @SuppressLint("GetInstance") // Suppress warning about specifying "BC" as an explicit provider.
   private static Cipher getCipher() throws NoSuchPaddingException, NoSuchAlgorithmException {
     // Workaround for https://issuetracker.google.com/issues/36976726
     if (Util.SDK_INT == 18) {
@@ -343,7 +341,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
    *
    * @param input Input stream to read from.
    * @return a {@link DefaultContentMetadata} instance.
-   * @throws IOException If an error occurs during reading from input.
+   * @throws IOException If an error occurs during reading from the input.
    */
   private static DefaultContentMetadata readContentMetadata(DataInputStream input)
       throws IOException {
@@ -376,7 +374,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
    * Serializes itself to a {@link DataOutputStream}.
    *
    * @param output Output stream to store the values.
-   * @throws IOException If an error occurs during writing values to output.
+   * @throws IOException If an error occurs writing to the output.
    */
   private static void writeContentMetadata(DefaultContentMetadata metadata, DataOutputStream output)
       throws IOException {
@@ -393,45 +391,56 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   /** Interface for the persistent index. */
   private interface Storage {
 
-    /** Returns whether the persisted index exists. */
-    boolean exists();
+    /** Initializes the storage for the given cache UID. */
+    void initialize(long uid);
 
-    /** Releases any held resources. */
-    default void release() {
-      release(/* delete= */ false);
-    }
+    /**
+     * Returns whether the persisted index exists.
+     *
+     * @throws IOException If an error occurs determining whether the persisted index exists.
+     */
+    boolean exists() throws IOException;
 
-    /** Releases and held resources and optionally deletes the persisted index. */
-    void release(boolean delete);
+    /**
+     * Deletes the persisted index.
+     *
+     * @throws IOException If an error occurs deleting the index.
+     */
+    void delete() throws IOException;
 
     /**
      * Loads the persisted index into {@code content} and {@code idToKey}, creating it if it doesn't
      * already exist.
      *
+     * <p>If the persisted index is in a permanently bad state (i.e. all further attempts to load it
+     * are also expected to fail) then it will be deleted and the call will return successfully. For
+     * transient failures, {@link IOException} will be thrown.
+     *
      * @param content The key to content map to populate with persisted data.
      * @param idToKey The id to key map to populate with persisted data.
-     * @return Whether the load was successful.
+     * @throws IOException If an error occurs loading the index.
      */
-    boolean load(HashMap<String, CachedContent> content, SparseArray<@NullableType String> idToKey);
+    void load(HashMap<String, CachedContent> content, SparseArray<@NullableType String> idToKey)
+        throws IOException;
 
     /**
      * Writes the persisted index, creating it if it doesn't already exist and replacing any
      * existing content if it does.
      *
      * @param content The key to content map to persist.
-     * @throws CacheException If an error occurs persisting the index.
+     * @throws IOException If an error occurs persisting the index.
      */
-    void storeFully(HashMap<String, CachedContent> content) throws CacheException;
+    void storeFully(HashMap<String, CachedContent> content) throws IOException;
 
     /**
-     * Ensures incremental changes to the index since the last {@link #load()} or {@link
-     * #storeFully(HashMap)} are persisted. The storage will have been notified of all such changes
-     * via {@link #onUpdate(CachedContent)} and {@link #onRemove(CachedContent)}.
+     * Ensures incremental changes to the index since the initial {@link #initialize(long)} or last
+     * {@link #storeFully(HashMap)} are persisted. The storage will have been notified of all such
+     * changes via {@link #onUpdate(CachedContent)} and {@link #onRemove(CachedContent)}.
      *
      * @param content The key to content map to persist.
-     * @throws CacheException If an error occurs persisting the index.
+     * @throws IOException If an error occurs persisting the index.
      */
-    void storeIncremental(HashMap<String, CachedContent> content) throws CacheException;
+    void storeIncremental(HashMap<String, CachedContent> content) throws IOException;
 
     /**
      * Called when a {@link CachedContent} is added or updated.
@@ -449,28 +458,45 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   }
 
   /** {@link Storage} implementation that uses an {@link AtomicFile}. */
-  private static class AtomicFileStorage implements Storage {
+  private static class LegacyStorage implements Storage {
 
-    private final Random random;
+    private static final int VERSION = 2;
+    private static final int VERSION_METADATA_INTRODUCED = 2;
+    private static final int FLAG_ENCRYPTED_INDEX = 1;
+
     private final boolean encrypt;
     @Nullable private final Cipher cipher;
     @Nullable private final SecretKeySpec secretKeySpec;
+    @Nullable private final Random random;
     private final AtomicFile atomicFile;
 
     private boolean changed;
     @Nullable private ReusableBufferedOutputStream bufferedOutputStream;
 
-    public AtomicFileStorage(
-        File file,
-        Random random,
-        boolean encrypt,
-        @Nullable Cipher cipher,
-        @Nullable SecretKeySpec secretKeySpec) {
-      this.random = random;
+    public LegacyStorage(File file, @Nullable byte[] secretKey, boolean encrypt) {
+      Cipher cipher = null;
+      SecretKeySpec secretKeySpec = null;
+      if (secretKey != null) {
+        Assertions.checkArgument(secretKey.length == 16);
+        try {
+          cipher = getCipher();
+          secretKeySpec = new SecretKeySpec(secretKey, "AES");
+        } catch (NoSuchAlgorithmException | NoSuchPaddingException e) {
+          throw new IllegalStateException(e); // Should never happen.
+        }
+      } else {
+        Assertions.checkArgument(!encrypt);
+      }
       this.encrypt = encrypt;
       this.cipher = cipher;
       this.secretKeySpec = secretKeySpec;
+      random = encrypt ? new Random() : null;
       atomicFile = new AtomicFile(file);
+    }
+
+    @Override
+    public void initialize(long uid) {
+      // Do nothing. Legacy storage uses a separate file for each cache.
     }
 
     @Override
@@ -479,31 +505,29 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     }
 
     @Override
-    public void release(boolean delete) {
-      if (delete) {
-        atomicFile.delete();
-      }
+    public void delete() {
+      atomicFile.delete();
     }
 
     @Override
-    public boolean load(
+    public void load(
         HashMap<String, CachedContent> content, SparseArray<@NullableType String> idToKey) {
       Assertions.checkState(!changed);
       if (!readFile(content, idToKey)) {
+        content.clear();
+        idToKey.clear();
         atomicFile.delete();
-        return false;
       }
-      return true;
     }
 
     @Override
-    public void storeFully(HashMap<String, CachedContent> content) throws CacheException {
+    public void storeFully(HashMap<String, CachedContent> content) throws IOException {
       writeFile(content);
       changed = false;
     }
 
     @Override
-    public void storeIncremental(HashMap<String, CachedContent> content) throws CacheException {
+    public void storeIncremental(HashMap<String, CachedContent> content) throws IOException {
       if (!changed) {
         return;
       }
@@ -522,6 +546,10 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
 
     private boolean readFile(
         HashMap<String, CachedContent> content, SparseArray<@NullableType String> idToKey) {
+      if (!atomicFile.exists()) {
+        return true;
+      }
+
       DataInputStream input = null;
       try {
         InputStream inputStream = new BufferedInputStream(atomicFile.openRead());
@@ -572,7 +600,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       return true;
     }
 
-    private void writeFile(HashMap<String, CachedContent> content) throws CacheException {
+    private void writeFile(HashMap<String, CachedContent> content) throws IOException {
       DataOutputStream output = null;
       try {
         OutputStream outputStream = atomicFile.startWrite();
@@ -612,8 +640,6 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
         // Avoid calling close twice. Duplicate CipherOutputStream.close calls did
         // not used to be no-ops: https://android-review.googlesource.com/#/c/272799/
         output = null;
-      } catch (IOException e) {
-        throw new CacheException(e);
       } finally {
         Util.closeQuietly(output);
       }
@@ -672,93 +698,79 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   }
 
   /** {@link Storage} implementation that uses an SQL database. */
-  // TODO:
-  // 1. Implement upgrade/downgrade paths from/to AtomicFileStorage.
-  // 2. If encryption is enabled having previously written data, decide whether we need to rewrite
-  //    the entire table. Currently this implementation only encrypts new and updated entries.
-  private static final class SQLiteStorage implements Storage {
+  private static final class DatabaseStorage implements Storage {
 
-    private static final String TABLE_NAME = DatabaseProvider.TABLE_PREFIX + "CacheContentMetadata";
+    private static final String TABLE_PREFIX = DatabaseProvider.TABLE_PREFIX + "CacheIndex";
     private static final int TABLE_VERSION = 1;
 
     private static final String COLUMN_ID = "id";
-    private static final String COLUMN_FLAGS = "flags";
-    private static final String COLUMN_DATA = "data";
+    private static final String COLUMN_KEY = "key";
+    private static final String COLUMN_METADATA = "metadata";
 
     private static final int COLUMN_INDEX_ID = 0;
-    private static final int COLUMN_INDEX_FLAGS = 1;
-    private static final int COLUMN_INDEX_DATA = 2;
+    private static final int COLUMN_INDEX_KEY = 1;
+    private static final int COLUMN_INDEX_METADATA = 2;
 
-    private static final String COLUMN_SELECTION_ID = COLUMN_ID + " = ?";
+    private static final String WHERE_ID_EQUALS = COLUMN_ID + " = ?";
 
-    private static final String[] COLUMNS = new String[] {COLUMN_ID, COLUMN_FLAGS, COLUMN_DATA};
-
-    private static final String SQL_DROP_TABLE_IF_EXISTS = "DROP TABLE IF EXISTS " + TABLE_NAME;
-    private static final String SQL_CREATE_TABLE =
-        "CREATE TABLE "
-            + TABLE_NAME
-            + " ("
+    private static final String[] COLUMNS = new String[] {COLUMN_ID, COLUMN_KEY, COLUMN_METADATA};
+    private static final String TABLE_SCHEMA =
+        "("
             + COLUMN_ID
             + " INTEGER PRIMARY KEY NOT NULL,"
-            + COLUMN_FLAGS
-            + " INTEGER NOT NULL,"
-            + COLUMN_DATA
+            + COLUMN_KEY
+            + " TEXT NOT NULL,"
+            + COLUMN_METADATA
             + " BLOB NOT NULL)";
 
-    private static final int FLAG_ENCRYPTED = 1;
-
-    private final File file;
-    private final Random random;
-    private final boolean encrypt;
-    @Nullable private final Cipher cipher;
-    @Nullable private final SecretKeySpec secretKeySpec;
-    private final ExoDatabaseProvider databaseProvider;
+    private final DatabaseProvider databaseProvider;
     private final SparseArray<CachedContent> pendingUpdates;
 
-    @Nullable private ReusableBufferedOutputStream bufferedOutputStream;
+    private String hexUid;
+    private String tableName;
 
-    public SQLiteStorage(
-        File file,
-        Random random,
-        boolean encrypt,
-        @Nullable Cipher cipher,
-        @Nullable SecretKeySpec secretKeySpec) {
-      this.file = file;
-      this.random = random;
-      this.encrypt = encrypt;
-      this.cipher = cipher;
-      this.secretKeySpec = secretKeySpec;
-      databaseProvider = new ExoDatabaseProvider(file);
+    public static void delete(DatabaseProvider databaseProvider, long uid)
+        throws DatabaseIOException {
+      delete(databaseProvider, Long.toHexString(uid));
+    }
+
+    public DatabaseStorage(DatabaseProvider databaseProvider) {
+      this.databaseProvider = databaseProvider;
       pendingUpdates = new SparseArray<>();
     }
 
     @Override
-    public boolean exists() {
-      return file.exists()
-          && VersionTable.getVersion(
-                  databaseProvider.getReadableDatabase(),
-                  VersionTable.FEATURE_CACHE_CONTENT_METADATA)
-              != VersionTable.VERSION_UNSET;
+    public void initialize(long uid) {
+      hexUid = Long.toHexString(uid);
+      tableName = getTableName(hexUid);
     }
 
     @Override
-    public void release(boolean delete) {
-      release();
-      if (delete) {
-        SQLiteDatabase.deleteDatabase(file);
-      }
+    public boolean exists() throws DatabaseIOException {
+      return VersionTable.getVersion(
+              databaseProvider.getReadableDatabase(),
+              VersionTable.FEATURE_CACHE_CONTENT_METADATA,
+              hexUid)
+          != VersionTable.VERSION_UNSET;
     }
 
     @Override
-    public boolean load(
-        HashMap<String, CachedContent> content, SparseArray<@NullableType String> idToKey) {
+    public void delete() throws DatabaseIOException {
+      delete(databaseProvider, hexUid);
+    }
+
+    @Override
+    public void load(
+        HashMap<String, CachedContent> content, SparseArray<@NullableType String> idToKey)
+        throws IOException {
       Assertions.checkState(pendingUpdates.size() == 0);
       try {
         int version =
             VersionTable.getVersion(
                 databaseProvider.getReadableDatabase(),
-                VersionTable.FEATURE_CACHE_CONTENT_METADATA);
-        if (version == VersionTable.VERSION_UNSET || version > TABLE_VERSION) {
+                VersionTable.FEATURE_CACHE_CONTENT_METADATA,
+                hexUid);
+        if (version != TABLE_VERSION) {
           SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
           writableDatabase.beginTransaction();
           try {
@@ -767,31 +779,16 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
           } finally {
             writableDatabase.endTransaction();
           }
-        } else if (version < TABLE_VERSION) {
-          // There is no previous version currently.
-          throw new IllegalStateException();
         }
 
         try (Cursor cursor = getCursor()) {
           while (cursor.moveToNext()) {
             int id = cursor.getInt(COLUMN_INDEX_ID);
-            boolean encrypted = (cursor.getInt(COLUMN_INDEX_FLAGS) & FLAG_ENCRYPTED) != 0;
-            byte[] data = cursor.getBlob(COLUMN_INDEX_DATA);
+            String key = cursor.getString(COLUMN_INDEX_KEY);
+            byte[] metadataBytes = cursor.getBlob(COLUMN_INDEX_METADATA);
 
-            ByteArrayInputStream inputStream = new ByteArrayInputStream(data);
+            ByteArrayInputStream inputStream = new ByteArrayInputStream(metadataBytes);
             DataInputStream input = new DataInputStream(inputStream);
-            if (encrypted) {
-              byte[] initializationVector = new byte[16];
-              input.readFully(initializationVector);
-              IvParameterSpec ivParameterSpec = new IvParameterSpec(initializationVector);
-              try {
-                cipher.init(Cipher.DECRYPT_MODE, secretKeySpec, ivParameterSpec);
-              } catch (InvalidKeyException | InvalidAlgorithmParameterException e) {
-                throw new IllegalStateException(e);
-              }
-              input = new DataInputStream(new CipherInputStream(inputStream, cipher));
-            }
-            String key = input.readUTF();
             DefaultContentMetadata metadata = readContentMetadata(input);
 
             CachedContent cachedContent = new CachedContent(id, key, metadata);
@@ -799,52 +796,57 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
             idToKey.put(cachedContent.id, cachedContent.key);
           }
         }
-        return true;
-      } catch (IOException | SQLiteException e) {
-        return false;
+      } catch (SQLiteException e) {
+        content.clear();
+        idToKey.clear();
+        throw new DatabaseIOException(e);
       }
     }
 
     @Override
-    public void storeFully(HashMap<String, CachedContent> content) throws CacheException {
-      SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
-      writableDatabase.beginTransaction();
+    public void storeFully(HashMap<String, CachedContent> content) throws IOException {
       try {
-        initializeTable(writableDatabase);
-        for (CachedContent cachedContent : content.values()) {
-          addOrUpdateRow(writableDatabase, cachedContent);
+        SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
+        writableDatabase.beginTransaction();
+        try {
+          initializeTable(writableDatabase);
+          for (CachedContent cachedContent : content.values()) {
+            addOrUpdateRow(writableDatabase, cachedContent);
+          }
+          writableDatabase.setTransactionSuccessful();
+          pendingUpdates.clear();
+        } finally {
+          writableDatabase.endTransaction();
         }
-        writableDatabase.setTransactionSuccessful();
-        pendingUpdates.clear();
-      } catch (IOException | SQLiteException e) {
-        throw new CacheException(e);
-      } finally {
-        writableDatabase.endTransaction();
+      } catch (SQLException e) {
+        throw new DatabaseIOException(e);
       }
     }
 
     @Override
-    public void storeIncremental(HashMap<String, CachedContent> content) throws CacheException {
+    public void storeIncremental(HashMap<String, CachedContent> content) throws IOException {
       if (pendingUpdates.size() == 0) {
         return;
       }
-      SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
-      writableDatabase.beginTransaction();
       try {
-        for (int i = 0; i < pendingUpdates.size(); i++) {
-          CachedContent cachedContent = pendingUpdates.valueAt(i);
-          if (cachedContent == null) {
-            deleteRow(writableDatabase, pendingUpdates.keyAt(i));
-          } else {
-            addOrUpdateRow(writableDatabase, cachedContent);
+        SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
+        writableDatabase.beginTransaction();
+        try {
+          for (int i = 0; i < pendingUpdates.size(); i++) {
+            CachedContent cachedContent = pendingUpdates.valueAt(i);
+            if (cachedContent == null) {
+              deleteRow(writableDatabase, pendingUpdates.keyAt(i));
+            } else {
+              addOrUpdateRow(writableDatabase, cachedContent);
+            }
           }
+          writableDatabase.setTransactionSuccessful();
+          pendingUpdates.clear();
+        } finally {
+          writableDatabase.endTransaction();
         }
-        writableDatabase.setTransactionSuccessful();
-        pendingUpdates.clear();
-      } catch (IOException | SQLiteException e) {
-        throw new CacheException(e);
-      } finally {
-        writableDatabase.endTransaction();
+      } catch (SQLException e) {
+        throw new DatabaseIOException(e);
       }
     }
 
@@ -862,7 +864,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
       return databaseProvider
           .getReadableDatabase()
           .query(
-              TABLE_NAME,
+              tableName,
               COLUMNS,
               /* selection= */ null,
               /* selectionArgs= */ null,
@@ -871,54 +873,55 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
               /* orderBy= */ null);
     }
 
-    private void initializeTable(SQLiteDatabase writableDatabase) {
+    private void initializeTable(SQLiteDatabase writableDatabase) throws DatabaseIOException {
       VersionTable.setVersion(
-          writableDatabase, VersionTable.FEATURE_CACHE_CONTENT_METADATA, TABLE_VERSION);
-      writableDatabase.execSQL(SQL_DROP_TABLE_IF_EXISTS);
-      writableDatabase.execSQL(SQL_CREATE_TABLE);
+          writableDatabase, VersionTable.FEATURE_CACHE_CONTENT_METADATA, hexUid, TABLE_VERSION);
+      dropTable(writableDatabase, tableName);
+      writableDatabase.execSQL("CREATE TABLE " + tableName + " " + TABLE_SCHEMA);
     }
 
     private void deleteRow(SQLiteDatabase writableDatabase, int key) {
-      String[] selectionArgs = {Integer.toString(key)};
-      writableDatabase.delete(TABLE_NAME, COLUMN_SELECTION_ID, selectionArgs);
+      writableDatabase.delete(tableName, WHERE_ID_EQUALS, new String[] {Integer.toString(key)});
     }
 
     private void addOrUpdateRow(SQLiteDatabase writableDatabase, CachedContent cachedContent)
         throws IOException {
       ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-      if (bufferedOutputStream == null) {
-        bufferedOutputStream = new ReusableBufferedOutputStream(outputStream);
-      } else {
-        bufferedOutputStream.reset(outputStream);
-      }
-      DataOutputStream output = new DataOutputStream(bufferedOutputStream);
-      try {
-        if (encrypt) {
-          byte[] initializationVector = new byte[16];
-          random.nextBytes(initializationVector);
-          output.write(initializationVector);
-          IvParameterSpec ivParameterSpec = new IvParameterSpec(initializationVector);
-          try {
-            cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec, ivParameterSpec);
-          } catch (InvalidKeyException | InvalidAlgorithmParameterException e) {
-            throw new IllegalStateException(e); // Should never happen.
-          }
-          output.flush();
-          output = new DataOutputStream(new CipherOutputStream(bufferedOutputStream, cipher));
-        }
-        output.writeUTF(cachedContent.key);
-        writeContentMetadata(cachedContent.getMetadata(), output);
-      } finally {
-        // Necessary to finalize the cipher.
-        Util.closeQuietly(output);
-      }
+      writeContentMetadata(cachedContent.getMetadata(), new DataOutputStream(outputStream));
       byte[] data = outputStream.toByteArray();
 
       ContentValues values = new ContentValues();
       values.put(COLUMN_ID, cachedContent.id);
-      values.put(COLUMN_FLAGS, encrypt ? FLAG_ENCRYPTED : 0);
-      values.put(COLUMN_DATA, data);
-      writableDatabase.replace(TABLE_NAME, /* nullColumnHack= */ null, values);
+      values.put(COLUMN_KEY, cachedContent.key);
+      values.put(COLUMN_METADATA, data);
+      writableDatabase.replaceOrThrow(tableName, /* nullColumnHack= */ null, values);
+    }
+
+    private static void delete(DatabaseProvider databaseProvider, String hexUid)
+        throws DatabaseIOException {
+      try {
+        String tableName = getTableName(hexUid);
+        SQLiteDatabase writableDatabase = databaseProvider.getWritableDatabase();
+        writableDatabase.beginTransaction();
+        try {
+          VersionTable.removeVersion(
+              writableDatabase, VersionTable.FEATURE_CACHE_CONTENT_METADATA, hexUid);
+          dropTable(writableDatabase, tableName);
+          writableDatabase.setTransactionSuccessful();
+        } finally {
+          writableDatabase.endTransaction();
+        }
+      } catch (SQLException e) {
+        throw new DatabaseIOException(e);
+      }
+    }
+
+    private static void dropTable(SQLiteDatabase writableDatabase, String tableName) {
+      writableDatabase.execSQL("DROP TABLE IF EXISTS " + tableName);
+    }
+
+    private static String getTableName(String hexUid) {
+      return TABLE_PREFIX + hexUid;
     }
   }
 }

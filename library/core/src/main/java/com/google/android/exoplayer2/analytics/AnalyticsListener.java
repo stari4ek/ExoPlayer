@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.analytics;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.view.Surface;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
@@ -127,10 +127,10 @@ public interface AnalyticsListener {
    *
    * @param eventTime The event time.
    * @param playWhenReady Whether the playback will proceed when ready.
-   * @param playbackState One of the {@link Player}.STATE constants.
+   * @param playbackState The new {@link Player.State playback state}.
    */
   default void onPlayerStateChanged(
-      EventTime eventTime, boolean playWhenReady, int playbackState) {}
+      EventTime eventTime, boolean playWhenReady, @Player.State int playbackState) {}
 
   /**
    * Called when the timeline changed.

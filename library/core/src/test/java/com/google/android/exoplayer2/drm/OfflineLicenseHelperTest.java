@@ -21,9 +21,9 @@ import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.when;
 
 import android.util.Pair;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
-import com.google.android.exoplayer2.testutil.RobolectricUtil;
 import java.util.HashMap;
 import org.junit.After;
 import org.junit.Before;
@@ -31,12 +31,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
+import org.robolectric.annotation.LooperMode;
 
 /** Tests {@link OfflineLicenseHelper}. */
-@RunWith(RobolectricTestRunner.class)
-@Config(shadows = {RobolectricUtil.CustomLooper.class, RobolectricUtil.CustomMessageQueue.class})
+@RunWith(AndroidJUnit4.class)
+@LooperMode(LooperMode.Mode.PAUSED)
 public class OfflineLicenseHelperTest {
 
   private OfflineLicenseHelper<?> offlineLicenseHelper;
@@ -148,7 +147,7 @@ public class OfflineLicenseHelperTest {
 
   private void setStubKeySetId(byte[] keySetId)
       throws android.media.NotProvisionedException, android.media.DeniedByServerException {
-    when(mediaDrm.provideKeyResponse(any(byte[].class), any(byte[].class))).thenReturn(keySetId);
+    when(mediaDrm.provideKeyResponse(any(byte[].class), any())).thenReturn(keySetId);
   }
 
   private static void assertOfflineLicenseKeySetIdEqual(
