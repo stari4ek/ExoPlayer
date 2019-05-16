@@ -36,7 +36,7 @@ import com.google.android.exoplayer2.util.Util;
  * <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
  * <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
  *
- * <service android:name="com.google.android.exoplayer2.util.scheduler.PlatformScheduler$PlatformSchedulerService"
+ * <service android:name="com.google.android.exoplayer2.scheduler.PlatformScheduler$PlatformSchedulerService"
  *     android:permission="android.permission.BIND_JOB_SERVICE"
  *     android:exported="true"/>
  * }</pre>
@@ -44,6 +44,7 @@ import com.google.android.exoplayer2.util.Util;
 @TargetApi(21)
 public final class PlatformScheduler implements Scheduler {
 
+  private static final boolean DEBUG = false;
   private static final String TAG = "PlatformScheduler";
   private static final String KEY_SERVICE_ACTION = "service_action";
   private static final String KEY_SERVICE_PACKAGE = "service_package";

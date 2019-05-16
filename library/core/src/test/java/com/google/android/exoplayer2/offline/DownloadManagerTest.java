@@ -61,6 +61,8 @@ public class DownloadManagerTest {
   private static final int APP_STOP_REASON = 1;
   /** The minimum number of times a task must be retried before failing. */
   private static final int MIN_RETRY_COUNT = 3;
+  /** Dummy value for the current time. */
+  private static final long NOW_MS = 1234;
 
   private Uri uri1;
   private Uri uri2;
@@ -132,6 +134,7 @@ public class DownloadManagerTest {
     task.assertCompleted();
     runner.assertCreatedDownloaderCount(1);
     downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
+    assertThat(downloadManager.getCurrentDownloads()).isEmpty();
   }
 
   @Test
@@ -143,6 +146,7 @@ public class DownloadManagerTest {
     task.assertRemoved();
     runner.assertCreatedDownloaderCount(2);
     downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
+    assertThat(downloadManager.getCurrentDownloads()).isEmpty();
   }
 
   @Test
@@ -158,6 +162,7 @@ public class DownloadManagerTest {
     downloader.assertReleased().assertStartCount(MIN_RETRY_COUNT + 1);
     runner.getTask().assertFailed();
     downloadManagerListener.blockUntilTasksComplete();
+    assertThat(downloadManager.getCurrentDownloads()).isEmpty();
   }
 
   @Test
@@ -174,6 +179,7 @@ public class DownloadManagerTest {
     downloader.assertReleased().assertStartCount(MIN_RETRY_COUNT + 1);
     runner.getTask().assertCompleted();
     downloadManagerListener.blockUntilTasksComplete();
+    assertThat(downloadManager.getCurrentDownloads()).isEmpty();
   }
 
   @Test
@@ -235,6 +241,27 @@ public class DownloadManagerTest {
     runner.getTask().assertRemoved();
     runner.assertCreatedDownloaderCount(2);
     downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
+  }
+
+  @Test
+  public void removeAllDownloads_removesAllDownloads() throws Throwable {
+    // Finish one download and keep one running.
+    DownloadRunner runner1 = new DownloadRunner(uri1);
+    DownloadRunner runner2 = new DownloadRunner(uri2);
+    runner1.postDownloadRequest();
+    runner1.getDownloader(0).unblock();
+    downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
+    runner2.postDownloadRequest();
+
+    runner1.postRemoveAllRequest();
+    runner1.getDownloader(1).unblock();
+    runner2.getDownloader(1).unblock();
+    downloadManagerListener.blockUntilTasksCompleteAndThrowAnyDownloadError();
+
+    runner1.getTask().assertRemoved();
+    runner2.getTask().assertRemoved();
+    assertThat(downloadManager.getCurrentDownloads()).isEmpty();
+    assertThat(downloadIndex.getDownloads().getCount()).isEqualTo(0);
   }
 
   @Test
@@ -341,7 +368,7 @@ public class DownloadManagerTest {
   }
 
   @Test
-  public void getTasks_returnTasks() {
+  public void getCurrentDownloads_returnsCurrentDownloads() {
     TaskWrapper task1 = new DownloadRunner(uri1).postDownloadRequest().getTask();
     TaskWrapper task2 = new DownloadRunner(uri2).postDownloadRequest().getTask();
     TaskWrapper task3 =
@@ -370,13 +397,11 @@ public class DownloadManagerTest {
 
     runOnMainThread(() -> downloadManager.pauseDownloads());
 
-    // TODO: This should be assertQueued. Fix implementation and update test.
-    runner1.getTask().assertStopped();
+    runner1.getTask().assertQueued();
 
     // remove requests aren't stopped.
     runner2.getDownloader(1).unblock().assertReleased();
-    // TODO: This should be assertQueued. Fix implementation and update test.
-    runner2.getTask().assertStopped();
+    runner2.getTask().assertQueued();
     // Although remove2 is finished, download2 doesn't start.
     runner2.getDownloader(2).assertDoesNotStart();
 
@@ -397,7 +422,7 @@ public class DownloadManagerTest {
   }
 
   @Test
-  public void manuallyStopAndResumeSingleDownload() throws Throwable {
+  public void setAndClearSingleDownloadStopReason() throws Throwable {
     DownloadRunner runner = new DownloadRunner(uri1).postDownloadRequest();
     TaskWrapper task = runner.getTask();
 
@@ -415,7 +440,7 @@ public class DownloadManagerTest {
   }
 
   @Test
-  public void manuallyStoppedDownloadCanBeCancelled() throws Throwable {
+  public void setSingleDownloadStopReasonThenRemove_removesDownload() throws Throwable {
     DownloadRunner runner = new DownloadRunner(uri1).postDownloadRequest();
     TaskWrapper task = runner.getTask();
 
@@ -433,7 +458,7 @@ public class DownloadManagerTest {
   }
 
   @Test
-  public void manuallyStoppedSingleDownload_doesNotAffectOthers() throws Throwable {
+  public void setSingleDownloadStopReason_doesNotAffectOtherDownloads() throws Throwable {
     DownloadRunner runner1 = new DownloadRunner(uri1);
     DownloadRunner runner2 = new DownloadRunner(uri2);
     DownloadRunner runner3 = new DownloadRunner(uri3);
@@ -455,21 +480,22 @@ public class DownloadManagerTest {
   }
 
   @Test
-  public void mergeRequest_removingDownload_becomesRestarting() {
+  public void mergeRequest_removing_becomesRestarting() {
     DownloadRequest downloadRequest = createDownloadRequest();
     DownloadBuilder downloadBuilder =
         new DownloadBuilder(downloadRequest).setState(Download.STATE_REMOVING);
     Download download = downloadBuilder.build();
 
     Download mergedDownload =
-        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason);
+        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason, NOW_MS);
 
-    Download expectedDownload = downloadBuilder.setState(Download.STATE_RESTARTING).build();
-    assertEqualIgnoringTimeFields(mergedDownload, expectedDownload);
+    Download expectedDownload =
+        downloadBuilder.setStartTimeMs(NOW_MS).setState(Download.STATE_RESTARTING).build();
+    assertEqualIgnoringUpdateTime(mergedDownload, expectedDownload);
   }
 
   @Test
-  public void mergeRequest_failedDownload_becomesQueued() {
+  public void mergeRequest_failed_becomesQueued() {
     DownloadRequest downloadRequest = createDownloadRequest();
     DownloadBuilder downloadBuilder =
         new DownloadBuilder(downloadRequest)
@@ -478,18 +504,19 @@ public class DownloadManagerTest {
     Download download = downloadBuilder.build();
 
     Download mergedDownload =
-        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason);
+        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason, NOW_MS);
 
     Download expectedDownload =
         downloadBuilder
+            .setStartTimeMs(NOW_MS)
             .setState(Download.STATE_QUEUED)
             .setFailureReason(Download.FAILURE_REASON_NONE)
             .build();
-    assertEqualIgnoringTimeFields(mergedDownload, expectedDownload);
+    assertEqualIgnoringUpdateTime(mergedDownload, expectedDownload);
   }
 
   @Test
-  public void mergeRequest_stoppedDownload_staysStopped() {
+  public void mergeRequest_stopped_staysStopped() {
     DownloadRequest downloadRequest = createDownloadRequest();
     DownloadBuilder downloadBuilder =
         new DownloadBuilder(downloadRequest)
@@ -498,13 +525,13 @@ public class DownloadManagerTest {
     Download download = downloadBuilder.build();
 
     Download mergedDownload =
-        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason);
+        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason, NOW_MS);
 
-    assertEqualIgnoringTimeFields(mergedDownload, download);
+    assertEqualIgnoringUpdateTime(mergedDownload, download);
   }
 
   @Test
-  public void mergeRequest_stopReasonSetButNotStopped_becomesStopped() {
+  public void mergeRequest_completedWithStopReason_becomesStopped() {
     DownloadRequest downloadRequest = createDownloadRequest();
     DownloadBuilder downloadBuilder =
         new DownloadBuilder(downloadRequest)
@@ -513,10 +540,11 @@ public class DownloadManagerTest {
     Download download = downloadBuilder.build();
 
     Download mergedDownload =
-        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason);
+        DownloadManager.mergeRequest(download, downloadRequest, download.stopReason, NOW_MS);
 
-    Download expectedDownload = downloadBuilder.setState(Download.STATE_STOPPED).build();
-    assertEqualIgnoringTimeFields(mergedDownload, expectedDownload);
+    Download expectedDownload =
+        downloadBuilder.setStartTimeMs(NOW_MS).setState(Download.STATE_STOPPED).build();
+    assertEqualIgnoringUpdateTime(mergedDownload, expectedDownload);
   }
 
   private void setUpDownloadManager(final int maxParallelDownloads) throws Exception {
@@ -554,9 +582,10 @@ public class DownloadManagerTest {
     dummyMainThread.runTestOnMainThread(r);
   }
 
-  private static void assertEqualIgnoringTimeFields(Download download, Download that) {
+  private static void assertEqualIgnoringUpdateTime(Download download, Download that) {
     assertThat(download.request).isEqualTo(that.request);
     assertThat(download.state).isEqualTo(that.state);
+    assertThat(download.startTimeMs).isEqualTo(that.startTimeMs);
     assertThat(download.contentLength).isEqualTo(that.contentLength);
     assertThat(download.failureReason).isEqualTo(that.failureReason);
     assertThat(download.stopReason).isEqualTo(that.stopReason);
@@ -594,6 +623,11 @@ public class DownloadManagerTest {
 
     private DownloadRunner postRemoveRequest() {
       runOnMainThread(() -> downloadManager.removeDownload(id));
+      return this;
+    }
+
+    private DownloadRunner postRemoveAllRequest() {
+      runOnMainThread(() -> downloadManager.removeAllDownloads());
       return this;
     }
 
