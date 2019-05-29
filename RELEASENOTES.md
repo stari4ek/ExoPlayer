@@ -2,6 +2,8 @@
 
 ### dev-v2 (not yet released) ###
 
+* Add `ResolvingDataSource` for just-in-time resolution of `DataSpec`s
+  ([#5779](https://github.com/google/ExoPlayer/issues/5779)).
 * Assume that encrypted content requires secure decoders in renderer support
   checks ([#5568](https://github.com/google/ExoPlayer/issues/5568)).
 * Decoders: Prefer decoders that advertise format support over ones that do not,
@@ -13,8 +15,11 @@
    for the underlying track was changing (e.g., at some period transitions).
  * Add `SilenceMediaSource` that can be used to play silence of a given
    duration ([#5735](https://github.com/google/ExoPlayer/issues/5735)).
-* UI: Change playback controls toggle from touch down to touch up events
-  ([#5784](https://github.com/google/ExoPlayer/issues/5784)).
+* UI:
+  * Allow setting `DefaultTimeBar` attributes on `PlayerView` and
+    `PlayerControlView`.
+  * Change playback controls toggle from touch down to touch up events
+    ([#5784](https://github.com/google/ExoPlayer/issues/5784)).
 * Add a workaround for broken raw audio decoding on Oppo R9
   ([#5782](https://github.com/google/ExoPlayer/issues/5782)).
 * Offline: Add Scheduler implementation which uses WorkManager.
@@ -22,6 +27,11 @@
   to indicate whether a controller sent a play or only a prepare command. This
   allows to take advantage of decoder reuse with the MediaSessionConnector
   ([#5891](https://github.com/google/ExoPlayer/issues/5891)).
+* Add ProgressUpdateListener to PlayerControlView
+  ([#5834](https://github.com/google/ExoPlayer/issues/5834)).
+* Prevent unexpected `DownloadHelper.Callback.onPrepared` callbacks after the
+  preparation of the `DownloadHelper` failed
+  ([#5915](https://github.com/google/ExoPlayer/issues/5915)).
 
 ### 2.10.1 ###
 
