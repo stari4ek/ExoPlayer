@@ -76,7 +76,7 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
   private final BaseMediaChunkOutput mediaChunkOutput;
 
   private Format primaryDownstreamTrackFormat;
-  private @Nullable ReleaseCallback<T> releaseCallback;
+  @Nullable private ReleaseCallback<T> releaseCallback;
   private long pendingResetPositionUs;
   private long lastSeekPositionUs;
   private int nextNotifyPrimaryFormatMediaChunkIndex;
@@ -409,7 +409,12 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
     }
     maybeNotifyPrimaryTrackFormatChanged();
     return primarySampleQueue.read(
-        formatHolder, buffer, formatRequired, loadingFinished, decodeOnlyUntilPositionUs);
+        formatHolder,
+        buffer,
+        formatRequired,
+        /* allowOnlyClearBuffers= */ false,
+        loadingFinished,
+        decodeOnlyUntilPositionUs);
   }
 
   @Override
@@ -801,7 +806,12 @@ public class ChunkSampleStream<T extends ChunkSource> implements SampleStream, S
       }
       maybeNotifyDownstreamFormat();
       return sampleQueue.read(
-          formatHolder, buffer, formatRequired, loadingFinished, decodeOnlyUntilPositionUs);
+          formatHolder,
+          buffer,
+          formatRequired,
+          /* allowOnlyClearBuffers= */ false,
+          loadingFinished,
+          decodeOnlyUntilPositionUs);
     }
 
     public void release() {

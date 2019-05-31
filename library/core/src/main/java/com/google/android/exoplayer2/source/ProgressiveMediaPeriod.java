@@ -447,7 +447,12 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     maybeNotifyDownstreamFormat(track);
     int result =
         sampleQueues[track].read(
-            formatHolder, buffer, formatRequired, loadingFinished, lastSeekPositionUs);
+            formatHolder,
+            buffer,
+            formatRequired,
+            /* allowOnlyClearBuffers= */ false,
+            loadingFinished,
+            lastSeekPositionUs);
     if (result == C.RESULT_NOTHING_READ) {
       maybeStartDeferredRetry(track);
     }
@@ -1013,7 +1018,7 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
 
     private final Extractor[] extractors;
 
-    private @Nullable Extractor extractor;
+    @Nullable private Extractor extractor;
 
     /**
      * Creates a holder that will select an extractor and initialize it using the specified output.

@@ -151,7 +151,8 @@ public class PlayerActivity extends AppCompatActivity
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
-    String sphericalStereoMode = getIntent().getStringExtra(SPHERICAL_STEREO_MODE_EXTRA);
+    Intent intent = getIntent();
+    String sphericalStereoMode = intent.getStringExtra(SPHERICAL_STEREO_MODE_EXTRA);
     if (sphericalStereoMode != null) {
       setTheme(R.style.PlayerTheme_Spherical);
     }
@@ -555,7 +556,8 @@ public class PlayerActivity extends AppCompatActivity
   }
 
   /** Returns an ads media source, reusing the ads loader if one exists. */
-  private @Nullable MediaSource createAdsMediaSource(MediaSource mediaSource, Uri adTagUri) {
+  @Nullable
+  private MediaSource createAdsMediaSource(MediaSource mediaSource, Uri adTagUri) {
     // Load the extension source using reflection so the demo app doesn't have to depend on it.
     // The ads loader is reused for multiple playbacks, so that ad playback can resume.
     try {

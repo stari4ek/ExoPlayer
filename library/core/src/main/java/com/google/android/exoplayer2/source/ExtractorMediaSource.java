@@ -64,9 +64,9 @@ public final class ExtractorMediaSource extends BaseMediaSource
 
     private final DataSource.Factory dataSourceFactory;
 
-    private @Nullable ExtractorsFactory extractorsFactory;
-    private @Nullable String customCacheKey;
-    private @Nullable Object tag;
+    @Nullable private ExtractorsFactory extractorsFactory;
+    @Nullable private String customCacheKey;
+    @Nullable private Object tag;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
     private int continueLoadingCheckIntervalBytes;
     private boolean isCreateCalled;
@@ -242,8 +242,8 @@ public final class ExtractorMediaSource extends BaseMediaSource
       Uri uri,
       DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory,
-      Handler eventHandler,
-      EventListener eventListener) {
+      @Nullable Handler eventHandler,
+      @Nullable EventListener eventListener) {
     this(uri, dataSourceFactory, extractorsFactory, eventHandler, eventListener, null);
   }
 
@@ -264,9 +264,9 @@ public final class ExtractorMediaSource extends BaseMediaSource
       Uri uri,
       DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory,
-      Handler eventHandler,
-      EventListener eventListener,
-      String customCacheKey) {
+      @Nullable Handler eventHandler,
+      @Nullable EventListener eventListener,
+      @Nullable String customCacheKey) {
     this(
         uri,
         dataSourceFactory,
@@ -296,9 +296,9 @@ public final class ExtractorMediaSource extends BaseMediaSource
       Uri uri,
       DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory,
-      Handler eventHandler,
-      EventListener eventListener,
-      String customCacheKey,
+      @Nullable Handler eventHandler,
+      @Nullable EventListener eventListener,
+      @Nullable String customCacheKey,
       int continueLoadingCheckIntervalBytes) {
     this(
         uri,

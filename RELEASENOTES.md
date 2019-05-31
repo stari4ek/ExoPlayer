@@ -2,14 +2,20 @@
 
 ### dev-v2 (not yet released) ###
 
+* Add `PlaybackStatsListener` to collect `PlaybackStats` for playbacks analysis
+  and analytics reporting (TODO: link to developer guide page/blog post).
+* Add basic DRM support to the Cast demo app.
 * Add `ResolvingDataSource` for just-in-time resolution of `DataSpec`s
   ([#5779](https://github.com/google/ExoPlayer/issues/5779)).
 * Assume that encrypted content requires secure decoders in renderer support
   checks ([#5568](https://github.com/google/ExoPlayer/issues/5568)).
 * Decoders: Prefer decoders that advertise format support over ones that do not,
   even if they are listed lower in the `MediaCodecList`.
-* CEA-608: Handle XDS and TEXT modes
-  ([5807](https://github.com/google/ExoPlayer/pull/5807)).
+* Subtitles:
+  * CEA-608: Handle XDS and TEXT modes
+  ([#5807](https://github.com/google/ExoPlayer/pull/5807)).
+  * TTML: Fix bitmap rendering
+  ([#5633](https://github.com/google/ExoPlayer/pull/5633)).
 * Audio:
  * Fix an issue where not all audio was played out when the configuration
    for the underlying track was changing (e.g., at some period transitions).
@@ -20,18 +26,30 @@
     `PlayerControlView`.
   * Change playback controls toggle from touch down to touch up events
     ([#5784](https://github.com/google/ExoPlayer/issues/5784)).
+  * Fix issue where playback controls were not kept visible on key presses
+    ([#5963](https://github.com/google/ExoPlayer/issues/5963)).
 * Add a workaround for broken raw audio decoding on Oppo R9
   ([#5782](https://github.com/google/ExoPlayer/issues/5782)).
-* Offline: Add Scheduler implementation which uses WorkManager.
+* Offline:
+  * Add Scheduler implementation which uses WorkManager.
+  * Prevent unexpected `DownloadHelper.Callback.onPrepared` callbacks after the
+    preparation of the `DownloadHelper` failed
+    ([#5915](https://github.com/google/ExoPlayer/issues/5915)).
+  * Fix CacheUtil.cache() use too much data
+    ([#5927](https://github.com/google/ExoPlayer/issues/5927)).
+  * Fix misreporting cached bytes when caching is paused
+    ([#5573](https://github.com/google/ExoPlayer/issues/5573)).
 * Add a playWhenReady flag to MediaSessionConnector.PlaybackPreparer methods
   to indicate whether a controller sent a play or only a prepare command. This
   allows to take advantage of decoder reuse with the MediaSessionConnector
   ([#5891](https://github.com/google/ExoPlayer/issues/5891)).
 * Add ProgressUpdateListener to PlayerControlView
   ([#5834](https://github.com/google/ExoPlayer/issues/5834)).
-* Prevent unexpected `DownloadHelper.Callback.onPrepared` callbacks after the
-  preparation of the `DownloadHelper` failed
-  ([#5915](https://github.com/google/ExoPlayer/issues/5915)).
+* Allow enabling decoder fallback with `DefaultRenderersFactory`
+  ([#5942](https://github.com/google/ExoPlayer/issues/5942)).
+* Fix bug caused by parallel adaptive track selection using `Format`s without
+  bitrate information
+  ([#5971](https://github.com/google/ExoPlayer/issues/5971)).
 
 ### 2.10.1 ###
 

@@ -94,7 +94,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
      * to initialize, the {@link DecoderInitializationException} for the fallback decoder. Null if
      * there was no fallback decoder or no suitable decoders were found.
      */
-    public final @Nullable DecoderInitializationException fallbackDecoderInitializationException;
+    @Nullable public final DecoderInitializationException fallbackDecoderInitializationException;
 
     public DecoderInitializationException(Format format, Throwable cause,
         boolean secureDecoderRequired, int errorCode) {
@@ -941,21 +941,13 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   private void setSourceDrmSession(@Nullable DrmSession<FrameworkMediaCrypto> session) {
-    DrmSession<FrameworkMediaCrypto> previous = sourceDrmSession;
+    DrmSession.replaceSessionReferences(sourceDrmSession, session);
     sourceDrmSession = session;
-    releaseDrmSessionIfUnused(previous);
   }
 
   private void setCodecDrmSession(@Nullable DrmSession<FrameworkMediaCrypto> session) {
-    DrmSession<FrameworkMediaCrypto> previous = codecDrmSession;
+    DrmSession.replaceSessionReferences(codecDrmSession, session);
     codecDrmSession = session;
-    releaseDrmSessionIfUnused(previous);
-  }
-
-  private void releaseDrmSessionIfUnused(@Nullable DrmSession<FrameworkMediaCrypto> session) {
-    if (session != null && session != sourceDrmSession && session != codecDrmSession) {
-      drmSessionManager.releaseSession(session);
-    }
   }
 
   /**
@@ -1159,12 +1151,10 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
         }
         DrmSession<FrameworkMediaCrypto> session =
             drmSessionManager.acquireSession(Looper.myLooper(), newFormat.drmInitData);
-        if (session == sourceDrmSession || session == codecDrmSession) {
-          // We already had this session. The manager must be reference counting, so release it once
-          // to get the count attributed to this renderer back down to 1.
-          drmSessionManager.releaseSession(session);
+        if (sourceDrmSession != null) {
+          sourceDrmSession.releaseReference();
         }
-        setSourceDrmSession(session);
+        sourceDrmSession = session;
       } else {
         setSourceDrmSession(null);
       }
