@@ -5,33 +5,23 @@
 * Add `PlaybackStatsListener` to collect `PlaybackStats` for playbacks analysis
   and analytics reporting (TODO: link to developer guide page/blog post).
 * Add basic DRM support to the Cast demo app.
-* Add `ResolvingDataSource` for just-in-time resolution of `DataSpec`s
-  ([#5779](https://github.com/google/ExoPlayer/issues/5779)).
+* Offline: Add `Scheduler` implementation that uses `WorkManager`.
 * Assume that encrypted content requires secure decoders in renderer support
   checks ([#5568](https://github.com/google/ExoPlayer/issues/5568)).
 * Decoders: Prefer decoders that advertise format support over ones that do not,
   even if they are listed lower in the `MediaCodecList`.
-* Subtitles:
-  * CEA-608: Handle XDS and TEXT modes
-  ([#5807](https://github.com/google/ExoPlayer/pull/5807)).
-  * TTML: Fix bitmap rendering
-  ([#5633](https://github.com/google/ExoPlayer/pull/5633)).
-* Audio:
- * Fix an issue where not all audio was played out when the configuration
-   for the underlying track was changing (e.g., at some period transitions).
- * Add `SilenceMediaSource` that can be used to play silence of a given
-   duration ([#5735](https://github.com/google/ExoPlayer/issues/5735)).
-* UI:
-  * Allow setting `DefaultTimeBar` attributes on `PlayerView` and
-    `PlayerControlView`.
-  * Change playback controls toggle from touch down to touch up events
-    ([#5784](https://github.com/google/ExoPlayer/issues/5784)).
-  * Fix issue where playback controls were not kept visible on key presses
-    ([#5963](https://github.com/google/ExoPlayer/issues/5963)).
+* Audio: Fix an issue where not all audio was played out when the configuration
+  for the underlying track was changing (e.g., at some period transitions).
 * Add a workaround for broken raw audio decoding on Oppo R9
   ([#5782](https://github.com/google/ExoPlayer/issues/5782)).
+
+### 2.10.2 ###
+
+* Add `ResolvingDataSource` for just-in-time resolution of `DataSpec`s
+  ([#5779](https://github.com/google/ExoPlayer/issues/5779)).
+* Add `SilenceMediaSource` that can be used to play silence of a given
+  duration ([#5735](https://github.com/google/ExoPlayer/issues/5735)).
 * Offline:
-  * Add Scheduler implementation which uses WorkManager.
   * Prevent unexpected `DownloadHelper.Callback.onPrepared` callbacks after the
     preparation of the `DownloadHelper` failed
     ([#5915](https://github.com/google/ExoPlayer/issues/5915)).
@@ -39,11 +29,23 @@
     ([#5927](https://github.com/google/ExoPlayer/issues/5927)).
   * Fix misreporting cached bytes when caching is paused
     ([#5573](https://github.com/google/ExoPlayer/issues/5573)).
-* Add a playWhenReady flag to MediaSessionConnector.PlaybackPreparer methods
+* UI:
+  * Allow setting `DefaultTimeBar` attributes on `PlayerView` and
+    `PlayerControlView`.
+  * Change playback controls toggle from touch down to touch up events
+    ([#5784](https://github.com/google/ExoPlayer/issues/5784)).
+  * Fix issue where playback controls were not kept visible on key presses
+    ([#5963](https://github.com/google/ExoPlayer/issues/5963)).
+* Subtitles:
+  * CEA-608: Handle XDS and TEXT modes
+    ([#5807](https://github.com/google/ExoPlayer/pull/5807)).
+  * TTML: Fix bitmap rendering
+    ([#5633](https://github.com/google/ExoPlayer/pull/5633)).
+* Add a `playWhenReady` flag to MediaSessionConnector.PlaybackPreparer methods
   to indicate whether a controller sent a play or only a prepare command. This
   allows to take advantage of decoder reuse with the MediaSessionConnector
   ([#5891](https://github.com/google/ExoPlayer/issues/5891)).
-* Add ProgressUpdateListener to PlayerControlView
+* Add `ProgressUpdateListener` to `PlayerControlView`
   ([#5834](https://github.com/google/ExoPlayer/issues/5834)).
 * Allow enabling decoder fallback with `DefaultRenderersFactory`
   ([#5942](https://github.com/google/ExoPlayer/issues/5942)).
