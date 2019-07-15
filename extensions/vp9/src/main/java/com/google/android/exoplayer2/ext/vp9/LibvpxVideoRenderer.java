@@ -284,7 +284,13 @@ public class LibvpxVideoRenderer extends BaseRenderer {
   public int supportsFormat(Format format) {
     if (!VpxLibrary.isAvailable() || !MimeTypes.VIDEO_VP9.equalsIgnoreCase(format.sampleMimeType)) {
       return FORMAT_UNSUPPORTED_TYPE;
-    } else if (!supportsFormatDrm(drmSessionManager, format.drmInitData)) {
+    }
+    boolean drmIsSupported =
+        format.drmInitData == null
+            || VpxLibrary.matchesExpectedExoMediaCryptoType(format.exoMediaCryptoType)
+            || (format.exoMediaCryptoType == null
+                && supportsFormatDrm(drmSessionManager, format.drmInitData));
+    if (!drmIsSupported) {
       return FORMAT_UNSUPPORTED_DRM;
     }
     return FORMAT_HANDLED | ADAPTIVE_SEAMLESS;
@@ -301,7 +307,7 @@ public class LibvpxVideoRenderer extends BaseRenderer {
       flagsOnlyBuffer.clear();
       int result = readSource(formatHolder, flagsOnlyBuffer, true);
       if (result == C.RESULT_FORMAT_READ) {
-        onInputFormatChanged(formatHolder.format);
+        onInputFormatChanged(formatHolder);
       } else if (result == C.RESULT_BUFFER_READ) {
         // End of stream read having not read a format.
         Assertions.checkState(flagsOnlyBuffer.isEndOfStream());
@@ -485,29 +491,29 @@ public class LibvpxVideoRenderer extends BaseRenderer {
   /**
    * Called when a new format is read from the upstream source.
    *
-   * @param newFormat The new format.
+   * @param formatHolder A {@link FormatHolder} that holds the new {@link Format}.
    * @throws ExoPlaybackException If an error occurs (re-)initializing the decoder.
    */
   @CallSuper
   @SuppressWarnings("unchecked")
-  protected void onInputFormatChanged(Format newFormat) throws ExoPlaybackException {
+  protected void onInputFormatChanged(FormatHolder formatHolder) throws ExoPlaybackException {
     Format oldFormat = format;
-    format = newFormat;
-    pendingFormat = newFormat;
+    format = formatHolder.format;
+    pendingFormat = format;
 
     boolean drmInitDataChanged = !Util.areEqual(format.drmInitData, oldFormat == null ? null
         : oldFormat.drmInitData);
     if (drmInitDataChanged) {
       if (format.drmInitData != null) {
-        if (drmSessionManager == null) {
-          throw ExoPlaybackException.createForRenderer(
-              new IllegalStateException("Media requires a DrmSessionManager"), getIndex());
-        }
-        if (formatHolder.decryptionResourceIsProvided) {
+        if (formatHolder.includesDrmSession) {
           setSourceDrmSession((DrmSession<ExoMediaCrypto>) formatHolder.drmSession);
         } else {
+          if (drmSessionManager == null) {
+            throw ExoPlaybackException.createForRenderer(
+                new IllegalStateException("Media requires a DrmSessionManager"), getIndex());
+          }
           DrmSession<ExoMediaCrypto> session =
-              drmSessionManager.acquireSession(Looper.myLooper(), newFormat.drmInitData);
+              drmSessionManager.acquireSession(Looper.myLooper(), format.drmInitData);
           if (sourceDrmSession != null) {
             sourceDrmSession.releaseReference();
           }
@@ -820,7 +826,7 @@ public class LibvpxVideoRenderer extends BaseRenderer {
       return false;
     }
     if (result == C.RESULT_FORMAT_READ) {
-      onInputFormatChanged(formatHolder.format);
+      onInputFormatChanged(formatHolder);
       return true;
     }
     if (inputBuffer.isEndOfStream()) {

@@ -44,7 +44,7 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
 
   @Override
   @CallSuper
-  public void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
+  protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
     this.mediaTransferListener = mediaTransferListener;
     eventHandler = new Handler();
   }
@@ -59,9 +59,9 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
 
   @Override
   @CallSuper
-  public void releaseSourceInternal() {
+  protected void releaseSourceInternal() {
     for (MediaSourceAndListener childSource : childSources.values()) {
-      childSource.mediaSource.releaseSource(childSource.listener);
+      childSource.mediaSource.releaseSource(childSource.caller);
       childSource.mediaSource.removeEventListener(childSource.eventListener);
     }
     childSources.clear();
@@ -73,17 +73,15 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
    * @param id The unique id used to prepare the child source.
    * @param mediaSource The child source whose source info has been refreshed.
    * @param timeline The timeline of the child source.
-   * @param manifest The manifest of the child source.
    */
   protected abstract void onChildSourceInfoRefreshed(
-      T id, MediaSource mediaSource, Timeline timeline, @Nullable Object manifest);
+      T id, MediaSource mediaSource, Timeline timeline);
 
   /**
    * Prepares a child source.
    *
-   * <p>{@link #onChildSourceInfoRefreshed(Object, MediaSource, Timeline, Object)} will be called
-   * when the child source updates its timeline and/or manifest with the same {@code id} passed to
-   * this method.
+   * <p>{@link #onChildSourceInfoRefreshed(Object, MediaSource, Timeline)} will be called when the
+   * child source updates its timeline with the same {@code id} passed to this method.
    *
    * <p>Any child sources that aren't explicitly released with {@link #releaseChildSource(Object)}
    * will be released in {@link #releaseSourceInternal()}.
@@ -93,12 +91,12 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
    */
   protected final void prepareChildSource(final T id, MediaSource mediaSource) {
     Assertions.checkArgument(!childSources.containsKey(id));
-    SourceInfoRefreshListener sourceListener =
-        (source, timeline, manifest) -> onChildSourceInfoRefreshed(id, source, timeline, manifest);
+    MediaSourceCaller caller =
+        (source, timeline) -> onChildSourceInfoRefreshed(id, source, timeline);
     MediaSourceEventListener eventListener = new ForwardingEventListener(id);
-    childSources.put(id, new MediaSourceAndListener(mediaSource, sourceListener, eventListener));
+    childSources.put(id, new MediaSourceAndListener(mediaSource, caller, eventListener));
     mediaSource.addEventListener(Assertions.checkNotNull(eventHandler), eventListener);
-    mediaSource.prepareSource(sourceListener, mediaTransferListener);
+    mediaSource.prepareSource(caller, mediaTransferListener);
   }
 
   /**
@@ -108,7 +106,7 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
    */
   protected final void releaseChildSource(T id) {
     MediaSourceAndListener removedChild = Assertions.checkNotNull(childSources.remove(id));
-    removedChild.mediaSource.releaseSource(removedChild.listener);
+    removedChild.mediaSource.releaseSource(removedChild.caller);
     removedChild.mediaSource.removeEventListener(removedChild.eventListener);
   }
 
@@ -154,15 +152,13 @@ public abstract class CompositeMediaSource<T> extends BaseMediaSource {
   private static final class MediaSourceAndListener {
 
     public final MediaSource mediaSource;
-    public final SourceInfoRefreshListener listener;
+    public final MediaSourceCaller caller;
     public final MediaSourceEventListener eventListener;
 
     public MediaSourceAndListener(
-        MediaSource mediaSource,
-        SourceInfoRefreshListener listener,
-        MediaSourceEventListener eventListener) {
+        MediaSource mediaSource, MediaSourceCaller caller, MediaSourceEventListener eventListener) {
       this.mediaSource = mediaSource;
-      this.listener = listener;
+      this.caller = caller;
       this.eventListener = eventListener;
     }
   }

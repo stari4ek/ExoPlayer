@@ -29,6 +29,7 @@ import com.google.android.exoplayer2.Player.DiscontinuityReason;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
+import com.google.android.exoplayer2.source.MediaSource.MediaSourceCaller;
 import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
@@ -51,7 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
     implements Handler.Callback,
         MediaPeriod.Callback,
         TrackSelector.InvalidationListener,
-        MediaSource.SourceInfoRefreshListener,
+        MediaSourceCaller,
         PlaybackParameterListener,
         PlayerMessage.Sender {
 
@@ -264,12 +265,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
     return internalPlaybackThread.getLooper();
   }
 
-  // MediaSource.SourceInfoRefreshListener implementation.
+  // MediaSource.MediaSourceCaller implementation.
 
   @Override
-  public void onSourceInfoRefreshed(MediaSource source, Timeline timeline, Object manifest) {
-    handler.obtainMessage(MSG_REFRESH_SOURCE_INFO,
-        new MediaSourceRefreshInfo(source, timeline, manifest)).sendToTarget();
+  public void onSourceInfoRefreshed(MediaSource source, Timeline timeline) {
+    handler
+        .obtainMessage(MSG_REFRESH_SOURCE_INFO, new MediaSourceRefreshInfo(source, timeline))
+        .sendToTarget();
   }
 
   // MediaPeriod.Callback implementation.
@@ -728,13 +730,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
       newPlayingPeriodHolder = queue.advancePlayingPeriod();
     }
 
-    // Disable all the renderers if the period being played is changing, or if forced.
-    if (oldPlayingPeriodHolder != newPlayingPeriodHolder || forceDisableRenderers) {
+    // Disable all renderers if the period being played is changing, if the seek results in negative
+    // renderer timestamps, or if forced.
+    if (forceDisableRenderers
+        || oldPlayingPeriodHolder != newPlayingPeriodHolder
+        || (newPlayingPeriodHolder != null
+            && newPlayingPeriodHolder.toRendererTime(periodPositionUs) < 0)) {
       for (Renderer renderer : enabledRenderers) {
         disableRenderer(renderer);
       }
       enabledRenderers = new Renderer[0];
       oldPlayingPeriodHolder = null;
+      if (newPlayingPeriodHolder != null) {
+        newPlayingPeriodHolder.setRendererOffset(/* rendererPositionOffsetUs= */ 0);
+      }
     }
 
     // Update the holders.
@@ -892,7 +901,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
     playbackInfo =
         new PlaybackInfo(
             resetState ? Timeline.EMPTY : playbackInfo.timeline,
-            resetState ? null : playbackInfo.manifest,
             mediaPeriodId,
             startPositionUs,
             contentPositionUs,
@@ -1269,9 +1277,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
     Timeline oldTimeline = playbackInfo.timeline;
     Timeline timeline = sourceRefreshInfo.timeline;
-    Object manifest = sourceRefreshInfo.manifest;
     queue.setTimeline(timeline);
-    playbackInfo = playbackInfo.copyWithTimeline(timeline, manifest);
+    playbackInfo = playbackInfo.copyWithTimeline(timeline);
     resolvePendingMessagePositions();
 
     MediaPeriodId newPeriodId = playbackInfo.periodId;
@@ -1797,9 +1804,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
   private long getTotalBufferedDurationUs(long bufferedPositionInLoadingPeriodUs) {
     MediaPeriodHolder loadingPeriodHolder = queue.getLoadingPeriod();
-    return loadingPeriodHolder == null
-        ? 0
-        : bufferedPositionInLoadingPeriodUs - loadingPeriodHolder.toPeriodTime(rendererPositionUs);
+    if (loadingPeriodHolder == null) {
+      return 0;
+    }
+    long totalBufferedDurationUs =
+        bufferedPositionInLoadingPeriodUs - loadingPeriodHolder.toPeriodTime(rendererPositionUs);
+    return Math.max(0, totalBufferedDurationUs);
   }
 
   private void updateLoadControlTrackSelection(
@@ -1871,12 +1881,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
     public final MediaSource source;
     public final Timeline timeline;
-    public final Object manifest;
 
-    public MediaSourceRefreshInfo(MediaSource source, Timeline timeline, Object manifest) {
+    public MediaSourceRefreshInfo(MediaSource source, Timeline timeline) {
       this.source = source;
       this.timeline = timeline;
-      this.manifest = manifest;
     }
   }
 

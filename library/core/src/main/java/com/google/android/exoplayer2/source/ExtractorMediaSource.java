@@ -21,6 +21,7 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorsFactory;
@@ -35,8 +36,7 @@ import java.io.IOException;
 /** @deprecated Use {@link ProgressiveMediaSource} instead. */
 @Deprecated
 @SuppressWarnings("deprecation")
-public final class ExtractorMediaSource extends BaseMediaSource
-    implements MediaSource.SourceInfoRefreshListener {
+public final class ExtractorMediaSource extends CompositeMediaSource<Void> {
 
   /** @deprecated Use {@link MediaSourceEventListener} instead. */
   @Deprecated
@@ -326,6 +326,7 @@ public final class ExtractorMediaSource extends BaseMediaSource
             uri,
             dataSourceFactory,
             extractorsFactory,
+            DrmSessionManager.getDummyDrmSessionManager(),
             loadableLoadErrorHandlingPolicy,
             customCacheKey,
             continueLoadingCheckIntervalBytes,
@@ -339,13 +340,15 @@ public final class ExtractorMediaSource extends BaseMediaSource
   }
 
   @Override
-  public void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
-    progressiveMediaSource.prepareSource(/* listener= */ this, mediaTransferListener);
+  protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
+    super.prepareSourceInternal(mediaTransferListener);
+    prepareChildSource(/* id= */ null, progressiveMediaSource);
   }
 
   @Override
-  public void maybeThrowSourceInfoRefreshError() throws IOException {
-    progressiveMediaSource.maybeThrowSourceInfoRefreshError();
+  protected void onChildSourceInfoRefreshed(
+      @Nullable Void id, MediaSource mediaSource, Timeline timeline) {
+    refreshSourceInfo(timeline);
   }
 
   @Override
@@ -356,17 +359,6 @@ public final class ExtractorMediaSource extends BaseMediaSource
   @Override
   public void releasePeriod(MediaPeriod mediaPeriod) {
     progressiveMediaSource.releasePeriod(mediaPeriod);
-  }
-
-  @Override
-  public void releaseSourceInternal() {
-    progressiveMediaSource.releaseSource(/* listener= */ this);
-  }
-
-  @Override
-  public void onSourceInfoRefreshed(
-      MediaSource source, Timeline timeline, @Nullable Object manifest) {
-    refreshSourceInfo(timeline, manifest);
   }
 
   @Deprecated

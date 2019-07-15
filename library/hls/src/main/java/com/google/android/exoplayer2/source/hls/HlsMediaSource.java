@@ -333,7 +333,7 @@ public final class HlsMediaSource extends BaseMediaSource
   }
 
   @Override
-  public void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
+  protected void prepareSourceInternal(@Nullable TransferListener mediaTransferListener) {
     this.mediaTransferListener = mediaTransferListener;
     EventDispatcher eventDispatcher = createEventDispatcher(/* mediaPeriodId= */ null);
     playlistTracker.start(manifestUri, eventDispatcher, /* listener= */ this);
@@ -366,7 +366,7 @@ public final class HlsMediaSource extends BaseMediaSource
   }
 
   @Override
-  public void releaseSourceInternal() {
+  protected void releaseSourceInternal() {
     playlistTracker.stop();
   }
 
@@ -383,6 +383,7 @@ public final class HlsMediaSource extends BaseMediaSource
             ? windowStartTimeMs
             : C.TIME_UNSET;
     long windowDefaultStartPositionUs = playlist.startOffsetUs;
+    HlsManifest manifest = new HlsManifest(playlistTracker.getMasterPlaylist(), playlist);
     if (playlistTracker.isLive()) {
       long offsetFromInitialStartTimeUs =
           playlist.startTimeUs - playlistTracker.getInitialStartTimeUs();
@@ -403,6 +404,7 @@ public final class HlsMediaSource extends BaseMediaSource
               windowDefaultStartPositionUs,
               /* isSeekable= */ true,
               /* isDynamic= */ !playlist.hasEndTag,
+              manifest,
               tag);
     } else /* not live */ {
       if (windowDefaultStartPositionUs == C.TIME_UNSET) {
@@ -418,9 +420,10 @@ public final class HlsMediaSource extends BaseMediaSource
               windowDefaultStartPositionUs,
               /* isSeekable= */ true,
               /* isDynamic= */ false,
+              manifest,
               tag);
     }
-    refreshSourceInfo(timeline, new HlsManifest(playlistTracker.getMasterPlaylist(), playlist));
+    refreshSourceInfo(timeline);
   }
 
 }

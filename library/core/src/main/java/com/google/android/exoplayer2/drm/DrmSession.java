@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.drm;
 import android.media.MediaDrm;
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
+import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -30,10 +31,15 @@ public interface DrmSession<T extends ExoMediaCrypto> {
 
   /**
    * Invokes {@code newSession's} {@link #acquireReference()} and {@code previousSession's} {@link
-   * #releaseReference()} in that order. Does nothing for passed null values.
+   * #releaseReference()} in that order. Null arguments are ignored. Does nothing if {@code
+   * previousSession} and {@code newSession} are the same session.
    */
   static <T extends ExoMediaCrypto> void replaceSessionReferences(
       @Nullable DrmSession<T> previousSession, @Nullable DrmSession<T> newSession) {
+    if (previousSession == newSession) {
+      // Do nothing.
+      return;
+    }
     if (newSession != null) {
       newSession.acquireReference();
     }
@@ -42,10 +48,8 @@ public interface DrmSession<T extends ExoMediaCrypto> {
     }
   }
 
-  /**
-   * Wraps the throwable which is the cause of the error state.
-   */
-  class DrmSessionException extends Exception {
+  /** Wraps the throwable which is the cause of the error state. */
+  class DrmSessionException extends IOException {
 
     public DrmSessionException(Throwable cause) {
       super(cause);

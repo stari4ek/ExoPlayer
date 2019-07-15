@@ -1035,23 +1035,9 @@ public class SimpleExoPlayer extends BasePlayer
   }
 
   @Override
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public void sendMessages(ExoPlayerMessage... messages) {
-    player.sendMessages(messages);
-  }
-
-  @Override
   public PlayerMessage createMessage(PlayerMessage.Target target) {
     verifyApplicationThread();
     return player.createMessage(target);
-  }
-
-  @Override
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public void blockingSendMessages(ExoPlayerMessage... messages) {
-    player.blockingSendMessages(messages);
   }
 
   @Override
@@ -1082,13 +1068,6 @@ public class SimpleExoPlayer extends BasePlayer
   public Timeline getCurrentTimeline() {
     verifyApplicationThread();
     return player.getCurrentTimeline();
-  }
-
-  @Override
-  @Nullable
-  public Object getCurrentManifest() {
-    verifyApplicationThread();
-    return player.getCurrentManifest();
   }
 
   @Override
@@ -1233,8 +1212,7 @@ public class SimpleExoPlayer extends BasePlayer
       Log.w(
           TAG,
           "Player is accessed on the wrong thread. See "
-              + "https://exoplayer.dev/troubleshooting.html#"
-              + "what-do-player-is-accessed-on-the-wrong-thread-warnings-mean",
+              + "https://exoplayer.dev/issues/player-accessed-on-wrong-thread",
           hasNotifiedFullWrongThreadWarning ? null : new IllegalStateException());
       hasNotifiedFullWrongThreadWarning = true;
     }

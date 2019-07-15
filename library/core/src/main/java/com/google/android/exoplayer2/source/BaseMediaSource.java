@@ -27,20 +27,19 @@ import java.util.ArrayList;
  * Base {@link MediaSource} implementation to handle parallel reuse and to keep a list of {@link
  * MediaSourceEventListener}s.
  *
- * <p>Whenever an implementing subclass needs to provide a new timeline and/or manifest, it must
- * call {@link #refreshSourceInfo(Timeline, Object)} to notify all listeners.
+ * <p>Whenever an implementing subclass needs to provide a new timeline, it must call {@link
+ * #refreshSourceInfo(Timeline)} to notify all listeners.
  */
 public abstract class BaseMediaSource implements MediaSource {
 
-  private final ArrayList<SourceInfoRefreshListener> sourceInfoListeners;
+  private final ArrayList<MediaSourceCaller> mediaSourceCallers;
   private final MediaSourceEventListener.EventDispatcher eventDispatcher;
 
   @Nullable private Looper looper;
   @Nullable private Timeline timeline;
-  @Nullable private Object manifest;
 
   public BaseMediaSource() {
-    sourceInfoListeners = new ArrayList<>(/* initialCapacity= */ 1);
+    mediaSourceCallers = new ArrayList<>(/* initialCapacity= */ 1);
     eventDispatcher = new MediaSourceEventListener.EventDispatcher();
   }
 
@@ -65,13 +64,11 @@ public abstract class BaseMediaSource implements MediaSource {
    * Updates timeline and manifest and notifies all listeners of the update.
    *
    * @param timeline The new {@link Timeline}.
-   * @param manifest The new manifest. May be null.
    */
-  protected final void refreshSourceInfo(Timeline timeline, @Nullable Object manifest) {
+  protected final void refreshSourceInfo(Timeline timeline) {
     this.timeline = timeline;
-    this.manifest = manifest;
-    for (SourceInfoRefreshListener listener : sourceInfoListeners) {
-      listener.onSourceInfoRefreshed(/* source= */ this, timeline, manifest);
+    for (MediaSourceCaller caller : mediaSourceCallers) {
+      caller.onSourceInfoRefreshed(/* source= */ this, timeline);
     }
   }
 
@@ -130,26 +127,24 @@ public abstract class BaseMediaSource implements MediaSource {
 
   @Override
   public final void prepareSource(
-      SourceInfoRefreshListener listener,
-      @Nullable TransferListener mediaTransferListener) {
+      MediaSourceCaller caller, @Nullable TransferListener mediaTransferListener) {
     Looper looper = Looper.myLooper();
     Assertions.checkArgument(this.looper == null || this.looper == looper);
-    sourceInfoListeners.add(listener);
+    mediaSourceCallers.add(caller);
     if (this.looper == null) {
       this.looper = looper;
       prepareSourceInternal(mediaTransferListener);
     } else if (timeline != null) {
-      listener.onSourceInfoRefreshed(/* source= */ this, timeline, manifest);
+      caller.onSourceInfoRefreshed(/* source= */ this, timeline);
     }
   }
 
   @Override
-  public final void releaseSource(SourceInfoRefreshListener listener) {
-    sourceInfoListeners.remove(listener);
-    if (sourceInfoListeners.isEmpty()) {
+  public final void releaseSource(MediaSourceCaller caller) {
+    mediaSourceCallers.remove(caller);
+    if (mediaSourceCallers.isEmpty()) {
       looper = null;
       timeline = null;
-      manifest = null;
       releaseSourceInternal();
     }
   }

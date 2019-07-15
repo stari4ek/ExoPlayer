@@ -31,6 +31,7 @@ import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
+import com.google.android.exoplayer2.source.MediaSource.MediaSourceCaller;
 import com.google.android.exoplayer2.source.MediaSourceFactory;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 import com.google.android.exoplayer2.source.TrackGroup;
@@ -335,6 +336,7 @@ public final class DownloadHelper {
   private final RendererCapabilities[] rendererCapabilities;
   private final SparseIntArray scratchSet;
   private final Handler callbackHandler;
+  private final Timeline.Window window;
 
   private boolean isPreparedWithMedia;
   private @MonotonicNonNull Callback callback;
@@ -374,6 +376,7 @@ public final class DownloadHelper {
     trackSelector.setParameters(trackSelectorParameters);
     trackSelector.init(/* listener= */ () -> {}, new DummyBandwidthMeter());
     callbackHandler = new Handler(Util.getLooper());
+    window = new Timeline.Window();
   }
 
   /**
@@ -409,7 +412,9 @@ public final class DownloadHelper {
       return null;
     }
     assertPreparedWithMedia();
-    return mediaPreparer.manifest;
+    return mediaPreparer.timeline.getWindowCount() > 0
+        ? mediaPreparer.timeline.getWindow(/* windowIndex= */ 0, window).manifest
+        : null;
   }
 
   /**
@@ -796,7 +801,7 @@ public final class DownloadHelper {
   }
 
   private static final class MediaPreparer
-      implements MediaSource.SourceInfoRefreshListener, MediaPeriod.Callback, Handler.Callback {
+      implements MediaSourceCaller, MediaPeriod.Callback, Handler.Callback {
 
     private static final int MESSAGE_PREPARE_SOURCE = 0;
     private static final int MESSAGE_CHECK_FOR_FAILURE = 1;
@@ -809,12 +814,11 @@ public final class DownloadHelper {
     private final MediaSource mediaSource;
     private final DownloadHelper downloadHelper;
     private final Allocator allocator;
+    private final ArrayList<MediaPeriod> pendingMediaPeriods;
+    private final Handler downloadHelperHandler;
     private final HandlerThread mediaSourceThread;
     private final Handler mediaSourceHandler;
-    private final Handler downloadHelperHandler;
-    private final ArrayList<MediaPeriod> pendingMediaPeriods;
 
-    @Nullable public Object manifest;
     public @MonotonicNonNull Timeline timeline;
     public MediaPeriod @MonotonicNonNull [] mediaPeriods;
 
@@ -824,6 +828,7 @@ public final class DownloadHelper {
       this.mediaSource = mediaSource;
       this.downloadHelper = downloadHelper;
       allocator = new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE);
+      pendingMediaPeriods = new ArrayList<>();
       @SuppressWarnings("methodref.receiver.bound.invalid")
       Handler downloadThreadHandler = Util.createHandler(this::handleDownloadHelperCallbackMessage);
       this.downloadHelperHandler = downloadThreadHandler;
@@ -831,7 +836,6 @@ public final class DownloadHelper {
       mediaSourceThread.start();
       mediaSourceHandler = Util.createHandler(mediaSourceThread.getLooper(), /* callback= */ this);
       mediaSourceHandler.sendEmptyMessage(MESSAGE_PREPARE_SOURCE);
-      pendingMediaPeriods = new ArrayList<>();
     }
 
     public void release() {
@@ -889,17 +893,15 @@ public final class DownloadHelper {
       }
     }
 
-    // MediaSource.SourceInfoRefreshListener implementation.
+    // MediaSource.MediaSourceCaller implementation.
 
     @Override
-    public void onSourceInfoRefreshed(
-        MediaSource source, Timeline timeline, @Nullable Object manifest) {
+    public void onSourceInfoRefreshed(MediaSource source, Timeline timeline) {
       if (this.timeline != null) {
         // Ignore dynamic updates.
         return;
       }
       this.timeline = timeline;
-      this.manifest = manifest;
       mediaPeriods = new MediaPeriod[timeline.getPeriodCount()];
       for (int i = 0; i < mediaPeriods.length; i++) {
         MediaPeriod mediaPeriod =

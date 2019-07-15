@@ -35,8 +35,6 @@ import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** An {@link ExoPlayer} implementation. Instances can be obtained from {@link ExoPlayerFactory}. */
@@ -411,15 +409,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
   }
 
   @Override
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public void sendMessages(ExoPlayerMessage... messages) {
-    for (ExoPlayerMessage message : messages) {
-      createMessage(message.target).setType(message.messageType).setPayload(message.message).send();
-    }
-  }
-
-  @Override
   public PlayerMessage createMessage(Target target) {
     return new PlayerMessage(
         internalPlayer,
@@ -427,36 +416,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
         playbackInfo.timeline,
         getCurrentWindowIndex(),
         internalPlayerHandler);
-  }
-
-  @Override
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public void blockingSendMessages(ExoPlayerMessage... messages) {
-    List<PlayerMessage> playerMessages = new ArrayList<>();
-    for (ExoPlayerMessage message : messages) {
-      playerMessages.add(
-          createMessage(message.target)
-              .setType(message.messageType)
-              .setPayload(message.message)
-              .send());
-    }
-    boolean wasInterrupted = false;
-    for (PlayerMessage message : playerMessages) {
-      boolean blockMessage = true;
-      while (blockMessage) {
-        try {
-          message.blockUntilDelivered();
-          blockMessage = false;
-        } catch (InterruptedException e) {
-          wasInterrupted = true;
-        }
-      }
-    }
-    if (wasInterrupted) {
-      // Restore the interrupted status.
-      Thread.currentThread().interrupt();
-    }
   }
 
   @Override
@@ -512,7 +471,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
   @Override
   public long getTotalBufferedDuration() {
-    return Math.max(0, C.usToMs(playbackInfo.totalBufferedDurationUs));
+    return C.usToMs(playbackInfo.totalBufferedDurationUs);
   }
 
   @Override
@@ -586,11 +545,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
   @Override
   public Timeline getCurrentTimeline() {
     return playbackInfo.timeline;
-  }
-
-  @Override
-  public Object getCurrentManifest() {
-    return playbackInfo.manifest;
   }
 
   // Not private so it can be called from an inner class without going through a thunk method.
@@ -680,7 +634,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
     long contentPositionUs = resetPosition ? C.TIME_UNSET : playbackInfo.contentPositionUs;
     return new PlaybackInfo(
         resetState ? Timeline.EMPTY : playbackInfo.timeline,
-        resetState ? null : playbackInfo.manifest,
         mediaPeriodId,
         startPositionUs,
         contentPositionUs,
@@ -754,7 +707,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
     private final @Player.TimelineChangeReason int timelineChangeReason;
     private final boolean seekProcessed;
     private final boolean playbackStateChanged;
-    private final boolean timelineOrManifestChanged;
+    private final boolean timelineChanged;
     private final boolean isLoadingChanged;
     private final boolean trackSelectorResultChanged;
     private final boolean playWhenReady;
@@ -778,9 +731,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
       this.seekProcessed = seekProcessed;
       this.playWhenReady = playWhenReady;
       playbackStateChanged = previousPlaybackInfo.playbackState != playbackInfo.playbackState;
-      timelineOrManifestChanged =
-          previousPlaybackInfo.timeline != playbackInfo.timeline
-              || previousPlaybackInfo.manifest != playbackInfo.manifest;
+      timelineChanged = previousPlaybackInfo.timeline != playbackInfo.timeline;
       isLoadingChanged = previousPlaybackInfo.isLoading != playbackInfo.isLoading;
       trackSelectorResultChanged =
           previousPlaybackInfo.trackSelectorResult != playbackInfo.trackSelectorResult;
@@ -788,12 +739,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
     @Override
     public void run() {
-      if (timelineOrManifestChanged || timelineChangeReason == TIMELINE_CHANGE_REASON_PREPARED) {
+      if (timelineChanged || timelineChangeReason == TIMELINE_CHANGE_REASON_PREPARED) {
         invokeAll(
             listenerSnapshot,
-            listener ->
-                listener.onTimelineChanged(
-                    playbackInfo.timeline, playbackInfo.manifest, timelineChangeReason));
+            listener -> listener.onTimelineChanged(playbackInfo.timeline, timelineChangeReason));
       }
       if (positionDiscontinuity) {
         invokeAll(

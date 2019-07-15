@@ -42,6 +42,7 @@ import java.util.Map;
  *   <li>rtmp: For fetching data over RTMP. Only supported if the project using ExoPlayer has an
  *       explicit dependency on ExoPlayer's RTMP extension.
  *   <li>data: For parsing data inlined in the URI as defined in RFC 2397.
+ *   <li>udp: For fetching data over UDP (e.g. udp://something.com/media).
  *   <li>http(s): For fetching data over HTTP and HTTPS (e.g. https://www.something.com/media.mp4),
  *       if constructed using {@link #DefaultDataSource(Context, String, boolean)}, or any other
  *       schemes supported by a base data source if constructed using {@link
@@ -55,6 +56,7 @@ public final class DefaultDataSource implements DataSource {
   private static final String SCHEME_ASSET = "asset";
   private static final String SCHEME_CONTENT = "content";
   private static final String SCHEME_RTMP = "rtmp";
+  private static final String SCHEME_UDP = "udp";
   private static final String SCHEME_RAW = RawResourceDataSource.RAW_RESOURCE_SCHEME;
 
   private final Context context;
@@ -66,6 +68,7 @@ public final class DefaultDataSource implements DataSource {
   @Nullable private DataSource assetDataSource;
   @Nullable private DataSource contentDataSource;
   @Nullable private DataSource rtmpDataSource;
+  @Nullable private DataSource udpDataSource;
   @Nullable private DataSource dataSchemeDataSource;
   @Nullable private DataSource rawResourceDataSource;
 
@@ -139,6 +142,7 @@ public final class DefaultDataSource implements DataSource {
     maybeAddListenerToDataSource(assetDataSource, transferListener);
     maybeAddListenerToDataSource(contentDataSource, transferListener);
     maybeAddListenerToDataSource(rtmpDataSource, transferListener);
+    maybeAddListenerToDataSource(udpDataSource, transferListener);
     maybeAddListenerToDataSource(dataSchemeDataSource, transferListener);
     maybeAddListenerToDataSource(rawResourceDataSource, transferListener);
   }
@@ -161,6 +165,8 @@ public final class DefaultDataSource implements DataSource {
       dataSource = getContentDataSource();
     } else if (SCHEME_RTMP.equals(scheme)) {
       dataSource = getRtmpDataSource();
+    } else if (SCHEME_UDP.equals(scheme)) {
+      dataSource = getUdpDataSource();
     } else if (DataSchemeDataSource.SCHEME_DATA.equals(scheme)) {
       dataSource = getDataSchemeDataSource();
     } else if (SCHEME_RAW.equals(scheme)) {
@@ -197,6 +203,14 @@ public final class DefaultDataSource implements DataSource {
         dataSource = null;
       }
     }
+  }
+
+  private DataSource getUdpDataSource() {
+    if (udpDataSource == null) {
+      udpDataSource = new UdpDataSource();
+      addListenersToDataSource(udpDataSource);
+    }
+    return udpDataSource;
   }
 
   private DataSource getFileDataSource() {
