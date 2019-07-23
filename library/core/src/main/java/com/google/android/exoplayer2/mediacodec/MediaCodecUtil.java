@@ -25,10 +25,12 @@ import androidx.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.Pair;
 import android.util.SparseIntArray;
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.video.ColorInfo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -81,10 +83,13 @@ public final class MediaCodecUtil {
   private static final Map<String, Integer> DOLBY_VISION_STRING_TO_LEVEL;
   private static final String CODEC_ID_DVHE = "dvhe";
   private static final String CODEC_ID_DVH1 = "dvh1";
+  // AV1.
+  private static final SparseIntArray AV1_LEVEL_NUMBER_TO_CONST;
+  private static final String CODEC_ID_AV01 = "av01";
   // MP4A AAC.
   private static final SparseIntArray MP4A_AUDIO_OBJECT_TYPE_TO_PROFILE;
   private static final String CODEC_ID_MP4A = "mp4a";
-  
+
   // Lazily initialized.
   private static int maxH264DecodableFrameSize = -1;
 
@@ -227,35 +232,34 @@ public final class MediaCodecUtil {
   }
 
   /**
-   * Returns profile and level (as defined by {@link CodecProfileLevel}) corresponding to the given
-   * codec description string (as defined by RFC 6381).
+   * Returns profile and level (as defined by {@link CodecProfileLevel}) corresponding to the codec
+   * description string (as defined by RFC 6381) of the given format.
    *
-   * @param codec A codec description string, as defined by RFC 6381, or {@code null} if not known.
-   * @return A pair (profile constant, level constant) if {@code codec} is well-formed and
-   *     recognized, or null otherwise
+   * @param format Media format with a codec description string, as defined by RFC 6381.
+   * @return A pair (profile constant, level constant) if the codec of the {@code format} is
+   *     well-formed and recognized, or null otherwise.
    */
-  @Nullable
-  public static Pair<Integer, Integer> getCodecProfileAndLevel(@Nullable String codec) {
-    if (codec == null) {
+  public static Pair<Integer, Integer> getCodecProfileAndLevel(Format format) {
+    if (format.codecs == null) {
       return null;
     }
-    // TODO: Check codec profile/level for AV1 once targeting Android Q and [Internal: b/128552878]
-    // has been fixed.
-    String[] parts = codec.split("\\.");
+    String[] parts = format.codecs.split("\\.");
     switch (parts[0]) {
       case CODEC_ID_AVC1:
       case CODEC_ID_AVC2:
-        return getAvcProfileAndLevel(codec, parts);
+        return getAvcProfileAndLevel(format.codecs, parts);
       case CODEC_ID_VP09:
-        return getVp9ProfileAndLevel(codec, parts);
+        return getVp9ProfileAndLevel(format.codecs, parts);
       case CODEC_ID_HEV1:
       case CODEC_ID_HVC1:
-        return getHevcProfileAndLevel(codec, parts);
+        return getHevcProfileAndLevel(format.codecs, parts);
       case CODEC_ID_DVHE:
       case CODEC_ID_DVH1:
-        return getDolbyVisionProfileAndLevel(codec, parts);
+        return getDolbyVisionProfileAndLevel(format.codecs, parts);
+      case CODEC_ID_AV01:
+        return getAv1ProfileAndLevel(format.codecs, parts, format.colorInfo);
       case CODEC_ID_MP4A:
-        return getAacCodecProfileAndLevel(codec, parts);
+        return getAacCodecProfileAndLevel(format.codecs, parts);
       default:
         return null;
     }
@@ -684,6 +688,52 @@ public final class MediaCodecUtil {
     return new Pair<>(profile, level);
   }
 
+  private static Pair<Integer, Integer> getAv1ProfileAndLevel(
+      String codec, String[] parts, @Nullable ColorInfo colorInfo) {
+    if (parts.length < 4) {
+      Log.w(TAG, "Ignoring malformed AV1 codec string: " + codec);
+      return null;
+    }
+    int profileInteger;
+    int levelInteger;
+    int bitDepthInteger;
+    try {
+      profileInteger = Integer.parseInt(parts[1]);
+      levelInteger = Integer.parseInt(parts[2].substring(0, 2));
+      bitDepthInteger = Integer.parseInt(parts[3]);
+    } catch (NumberFormatException e) {
+      Log.w(TAG, "Ignoring malformed AV1 codec string: " + codec);
+      return null;
+    }
+
+    if (profileInteger != 0) {
+      Log.w(TAG, "Unknown AV1 profile: " + profileInteger);
+      return null;
+    }
+    if (bitDepthInteger != 8 && bitDepthInteger != 10) {
+      Log.w(TAG, "Unknown AV1 bit depth: " + bitDepthInteger);
+      return null;
+    }
+    int profile;
+    if (bitDepthInteger == 8) {
+      profile = CodecProfileLevel.AV1ProfileMain8;
+    } else if (colorInfo != null
+        && (colorInfo.hdrStaticInfo != null
+            || colorInfo.colorTransfer == C.COLOR_TRANSFER_HLG
+            || colorInfo.colorTransfer == C.COLOR_TRANSFER_ST2084)) {
+      profile = CodecProfileLevel.AV1ProfileMain10HDR10;
+    } else {
+      profile = CodecProfileLevel.AV1ProfileMain10;
+    }
+
+    int level = AV1_LEVEL_NUMBER_TO_CONST.get(levelInteger, -1);
+    if (level == -1) {
+      Log.w(TAG, "Unknown AV1 level: " + levelInteger);
+      return null;
+    }
+    return new Pair<>(profile, level);
+  }
+
   /**
    * Conversion values taken from ISO 14496-10 Table A-1.
    *
@@ -1009,6 +1059,32 @@ public final class MediaCodecUtil {
     DOLBY_VISION_STRING_TO_LEVEL.put("07", CodecProfileLevel.DolbyVisionLevelUhd30);
     DOLBY_VISION_STRING_TO_LEVEL.put("08", CodecProfileLevel.DolbyVisionLevelUhd48);
     DOLBY_VISION_STRING_TO_LEVEL.put("09", CodecProfileLevel.DolbyVisionLevelUhd60);
+
+    AV1_LEVEL_NUMBER_TO_CONST = new SparseIntArray();
+    AV1_LEVEL_NUMBER_TO_CONST.put(0, CodecProfileLevel.AV1Level2);
+    AV1_LEVEL_NUMBER_TO_CONST.put(1, CodecProfileLevel.AV1Level21);
+    AV1_LEVEL_NUMBER_TO_CONST.put(2, CodecProfileLevel.AV1Level22);
+    AV1_LEVEL_NUMBER_TO_CONST.put(3, CodecProfileLevel.AV1Level23);
+    AV1_LEVEL_NUMBER_TO_CONST.put(4, CodecProfileLevel.AV1Level3);
+    AV1_LEVEL_NUMBER_TO_CONST.put(5, CodecProfileLevel.AV1Level31);
+    AV1_LEVEL_NUMBER_TO_CONST.put(6, CodecProfileLevel.AV1Level32);
+    AV1_LEVEL_NUMBER_TO_CONST.put(7, CodecProfileLevel.AV1Level33);
+    AV1_LEVEL_NUMBER_TO_CONST.put(8, CodecProfileLevel.AV1Level4);
+    AV1_LEVEL_NUMBER_TO_CONST.put(9, CodecProfileLevel.AV1Level41);
+    AV1_LEVEL_NUMBER_TO_CONST.put(10, CodecProfileLevel.AV1Level42);
+    AV1_LEVEL_NUMBER_TO_CONST.put(11, CodecProfileLevel.AV1Level43);
+    AV1_LEVEL_NUMBER_TO_CONST.put(12, CodecProfileLevel.AV1Level5);
+    AV1_LEVEL_NUMBER_TO_CONST.put(13, CodecProfileLevel.AV1Level51);
+    AV1_LEVEL_NUMBER_TO_CONST.put(14, CodecProfileLevel.AV1Level52);
+    AV1_LEVEL_NUMBER_TO_CONST.put(15, CodecProfileLevel.AV1Level53);
+    AV1_LEVEL_NUMBER_TO_CONST.put(16, CodecProfileLevel.AV1Level6);
+    AV1_LEVEL_NUMBER_TO_CONST.put(17, CodecProfileLevel.AV1Level61);
+    AV1_LEVEL_NUMBER_TO_CONST.put(18, CodecProfileLevel.AV1Level62);
+    AV1_LEVEL_NUMBER_TO_CONST.put(19, CodecProfileLevel.AV1Level63);
+    AV1_LEVEL_NUMBER_TO_CONST.put(20, CodecProfileLevel.AV1Level7);
+    AV1_LEVEL_NUMBER_TO_CONST.put(21, CodecProfileLevel.AV1Level71);
+    AV1_LEVEL_NUMBER_TO_CONST.put(22, CodecProfileLevel.AV1Level72);
+    AV1_LEVEL_NUMBER_TO_CONST.put(23, CodecProfileLevel.AV1Level73);
 
     MP4A_AUDIO_OBJECT_TYPE_TO_PROFILE = new SparseIntArray();
     MP4A_AUDIO_OBJECT_TYPE_TO_PROFILE.put(1, CodecProfileLevel.AACObjectMain);

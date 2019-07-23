@@ -297,9 +297,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
   @Override
   public void onPlaybackParametersChanged(PlaybackParameters playbackParameters) {
-    handler
-        .obtainMessage(MSG_PLAYBACK_PARAMETERS_CHANGED_INTERNAL, playbackParameters)
-        .sendToTarget();
+    sendPlaybackParametersChangedInternal(playbackParameters, /* acknowledgeCommand= */ false);
   }
 
   // Handler.Callback implementation.
@@ -358,7 +356,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
           reselectTracksInternal();
           break;
         case MSG_PLAYBACK_PARAMETERS_CHANGED_INTERNAL:
-          handlePlaybackParameters((PlaybackParameters) msg.obj);
+          handlePlaybackParameters(
+              (PlaybackParameters) msg.obj, /* acknowledgeCommand= */ msg.arg1 != 0);
           break;
         case MSG_SEND_MESSAGE:
           sendMessageInternal((PlayerMessage) msg.obj);
@@ -442,7 +441,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
     loadControl.onPrepared();
     this.mediaSource = mediaSource;
     setState(Player.STATE_BUFFERING);
-    mediaSource.prepareSource(/* listener= */ this, bandwidthMeter.getTransferListener());
+    mediaSource.prepareSource(/* caller= */ this, bandwidthMeter.getTransferListener());
     handler.sendEmptyMessage(MSG_DO_SOME_WORK);
   }
 
@@ -783,6 +782,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
   private void setPlaybackParametersInternal(PlaybackParameters playbackParameters) {
     mediaClock.setPlaybackParameters(playbackParameters);
+    sendPlaybackParametersChangedInternal(
+        mediaClock.getPlaybackParameters(), /* acknowledgeCommand= */ true);
   }
 
   private void setSeekParametersInternal(SeekParameters seekParameters) {
@@ -914,7 +915,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
             startPositionUs);
     if (releaseMediaSource) {
       if (mediaSource != null) {
-        mediaSource.releaseSource(/* listener= */ this);
+        mediaSource.releaseSource(/* caller= */ this);
         mediaSource = null;
       }
     }
@@ -1303,8 +1304,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
       Pair<Object, Long> defaultPosition =
           getPeriodPosition(
               timeline, timeline.getFirstWindowIndex(shuffleModeEnabled), C.TIME_UNSET);
-      newContentPositionUs = defaultPosition.second;
-      newPeriodId = queue.resolveMediaPeriodIdForAds(defaultPosition.first, newContentPositionUs);
+      newPeriodId = queue.resolveMediaPeriodIdForAds(defaultPosition.first, defaultPosition.second);
+      if (!newPeriodId.isAd()) {
+        // Keep unset start position if we need to play an ad first.
+        newContentPositionUs = defaultPosition.second;
+      }
     } else if (timeline.getIndexOfPeriod(newPeriodId.periodUid) == C.INDEX_UNSET) {
       // The current period isn't in the new timeline. Attempt to resolve a subsequent period whose
       // window we can restart from.
@@ -1660,9 +1664,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
     maybeContinueLoading();
   }
 
-  private void handlePlaybackParameters(PlaybackParameters playbackParameters)
+  private void handlePlaybackParameters(
+      PlaybackParameters playbackParameters, boolean acknowledgeCommand)
       throws ExoPlaybackException {
-    eventHandler.obtainMessage(MSG_PLAYBACK_PARAMETERS_CHANGED, playbackParameters).sendToTarget();
+    eventHandler
+        .obtainMessage(
+            MSG_PLAYBACK_PARAMETERS_CHANGED, acknowledgeCommand ? 1 : 0, 0, playbackParameters)
+        .sendToTarget();
     updateTrackSelectionPlaybackSpeed(playbackParameters.speed);
     for (Renderer renderer : renderers) {
       if (renderer != null) {
@@ -1815,6 +1823,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private void updateLoadControlTrackSelection(
       TrackGroupArray trackGroups, TrackSelectorResult trackSelectorResult) {
     loadControl.onTracksSelected(renderers, trackGroups, trackSelectorResult.selections);
+  }
+
+  private void sendPlaybackParametersChangedInternal(
+      PlaybackParameters playbackParameters, boolean acknowledgeCommand) {
+    handler
+        .obtainMessage(
+            MSG_PLAYBACK_PARAMETERS_CHANGED_INTERNAL,
+            acknowledgeCommand ? 1 : 0,
+            0,
+            playbackParameters)
+        .sendToTarget();
   }
 
   private static Format[] getFormats(TrackSelection newSelection) {

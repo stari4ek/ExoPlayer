@@ -19,7 +19,7 @@ project.ext {
     // targetSdkVersion = 28
     // TVirl: do not jump to 28 - don't rush to "no plain text http" yet
     targetSdkVersion = 27
-    compileSdkVersion = 28
+    compileSdkVersion = 29
     dexmakerVersion = '2.21.0'
     mockitoVersion = '2.25.0'
     robolectricVersion = '4.3'

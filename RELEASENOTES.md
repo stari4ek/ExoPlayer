@@ -21,6 +21,19 @@
   `SourceInfoRefreshListener` to `MediaSourceCaller`.
 * Flac extension: Parse `VORBIS_COMMENT` metadata
   ([#5527](https://github.com/google/ExoPlayer/issues/5527)).
+* Set `compileSdkVersion` to 29 to use Android Q APIs.
+* Add `enable` and `disable` methods to `MediaSource` to improve resource
+  management in playlists.
+* Fix issue where initial seek positions get ignored when playing a preroll ad.
+* Fix `DataSchemeDataSource` re-opening and range requests
+  ([#6192](https://github.com/google/ExoPlayer/issues/6192)).
+* Switch normalized BCP-47 language codes to use 2-letter ISO 639-1 language
+  tags instead of 3-letter ISO 639-2 language tags.
+* Fix issue where invalid language tags were normalized to "und" instead of
+  keeping the original
+  ([#6153](https://github.com/google/ExoPlayer/issues/6153)).
+* Add ability to specify a description when creating notification channels via
+  ExoPlayer library classes.
 
 ### 2.10.3 ###
 
