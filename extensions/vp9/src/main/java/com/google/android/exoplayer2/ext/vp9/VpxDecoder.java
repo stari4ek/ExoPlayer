@@ -22,17 +22,12 @@ import com.google.android.exoplayer2.decoder.CryptoInfo;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.drm.DecryptionException;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
+import com.google.android.exoplayer2.video.VideoDecoderInputBuffer;
 import java.nio.ByteBuffer;
 
-/**
- * Vpx decoder.
- */
-/* package */ final class VpxDecoder extends
-    SimpleDecoder<VpxInputBuffer, VpxOutputBuffer, VpxDecoderException> {
-
-  public static final int OUTPUT_MODE_NONE = -1;
-  public static final int OUTPUT_MODE_YUV = 0;
-  public static final int OUTPUT_MODE_SURFACE_YUV = 1;
+/** Vpx decoder. */
+/* package */ final class VpxDecoder
+    extends SimpleDecoder<VideoDecoderInputBuffer, VpxOutputBuffer, VpxDecoderException> {
 
   private static final int NO_ERROR = 0;
   private static final int DECODE_ERROR = 1;
@@ -41,7 +36,7 @@ import java.nio.ByteBuffer;
   private final ExoMediaCrypto exoMediaCrypto;
   private final long vpxDecContext;
 
-  private volatile int outputMode;
+  @C.VideoOutputMode private volatile int outputMode;
 
   /**
    * Creates a VP9 decoder.
@@ -65,7 +60,7 @@ import java.nio.ByteBuffer;
       boolean enableRowMultiThreadMode,
       int threads)
       throws VpxDecoderException {
-    super(new VpxInputBuffer[numInputBuffers], new VpxOutputBuffer[numOutputBuffers]);
+    super(new VideoDecoderInputBuffer[numInputBuffers], new VpxOutputBuffer[numOutputBuffers]);
     if (!VpxLibrary.isAvailable()) {
       throw new VpxDecoderException("Failed to load decoder native libraries.");
     }
@@ -88,16 +83,15 @@ import java.nio.ByteBuffer;
   /**
    * Sets the output mode for frames rendered by the decoder.
    *
-   * @param outputMode The output mode. One of {@link #OUTPUT_MODE_NONE} and {@link
-   *     #OUTPUT_MODE_YUV}.
+   * @param outputMode The output mode.
    */
-  public void setOutputMode(int outputMode) {
+  public void setOutputMode(@C.VideoOutputMode int outputMode) {
     this.outputMode = outputMode;
   }
 
   @Override
-  protected VpxInputBuffer createInputBuffer() {
-    return new VpxInputBuffer();
+  protected VideoDecoderInputBuffer createInputBuffer() {
+    return new VideoDecoderInputBuffer();
   }
 
   @Override
@@ -109,7 +103,7 @@ import java.nio.ByteBuffer;
   protected void releaseOutputBuffer(VpxOutputBuffer buffer) {
     // Decode only frames do not acquire a reference on the internal decoder buffer and thus do not
     // require a call to vpxReleaseFrame.
-    if (outputMode == OUTPUT_MODE_SURFACE_YUV && !buffer.isDecodeOnly()) {
+    if (outputMode == C.VIDEO_OUTPUT_MODE_SURFACE_YUV && !buffer.isDecodeOnly()) {
       vpxReleaseFrame(vpxDecContext, buffer);
     }
     super.releaseOutputBuffer(buffer);
@@ -123,7 +117,7 @@ import java.nio.ByteBuffer;
   @Override
   @Nullable
   protected VpxDecoderException decode(
-      VpxInputBuffer inputBuffer, VpxOutputBuffer outputBuffer, boolean reset) {
+      VideoDecoderInputBuffer inputBuffer, VpxOutputBuffer outputBuffer, boolean reset) {
     ByteBuffer inputData = inputBuffer.data;
     int inputSize = inputData.limit();
     CryptoInfo cryptoInfo = inputBuffer.cryptoInfo;

@@ -2,10 +2,11 @@
 
 ### dev-v2 (not yet released) ###
 
+* Update `DefaultTrackSelector` to apply a viewport constraint for the default
+  display by default.
 * Add `PlaybackStatsListener` to collect `PlaybackStats` for playbacks analysis
   and analytics reporting (TODO: link to developer guide page/blog post).
 * Add basic DRM support to the Cast demo app.
-* Offline: Add `Scheduler` implementation that uses `WorkManager`.
 * Assume that encrypted content requires secure decoders in renderer support
   checks ([#5568](https://github.com/google/ExoPlayer/issues/5568)).
 * Decoders: Prefer decoders that advertise format support over ones that do not,
@@ -19,21 +20,41 @@
   `SourceInfoRefreshListener` anymore. Instead make it accessible through
   `Player.getCurrentManifest()` and `Timeline.Window.manifest`. Also rename
   `SourceInfoRefreshListener` to `MediaSourceCaller`.
-* Flac extension: Parse `VORBIS_COMMENT` metadata
-  ([#5527](https://github.com/google/ExoPlayer/issues/5527)).
 * Set `compileSdkVersion` to 29 to use Android Q APIs.
 * Add `enable` and `disable` methods to `MediaSource` to improve resource
   management in playlists.
-* Fix issue where initial seek positions get ignored when playing a preroll ad.
-* Fix `DataSchemeDataSource` re-opening and range requests
-  ([#6192](https://github.com/google/ExoPlayer/issues/6192)).
+* Improve text selection logic to always prefer the better language matches
+  over other selection parameters.
+* Remove `AnalyticsCollector.Factory`. Instances can be created directly and
+  the `Player` set later using `AnalyticsCollector.setPlayer`.
+* Fix issue when calling `performClick` on `PlayerView` without
+  `PlayerControlView`
+  ([#6260](https://github.com/google/ExoPlayer/issues/6260)).
+
+### 2.10.4 ###
+
+* Offline: Add `Scheduler` implementation that uses `WorkManager`.
+* Add ability to specify a description when creating notification channels via
+  ExoPlayer library classes.
 * Switch normalized BCP-47 language codes to use 2-letter ISO 639-1 language
   tags instead of 3-letter ISO 639-2 language tags.
+* Ensure the `SilenceMediaSource` position is in range
+  ([#6229](https://github.com/google/ExoPlayer/issues/6229)).
+* WAV: Calculate correct duration for clipped streams
+  ([#6241](https://github.com/google/ExoPlayer/issues/6241)).
+* MP3: Use CBR header bitrate, not calculated bitrate. This reverts a change
+  from 2.9.3 ([#6238](https://github.com/google/ExoPlayer/issues/6238)).
+* Flac extension: Parse `VORBIS_COMMENT` and `PICTURE` metadata
+  ([#5527](https://github.com/google/ExoPlayer/issues/5527)).
+* Fix issue where initial seek positions get ignored when playing a preroll ad
+  ([#6201](https://github.com/google/ExoPlayer/issues/6201)).
 * Fix issue where invalid language tags were normalized to "und" instead of
   keeping the original
   ([#6153](https://github.com/google/ExoPlayer/issues/6153)).
-* Add ability to specify a description when creating notification channels via
-  ExoPlayer library classes.
+* Fix `DataSchemeDataSource` re-opening and range requests
+  ([#6192](https://github.com/google/ExoPlayer/issues/6192)).
+* Fix Flac and ALAC playback on some LG devices
+  ([#5938](https://github.com/google/ExoPlayer/issues/5938)).
 
 ### 2.10.3 ###
 

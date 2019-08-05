@@ -13,8 +13,8 @@
 // limitations under the License.
 project.ext {
     // ExoPlayer version and version code.
-    releaseVersion = '2.10.3'
-    releaseVersionCode = 2010003
+    releaseVersion = '2.10.4'
+    releaseVersionCode = 2010004
     minSdkVersion = 16
     // targetSdkVersion = 28
     // TVirl: do not jump to 28 - don't rush to "no plain text http" yet
@@ -26,6 +26,7 @@ project.ext {
     autoValueVersion = '1.6'
     autoServiceVersion = '1.0-rc4'
     checkerframeworkVersion = '2.5.0'
+    jsr305Version = '3.0.2'
     androidXTestVersion = '1.1.0'
     truthVersion = '0.44'
     modulePrefix = ':'

@@ -17,41 +17,46 @@ package com.google.android.exoplayer2.castdemo;
 
 import android.content.Context;
 import android.net.Uri;
-import androidx.annotation.Nullable;
 import android.view.KeyEvent;
 import android.view.View;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlayerFactory;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Player.DiscontinuityReason;
 import com.google.android.exoplayer2.Player.EventListener;
 import com.google.android.exoplayer2.Player.TimelineChangeReason;
-import com.google.android.exoplayer2.RenderersFactory;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Timeline.Period;
+import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
+import com.google.android.exoplayer2.drm.DrmSessionManager;
+import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
+import com.google.android.exoplayer2.drm.FrameworkMediaDrm;
+import com.google.android.exoplayer2.drm.HttpMediaDrmCallback;
+import com.google.android.exoplayer2.drm.UnsupportedDrmException;
 import com.google.android.exoplayer2.ext.cast.CastPlayer;
+import com.google.android.exoplayer2.ext.cast.DefaultMediaItemConverter;
 import com.google.android.exoplayer2.ext.cast.MediaItem;
+import com.google.android.exoplayer2.ext.cast.MediaItemConverter;
 import com.google.android.exoplayer2.ext.cast.SessionAvailabilityListener;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
+import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.source.dash.DashMediaSource;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
+import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
+import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.ui.PlayerControlView;
 import com.google.android.exoplayer2.ui.PlayerView;
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSourceFactory;
-import com.google.android.exoplayer2.util.Assertions;
-import com.google.android.gms.cast.MediaInfo;
-import com.google.android.gms.cast.MediaMetadata;
 import com.google.android.gms.cast.MediaQueueItem;
 import com.google.android.gms.cast.framework.CastContext;
 import java.util.ArrayList;
-import org.json.JSONException;
-import org.json.JSONObject;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 /** Manages players and an internal media queue for the demo app. */
 /* package */ class PlayerManager implements EventListener, SessionAvailabilityListener {
@@ -61,6 +66,13 @@ import org.json.JSONObject;
 
     /** Called when the currently played item of the media queue changes. */
     void onQueuePositionChanged(int previousIndex, int newIndex);
+
+    /**
+     * Called when a track of type {@code trackType} is not supported by the player.
+     *
+     * @param trackType One of the {@link C}{@code .TRACK_TYPE_*} constants.
+     */
+    void onUnsupportedTrack(int trackType);
   }
 
   private static final String USER_AGENT = "ExoCastDemoPlayer";
@@ -69,12 +81,16 @@ import org.json.JSONObject;
 
   private final PlayerView localPlayerView;
   private final PlayerControlView castControlView;
+  private final DefaultTrackSelector trackSelector;
   private final SimpleExoPlayer exoPlayer;
   private final CastPlayer castPlayer;
   private final ArrayList<MediaItem> mediaQueue;
   private final Listener listener;
   private final ConcatenatingMediaSource concatenatingMediaSource;
+  private final MediaItemConverter mediaItemConverter;
+  private final IdentityHashMap<MediaSource, FrameworkMediaDrm> mediaDrms;
 
+  private TrackGroupArray lastSeenTrackGroupArray;
   private int currentItemIndex;
   private Player currentPlayer;
 
@@ -99,10 +115,11 @@ import org.json.JSONObject;
     mediaQueue = new ArrayList<>();
     currentItemIndex = C.INDEX_UNSET;
     concatenatingMediaSource = new ConcatenatingMediaSource();
+    mediaItemConverter = new DefaultMediaItemConverter();
+    mediaDrms = new IdentityHashMap<>();
 
-    DefaultTrackSelector trackSelector = new DefaultTrackSelector();
-    RenderersFactory renderersFactory = new DefaultRenderersFactory(context);
-    exoPlayer = ExoPlayerFactory.newSimpleInstance(context, renderersFactory, trackSelector);
+    trackSelector = new DefaultTrackSelector(context);
+    exoPlayer = ExoPlayerFactory.newSimpleInstance(context, trackSelector);
     exoPlayer.addListener(this);
     localPlayerView.setPlayer(exoPlayer);
 
@@ -139,7 +156,7 @@ import org.json.JSONObject;
     mediaQueue.add(item);
     concatenatingMediaSource.addMediaSource(buildMediaSource(item));
     if (currentPlayer == castPlayer) {
-      castPlayer.addItems(buildMediaQueueItem(item));
+      castPlayer.addItems(mediaItemConverter.toMediaQueueItem(item));
     }
   }
 
@@ -169,7 +186,8 @@ import org.json.JSONObject;
     if (itemIndex == -1) {
       return false;
     }
-    concatenatingMediaSource.removeMediaSource(itemIndex);
+    MediaSource removedMediaSource = concatenatingMediaSource.removeMediaSource(itemIndex);
+    releaseMediaDrmOfMediaSource(removedMediaSource);
     if (currentPlayer == castPlayer) {
       if (castPlayer.getPlaybackState() != Player.STATE_IDLE) {
         Timeline castTimeline = castPlayer.getCurrentTimeline();
@@ -245,6 +263,9 @@ import org.json.JSONObject;
     currentItemIndex = C.INDEX_UNSET;
     mediaQueue.clear();
     concatenatingMediaSource.clear();
+    for (FrameworkMediaDrm mediaDrm : mediaDrms.values()) {
+      mediaDrm.release();
+    }
     castPlayer.setSessionAvailabilityListener(null);
     castPlayer.release();
     localPlayerView.setPlayer(null);
@@ -266,6 +287,25 @@ import org.json.JSONObject;
   @Override
   public void onTimelineChanged(Timeline timeline, @TimelineChangeReason int reason) {
     updateCurrentItemIndex();
+  }
+
+  @Override
+  public void onTracksChanged(TrackGroupArray trackGroups, TrackSelectionArray trackSelections) {
+    if (currentPlayer == exoPlayer && trackGroups != lastSeenTrackGroupArray) {
+      MappingTrackSelector.MappedTrackInfo mappedTrackInfo =
+          trackSelector.getCurrentMappedTrackInfo();
+      if (mappedTrackInfo != null) {
+        if (mappedTrackInfo.getTypeSupport(C.TRACK_TYPE_VIDEO)
+            == MappingTrackSelector.MappedTrackInfo.RENDERER_SUPPORT_UNSUPPORTED_TRACKS) {
+          listener.onUnsupportedTrack(C.TRACK_TYPE_VIDEO);
+        }
+        if (mappedTrackInfo.getTypeSupport(C.TRACK_TYPE_AUDIO)
+            == MappingTrackSelector.MappedTrackInfo.RENDERER_SUPPORT_UNSUPPORTED_TRACKS) {
+          listener.onUnsupportedTrack(C.TRACK_TYPE_AUDIO);
+        }
+      }
+      lastSeenTrackGroupArray = trackGroups;
+    }
   }
 
   // CastPlayer.SessionAvailabilityListener implementation.
@@ -350,7 +390,7 @@ import org.json.JSONObject;
     if (currentPlayer == castPlayer && castPlayer.getCurrentTimeline().isEmpty()) {
       MediaQueueItem[] items = new MediaQueueItem[mediaQueue.size()];
       for (int i = 0; i < items.length; i++) {
-        items[i] = buildMediaQueueItem(mediaQueue.get(i));
+        items[i] = mediaItemConverter.toMediaQueueItem(mediaQueue.get(i));
       }
       castPlayer.loadItems(items, itemIndex, positionMs, Player.REPEAT_MODE_OFF);
     } else {
@@ -367,66 +407,78 @@ import org.json.JSONObject;
     }
   }
 
-  private static MediaSource buildMediaSource(MediaItem item) {
-    Uri uri = item.media.uri;
-    switch (item.mimeType) {
-      case DemoUtil.MIME_TYPE_SS:
-        return new SsMediaSource.Factory(DATA_SOURCE_FACTORY).createMediaSource(uri);
-      case DemoUtil.MIME_TYPE_DASH:
-        return new DashMediaSource.Factory(DATA_SOURCE_FACTORY).createMediaSource(uri);
-      case DemoUtil.MIME_TYPE_HLS:
-        return new HlsMediaSource.Factory(DATA_SOURCE_FACTORY).createMediaSource(uri);
-      case DemoUtil.MIME_TYPE_VIDEO_MP4:
-        return new ProgressiveMediaSource.Factory(DATA_SOURCE_FACTORY).createMediaSource(uri);
-      default:
-        throw new IllegalStateException("Unsupported type: " + item.mimeType);
+  private MediaSource buildMediaSource(MediaItem item) {
+    Uri uri = item.uri;
+    String mimeType = item.mimeType;
+    if (mimeType == null) {
+      throw new IllegalArgumentException("mimeType is required");
     }
-  }
 
-  private static MediaQueueItem buildMediaQueueItem(MediaItem item) {
-    MediaMetadata movieMetadata = new MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE);
-    movieMetadata.putString(MediaMetadata.KEY_TITLE, item.title);
-    MediaInfo.Builder mediaInfoBuilder =
-        new MediaInfo.Builder(item.media.uri.toString())
-            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(item.mimeType)
-            .setMetadata(movieMetadata);
-    if (!item.drmSchemes.isEmpty()) {
-      MediaItem.DrmScheme scheme = item.drmSchemes.get(0);
+    FrameworkMediaDrm mediaDrm = null;
+    DrmSessionManager<FrameworkMediaCrypto> drmSessionManager =
+        DrmSessionManager.getDummyDrmSessionManager();
+    MediaItem.DrmConfiguration drmConfiguration = item.drmConfiguration;
+    if (drmConfiguration != null) {
+      String licenseServerUrl =
+          drmConfiguration.licenseUri != null ? drmConfiguration.licenseUri.toString() : "";
+      HttpMediaDrmCallback drmCallback =
+          new HttpMediaDrmCallback(licenseServerUrl, DATA_SOURCE_FACTORY);
+      for (Map.Entry<String, String> requestHeader : drmConfiguration.requestHeaders.entrySet()) {
+        drmCallback.setKeyRequestProperty(requestHeader.getKey(), requestHeader.getValue());
+      }
       try {
-        // This configuration is only intended for testing and should *not* be used in production
-        // environments. See comment in the Cast Demo app's options provider.
-        JSONObject drmConfiguration = getDrmConfigurationJson(scheme);
-        if (drmConfiguration != null) {
-          mediaInfoBuilder.setCustomData(drmConfiguration);
-        }
-      } catch (JSONException e) {
-        throw new RuntimeException(e);
+        mediaDrm = FrameworkMediaDrm.newInstance(drmConfiguration.uuid);
+        drmSessionManager =
+            new DefaultDrmSessionManager<>(
+                drmConfiguration.uuid,
+                mediaDrm,
+                drmCallback,
+                /* optionalKeyRequestParameters= */ null,
+                /* multiSession= */ true);
+      } catch (UnsupportedDrmException e) {
+        // Do nothing. The track selector will avoid selecting the DRM protected tracks.
       }
     }
-    return new MediaQueueItem.Builder(mediaInfoBuilder.build()).build();
+
+    MediaSource createdMediaSource;
+    switch (mimeType) {
+      case DemoUtil.MIME_TYPE_SS:
+        createdMediaSource =
+            new SsMediaSource.Factory(DATA_SOURCE_FACTORY)
+                .setDrmSessionManager(drmSessionManager)
+                .createMediaSource(uri);
+        break;
+      case DemoUtil.MIME_TYPE_DASH:
+        createdMediaSource =
+            new DashMediaSource.Factory(DATA_SOURCE_FACTORY)
+                .setDrmSessionManager(drmSessionManager)
+                .createMediaSource(uri);
+        break;
+      case DemoUtil.MIME_TYPE_HLS:
+        createdMediaSource =
+            new HlsMediaSource.Factory(DATA_SOURCE_FACTORY)
+                .setDrmSessionManager(drmSessionManager)
+                .createMediaSource(uri);
+        break;
+      case DemoUtil.MIME_TYPE_VIDEO_MP4:
+        createdMediaSource =
+            new ProgressiveMediaSource.Factory(DATA_SOURCE_FACTORY)
+                .setDrmSessionManager(drmSessionManager)
+                .createMediaSource(uri);
+        break;
+      default:
+        throw new IllegalArgumentException("mimeType is unsupported: " + mimeType);
+    }
+    if (mediaDrm != null) {
+      mediaDrms.put(createdMediaSource, mediaDrm);
+    }
+    return createdMediaSource;
   }
 
-  @Nullable
-  private static JSONObject getDrmConfigurationJson(MediaItem.DrmScheme scheme)
-      throws JSONException {
-    String drmScheme;
-    if (C.WIDEVINE_UUID.equals(scheme.uuid)) {
-      drmScheme = "widevine";
-    } else if (C.PLAYREADY_UUID.equals(scheme.uuid)) {
-      drmScheme = "playready";
-    } else {
-      return null;
+  private void releaseMediaDrmOfMediaSource(MediaSource mediaSource) {
+    FrameworkMediaDrm mediaDrmToRelease = mediaDrms.remove(mediaSource);
+    if (mediaDrmToRelease != null) {
+      mediaDrmToRelease.release();
     }
-    MediaItem.UriBundle licenseServer = Assertions.checkNotNull(scheme.licenseServer);
-    JSONObject exoplayerConfig =
-        new JSONObject().put("withCredentials", false).put("protectionSystem", drmScheme);
-    if (!licenseServer.uri.equals(Uri.EMPTY)) {
-      exoplayerConfig.put("licenseUrl", licenseServer.uri.toString());
-    }
-    if (!licenseServer.requestHeaders.isEmpty()) {
-      exoplayerConfig.put("headers", new JSONObject(licenseServer.requestHeaders));
-    }
-    return new JSONObject().put("exoPlayerConfig", exoplayerConfig);
   }
 }

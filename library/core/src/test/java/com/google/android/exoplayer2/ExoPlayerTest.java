@@ -28,6 +28,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.Player.DiscontinuityReason;
 import com.google.android.exoplayer2.Player.EventListener;
 import com.google.android.exoplayer2.Timeline.Window;
+import com.google.android.exoplayer2.analytics.AnalyticsListener;
 import com.google.android.exoplayer2.source.ClippingMediaSource;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
@@ -51,7 +52,6 @@ import com.google.android.exoplayer2.testutil.FakeTimeline;
 import com.google.android.exoplayer2.testutil.FakeTimeline.TimelineWindowDefinition;
 import com.google.android.exoplayer2.testutil.FakeTrackSelection;
 import com.google.android.exoplayer2.testutil.FakeTrackSelector;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.TransferListener;
@@ -60,6 +60,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1436,6 +1437,46 @@ public final class ExoPlayerTest {
   }
 
   @Test
+  public void playbackErrorAndReprepareWithPositionResetKeepsWindowSequenceNumber()
+      throws Exception {
+    FakeMediaSource mediaSource = new FakeMediaSource(new FakeTimeline(/* windowCount= */ 1));
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder("playbackErrorWithResetKeepsWindowSequenceNumber")
+            .pause()
+            .waitForPlaybackState(Player.STATE_READY)
+            .throwPlaybackException(ExoPlaybackException.createForSource(new IOException()))
+            .waitForPlaybackState(Player.STATE_IDLE)
+            .prepareSource(mediaSource, /* resetPosition= */ true, /* resetState= */ false)
+            .waitForPlaybackState(Player.STATE_READY)
+            .play()
+            .build();
+    HashSet<Long> reportedWindowSequenceNumbers = new HashSet<>();
+    AnalyticsListener listener =
+        new AnalyticsListener() {
+          @Override
+          public void onPlayerStateChanged(
+              EventTime eventTime, boolean playWhenReady, int playbackState) {
+            if (eventTime.mediaPeriodId != null) {
+              reportedWindowSequenceNumbers.add(eventTime.mediaPeriodId.windowSequenceNumber);
+            }
+          }
+        };
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder()
+            .setMediaSource(mediaSource)
+            .setActionSchedule(actionSchedule)
+            .setAnalyticsListener(listener)
+            .build(context);
+    try {
+      testRunner.start().blockUntilActionScheduleFinished(TIMEOUT_MS).blockUntilEnded(TIMEOUT_MS);
+      fail();
+    } catch (ExoPlaybackException e) {
+      // Expected exception.
+    }
+    assertThat(reportedWindowSequenceNumbers).hasSize(1);
+  }
+
+  @Test
   public void testPlaybackErrorTwiceStillKeepsTimeline() throws Exception {
     final Timeline timeline = new FakeTimeline(/* windowCount= */ 1);
     final FakeMediaSource mediaSource2 = new FakeMediaSource(/* timeline= */ null);
@@ -2253,17 +2294,15 @@ public final class ExoPlayerTest {
   public void testUpdateTrackSelectorThenSeekToUnpreparedPeriod_returnsEmptyTrackGroups()
       throws Exception {
     // Use unset duration to prevent pre-loading of the second window.
-    Timeline fakeTimeline =
+    Timeline timelineUnsetDuration =
         new FakeTimeline(
             new TimelineWindowDefinition(
                 /* isSeekable= */ true, /* isDynamic= */ false, /* durationUs= */ C.TIME_UNSET));
-    MediaSource[] fakeMediaSources = {
-      new FakeMediaSource(fakeTimeline, Builder.VIDEO_FORMAT),
-      new FakeMediaSource(fakeTimeline, Builder.AUDIO_FORMAT)
-    };
-    MediaSource mediaSource = new ConcatenatingMediaSource(fakeMediaSources);
-    FakeRenderer renderer = new FakeRenderer(Builder.VIDEO_FORMAT);
-    DefaultTrackSelector trackSelector = new DefaultTrackSelector();
+    Timeline timelineSetDuration = new FakeTimeline(/* windowCount= */ 1);
+    MediaSource mediaSource =
+        new ConcatenatingMediaSource(
+            new FakeMediaSource(timelineUnsetDuration, Builder.VIDEO_FORMAT),
+            new FakeMediaSource(timelineSetDuration, Builder.AUDIO_FORMAT));
     ActionSchedule actionSchedule =
         new ActionSchedule.Builder("testUpdateTrackSelectorThenSeekToUnpreparedPeriod")
             .pause()
@@ -2275,8 +2314,7 @@ public final class ExoPlayerTest {
     List<TrackSelectionArray> trackSelectionsList = new ArrayList<>();
     new Builder()
         .setMediaSource(mediaSource)
-        .setTrackSelector(trackSelector)
-        .setRenderers(renderer)
+        .setSupportedFormats(Builder.VIDEO_FORMAT, Builder.AUDIO_FORMAT)
         .setActionSchedule(actionSchedule)
         .setEventListener(
             new EventListener() {
