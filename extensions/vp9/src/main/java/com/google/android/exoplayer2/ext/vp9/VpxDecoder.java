@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.decoder.CryptoInfo;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.drm.DecryptionException;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
+import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoDecoderInputBuffer;
 import java.nio.ByteBuffer;
 
@@ -33,7 +34,7 @@ import java.nio.ByteBuffer;
   private static final int DECODE_ERROR = 1;
   private static final int DRM_ERROR = 2;
 
-  private final ExoMediaCrypto exoMediaCrypto;
+  @Nullable private final ExoMediaCrypto exoMediaCrypto;
   private final long vpxDecContext;
 
   @C.VideoOutputMode private volatile int outputMode;
@@ -55,7 +56,7 @@ import java.nio.ByteBuffer;
       int numInputBuffers,
       int numOutputBuffers,
       int initialInputBufferSize,
-      ExoMediaCrypto exoMediaCrypto,
+      @Nullable ExoMediaCrypto exoMediaCrypto,
       boolean disableLoopFilter,
       boolean enableRowMultiThreadMode,
       int threads)
@@ -118,7 +119,7 @@ import java.nio.ByteBuffer;
   @Nullable
   protected VpxDecoderException decode(
       VideoDecoderInputBuffer inputBuffer, VpxOutputBuffer outputBuffer, boolean reset) {
-    ByteBuffer inputData = inputBuffer.data;
+    ByteBuffer inputData = Util.castNonNull(inputBuffer.data);
     int inputSize = inputData.limit();
     CryptoInfo cryptoInfo = inputBuffer.cryptoInfo;
     final long result = inputBuffer.isEncrypted()
@@ -170,9 +171,19 @@ import java.nio.ByteBuffer;
 
   private native long vpxClose(long context);
   private native long vpxDecode(long context, ByteBuffer encoded, int length);
-  private native long vpxSecureDecode(long context, ByteBuffer encoded, int length,
-      ExoMediaCrypto mediaCrypto, int inputMode, byte[] key, byte[] iv,
-      int numSubSamples, int[] numBytesOfClearData, int[] numBytesOfEncryptedData);
+
+  private native long vpxSecureDecode(
+      long context,
+      ByteBuffer encoded,
+      int length,
+      @Nullable ExoMediaCrypto mediaCrypto,
+      int inputMode,
+      byte[] key,
+      byte[] iv,
+      int numSubSamples,
+      int[] numBytesOfClearData,
+      int[] numBytesOfEncryptedData);
+
   private native int vpxGetFrame(long context, VpxOutputBuffer outputBuffer);
 
   /**

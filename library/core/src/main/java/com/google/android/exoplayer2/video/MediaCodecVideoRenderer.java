@@ -308,8 +308,10 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @Override
-  protected int supportsFormat(MediaCodecSelector mediaCodecSelector,
-      DrmSessionManager<FrameworkMediaCrypto> drmSessionManager, Format format)
+  protected int supportsFormat(
+      MediaCodecSelector mediaCodecSelector,
+      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
+      Format format)
       throws DecoderQueryException {
     String mimeType = format.sampleMimeType;
     if (!MimeTypes.isVideo(mimeType)) {
@@ -601,7 +603,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       MediaCodecInfo codecInfo,
       MediaCodec codec,
       Format format,
-      MediaCrypto crypto,
+      @Nullable MediaCrypto crypto,
       float codecOperatingRate) {
     String codecMimeType = codecInfo.codecMimeType;
     codecMaxValues = getCodecMaxValues(codecInfo, format, getStreamFormats());
@@ -1636,6 +1638,11 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   protected Surface getSurface() {
     return surface;
+  }
+
+  /** Returns true if the first frame has been rendered (playback has not necessarily begun). */
+  protected final boolean haveRenderedFirstFrame() {
+    return renderedFirstFrame;
   }
 
   protected static final class CodecMaxValues {

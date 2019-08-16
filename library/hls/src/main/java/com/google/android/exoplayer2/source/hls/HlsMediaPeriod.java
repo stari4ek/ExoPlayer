@@ -25,6 +25,7 @@ import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.drm.DrmSession;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.extractor.Extractor;
+import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaPeriod;
@@ -54,6 +55,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import org.checkerframework.checker.nullness.compatqual.NullableType;
 
 /**
  * A {@link MediaPeriod} that loads an HLS stream.
@@ -249,8 +251,12 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   }
 
   @Override
-  public long selectTracks(TrackSelection[] selections, boolean[] mayRetainStreamFlags,
-      SampleStream[] streams, boolean[] streamResetFlags, long positionUs) {
+  public long selectTracks(
+      @NullableType TrackSelection[] selections,
+      boolean[] mayRetainStreamFlags,
+      @NullableType SampleStream[] streams,
+      boolean[] streamResetFlags,
+      long positionUs) {
     // Map each selection and stream onto a child period index.
     int[] streamChildIndices = new int[selections.length];
     int[] selectionChildIndices = new int[selections.length];
@@ -782,6 +788,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
         variantFormat.containerMimeType,
         sampleMimeType,
         codecs,
+        variantFormat.metadata,
         variantFormat.bitrate,
         variantFormat.width,
         variantFormat.height,
@@ -794,6 +801,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
   private static Format deriveAudioFormat(
       Format variantFormat, Format mediaTagFormat, boolean isPrimaryTrackInVariant) {
     String codecs;
+    Metadata metadata;
     int channelCount = Format.NO_VALUE;
     int selectionFlags = 0;
     int roleFlags = 0;
@@ -801,6 +809,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
     String label = null;
     if (mediaTagFormat != null) {
       codecs = mediaTagFormat.codecs;
+      metadata = mediaTagFormat.metadata;
       channelCount = mediaTagFormat.channelCount;
       selectionFlags = mediaTagFormat.selectionFlags;
       roleFlags = mediaTagFormat.roleFlags;
@@ -808,6 +817,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
       label = mediaTagFormat.label;
     } else {
       codecs = Util.getCodecsOfType(variantFormat.codecs, C.TRACK_TYPE_AUDIO);
+      metadata = variantFormat.metadata;
       if (isPrimaryTrackInVariant) {
         channelCount = variantFormat.channelCount;
         selectionFlags = variantFormat.selectionFlags;
@@ -824,6 +834,7 @@ public final class HlsMediaPeriod implements MediaPeriod, HlsSampleStreamWrapper
         variantFormat.containerMimeType,
         sampleMimeType,
         codecs,
+        metadata,
         bitrate,
         channelCount,
         /* sampleRate= */ Format.NO_VALUE,
