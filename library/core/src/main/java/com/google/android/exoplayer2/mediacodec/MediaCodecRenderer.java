@@ -23,7 +23,6 @@ import android.media.MediaCrypto;
 import android.media.MediaCryptoException;
 import android.media.MediaFormat;
 import android.os.Bundle;
-import android.os.Looper;
 import android.os.SystemClock;
 import androidx.annotation.CheckResult;
 import androidx.annotation.IntDef;
@@ -770,10 +769,12 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
 
   /** Reads into {@link #flagsOnlyBuffer} and returns whether a format was read. */
   private boolean readToFlagsOnlyBuffer(boolean requireFormat) throws ExoPlaybackException {
+    formatHolder.clear();
     flagsOnlyBuffer.clear();
     int result = readSource(formatHolder, flagsOnlyBuffer, requireFormat);
     if (result == C.RESULT_FORMAT_READ) {
       onInputFormatChanged(formatHolder);
+      formatHolder.clear();
       return true;
     } else if (result == C.RESULT_BUFFER_READ && flagsOnlyBuffer.isEndOfStream()) {
       inputStreamEnded = true;
@@ -1056,6 +1057,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
         codecReconfigurationState = RECONFIGURATION_STATE_QUEUE_PENDING;
       }
       adaptiveReconfigurationBytes = buffer.data.position();
+      formatHolder.clear();
       result = readSource(formatHolder, buffer, false);
     }
 
@@ -1075,6 +1077,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
         codecReconfigurationState = RECONFIGURATION_STATE_WRITE_PENDING;
       }
       onInputFormatChanged(formatHolder);
+      formatHolder.clear();
       return true;
     }
 
@@ -1140,6 +1143,9 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
           Math.max(largestQueuedPresentationTimeUs, presentationTimeUs);
 
       buffer.flip();
+      if (buffer.hasSupplementalData()) {
+        handleInputBufferSupplementalData(buffer);
+      }
       onQueueInputBuffer(buffer);
 
       if (bufferEncrypted) {
@@ -1193,33 +1199,15 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    */
   @SuppressWarnings("unchecked")
   protected void onInputFormatChanged(FormatHolder formatHolder) throws ExoPlaybackException {
-    Format oldFormat = inputFormat;
-    Format newFormat = formatHolder.format;
-    inputFormat = newFormat;
     waitingForFirstSampleInFormat = true;
-
-    boolean drmInitDataChanged =
-        !Util.areEqual(newFormat.drmInitData, oldFormat == null ? null : oldFormat.drmInitData);
-    if (drmInitDataChanged) {
-      if (newFormat.drmInitData != null) {
-        if (formatHolder.includesDrmSession) {
-          setSourceDrmSession((DrmSession<FrameworkMediaCrypto>) formatHolder.drmSession);
-        } else {
-          if (drmSessionManager == null) {
-            throw ExoPlaybackException.createForRenderer(
-                new IllegalStateException("Media requires a DrmSessionManager"), getIndex());
-          }
-          DrmSession<FrameworkMediaCrypto> session =
-              drmSessionManager.acquireSession(Looper.myLooper(), newFormat.drmInitData);
-          if (sourceDrmSession != null) {
-            sourceDrmSession.releaseReference();
-          }
-          sourceDrmSession = session;
-        }
-      } else {
-        setSourceDrmSession(null);
-      }
+    Format newFormat = Assertions.checkNotNull(formatHolder.format);
+    if (formatHolder.includesDrmSession) {
+      setSourceDrmSession((DrmSession<FrameworkMediaCrypto>) formatHolder.drmSession);
+    } else {
+      sourceDrmSession =
+          getUpdatedSourceDrmSession(inputFormat, newFormat, drmSessionManager, sourceDrmSession);
     }
+    inputFormat = newFormat;
 
     if (codec == null) {
       maybeInitCodec();
@@ -1298,9 +1286,22 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
+   * Handles supplemental data associated with an input buffer.
+   *
+   * <p>The default implementation is a no-op.
+   *
+   * @param buffer The input buffer that is about to be queued.
+   * @throws ExoPlaybackException Thrown if an error occurs handling supplemental data.
+   */
+  protected void handleInputBufferSupplementalData(DecoderInputBuffer buffer)
+      throws ExoPlaybackException {
+    // Do nothing.
+  }
+
+  /**
    * Called immediately before an input buffer is queued into the codec.
-   * <p>
-   * The default implementation is a no-op.
+   *
+   * <p>The default implementation is a no-op.
    *
    * @param buffer The buffer to be queued.
    */

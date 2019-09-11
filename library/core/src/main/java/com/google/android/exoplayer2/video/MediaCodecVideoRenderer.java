@@ -21,15 +21,17 @@ import android.content.Context;
 import android.graphics.Point;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo.CodecCapabilities;
+import android.media.MediaCodecInfo.CodecProfileLevel;
 import android.media.MediaCrypto;
 import android.media.MediaFormat;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
+import android.util.Pair;
+import android.view.Surface;
 import androidx.annotation.CallSuper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import android.util.Pair;
-import android.view.Surface;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
@@ -123,6 +125,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   private CodecMaxValues codecMaxValues;
   private boolean codecNeedsSetOutputSurfaceWorkaround;
+  private boolean codecHandlesHdr10PlusOutOfBandMetadata;
 
   private Surface surface;
   private Surface dummySurface;
@@ -317,7 +320,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     if (!MimeTypes.isVideo(mimeType)) {
       return FORMAT_UNSUPPORTED_TYPE;
     }
-    DrmInitData drmInitData = format.drmInitData;
+    @Nullable DrmInitData drmInitData = format.drmInitData;
     // Assume encrypted content requires secure decoders.
     boolean requiresSecureDecryption = drmInitData != null;
     List<MediaCodecInfo> decoderInfos =
@@ -339,10 +342,10 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       return FORMAT_UNSUPPORTED_SUBTYPE;
     }
     boolean supportsFormatDrm =
-        format.drmInitData == null
+        drmInitData == null
             || FrameworkMediaCrypto.class.equals(format.exoMediaCryptoType)
             || (format.exoMediaCryptoType == null
-                && supportsFormatDrm(drmSessionManager, format.drmInitData));
+                && supportsFormatDrm(drmSessionManager, drmInitData));
     if (!supportsFormatDrm) {
       return FORMAT_UNSUPPORTED_DRM;
     }
@@ -391,15 +394,17 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
             format.sampleMimeType, requiresSecureDecoder, requiresTunnelingDecoder);
     decoderInfos = MediaCodecUtil.getDecoderInfosSortedByFormatSupport(decoderInfos, format);
     if (MimeTypes.VIDEO_DOLBY_VISION.equals(format.sampleMimeType)) {
-      // Fallback to primary decoders for H.265/HEVC or H.264/AVC for the relevant DV profiles.
+      // Fall back to H.264/AVC or H.265/HEVC for the relevant DV profiles.
+      @Nullable
       Pair<Integer, Integer> codecProfileAndLevel = MediaCodecUtil.getCodecProfileAndLevel(format);
       if (codecProfileAndLevel != null) {
         int profile = codecProfileAndLevel.first;
-        if (profile == 4 || profile == 8) {
+        if (profile == CodecProfileLevel.DolbyVisionProfileDvheDtr
+            || profile == CodecProfileLevel.DolbyVisionProfileDvheSt) {
           decoderInfos.addAll(
               mediaCodecSelector.getDecoderInfos(
                   MimeTypes.VIDEO_H265, requiresSecureDecoder, requiresTunnelingDecoder));
-        } else if (profile == 9) {
+        } else if (profile == CodecProfileLevel.DolbyVisionProfileDvavSe) {
           decoderInfos.addAll(
               mediaCodecSelector.getDecoderInfos(
                   MimeTypes.VIDEO_H264, requiresSecureDecoder, requiresTunnelingDecoder));
@@ -683,6 +688,8 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       long initializationDurationMs) {
     eventDispatcher.decoderInitialized(name, initializedTimestampMs, initializationDurationMs);
     codecNeedsSetOutputSurfaceWorkaround = codecNeedsSetOutputSurfaceWorkaround(name);
+    codecHandlesHdr10PlusOutOfBandMetadata =
+        Assertions.checkNotNull(getCodecInfo()).isHdr10PlusOutOfBandMetadataSupported();
   }
 
   @Override
@@ -725,6 +732,37 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
             ? outputFormat.getInteger(KEY_CROP_BOTTOM) - outputFormat.getInteger(KEY_CROP_TOP) + 1
             : outputFormat.getInteger(MediaFormat.KEY_HEIGHT);
     processOutputFormat(codec, width, height);
+  }
+
+  @Override
+  protected void handleInputBufferSupplementalData(DecoderInputBuffer buffer)
+      throws ExoPlaybackException {
+    if (!codecHandlesHdr10PlusOutOfBandMetadata) {
+      return;
+    }
+    ByteBuffer data = Assertions.checkNotNull(buffer.supplementalData);
+    if (data.remaining() >= 7) {
+      // Check for HDR10+ out-of-band metadata. See User_data_registered_itu_t_t35 in ST 2094-40.
+      byte ituTT35CountryCode = data.get();
+      int ituTT35TerminalProviderCode = data.getShort();
+      int ituTT35TerminalProviderOrientedCode = data.getShort();
+      byte applicationIdentifier = data.get();
+      byte applicationVersion = data.get();
+      data.position(0);
+      if (ituTT35CountryCode == (byte) 0xB5
+          && ituTT35TerminalProviderCode == 0x003C
+          && ituTT35TerminalProviderOrientedCode == 0x0001
+          && applicationIdentifier == 4
+          && applicationVersion == 0) {
+        // The metadata size may vary so allocate a new array every time. This is not too
+        // inefficient because the metadata is only a few tens of bytes.
+        byte[] hdr10PlusInfo = new byte[data.remaining()];
+        data.get(hdr10PlusInfo);
+        data.position(0);
+        // If codecHandlesHdr10PlusOutOfBandMetadata is true, this is an API 29 or later build.
+        setHdr10PlusInfoV29(getCodec(), hdr10PlusInfo);
+      }
+    }
   }
 
   @Override
@@ -1151,6 +1189,13 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   private static boolean isBufferVeryLate(long earlyUs) {
     // Class a buffer as very late if it should have been presented more than 500 ms ago.
     return earlyUs < -500000;
+  }
+
+  @TargetApi(29)
+  private static void setHdr10PlusInfoV29(MediaCodec codec, byte[] hdr10PlusInfo) {
+    Bundle codecParameters = new Bundle();
+    codecParameters.putByteArray(MediaCodec.PARAMETER_KEY_HDR10_PLUS_INFO, hdr10PlusInfo);
+    codec.setParameters(codecParameters);
   }
 
   @TargetApi(23)

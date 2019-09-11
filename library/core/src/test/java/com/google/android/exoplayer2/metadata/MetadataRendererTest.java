@@ -26,6 +26,7 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.metadata.emsg.EventMessage;
 import com.google.android.exoplayer2.metadata.emsg.EventMessageEncoder;
 import com.google.android.exoplayer2.metadata.id3.TextInformationFrame;
+import com.google.android.exoplayer2.metadata.scte35.TimeSignalCommand;
 import com.google.android.exoplayer2.testutil.FakeSampleStream;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.util.Assertions;
@@ -39,6 +40,28 @@ import org.junit.runner.RunWith;
 /** Tests for {@link MetadataRenderer}. */
 @RunWith(AndroidJUnit4.class)
 public class MetadataRendererTest {
+
+  private static final byte[] SCTE35_TIME_SIGNAL_BYTES =
+      TestUtil.joinByteArrays(
+          TestUtil.createByteArray(
+              0, // table_id.
+              0x80, // section_syntax_indicator, private_indicator, reserved, section_length(4).
+              0x14, // section_length(8).
+              0x00, // protocol_version.
+              0x00), // encrypted_packet, encryption_algorithm, pts_adjustment(1).
+          TestUtil.createByteArray(0x00, 0x00, 0x00, 0x00), // pts_adjustment(32).
+          TestUtil.createByteArray(
+              0x00, // cw_index.
+              0x00, // tier(8).
+              0x00, // tier(4), splice_command_length(4).
+              0x05, // splice_command_length(8).
+              0x06, // splice_command_type = time_signal.
+              // Start of splice_time().
+              0x80), // time_specified_flag, reserved, pts_time(1).
+          TestUtil.createByteArray(
+              0x52, 0x03, 0x02, 0x8f), // pts_time(32). PTS for a second after playback position.
+          TestUtil.createByteArray(
+              0x00, 0x00, 0x00, 0x00)); // CRC_32 (ignored, check happens at extraction).
 
   private static final Format EMSG_FORMAT =
       Format.createSampleFormat(null, MimeTypes.APPLICATION_EMSG, Format.OFFSET_SAMPLE_RELATIVE);
@@ -55,7 +78,7 @@ public class MetadataRendererTest {
             /* id= */ 0,
             "Test data".getBytes(UTF_8));
 
-    List<Metadata> metadata = runRenderer(eventMessageEncoder.encode(emsg));
+    List<Metadata> metadata = runRenderer(EMSG_FORMAT, eventMessageEncoder.encode(emsg));
 
     assertThat(metadata).hasSize(1);
     assertThat(metadata.get(0).length()).isEqualTo(1);
@@ -63,16 +86,23 @@ public class MetadataRendererTest {
   }
 
   @Test
-  public void decodeMetadata_handlesWrappedMetadata() throws Exception {
+  public void decodeMetadata_skipsMalformed() throws Exception {
+    List<Metadata> metadata = runRenderer(EMSG_FORMAT, "not valid emsg bytes".getBytes(UTF_8));
+
+    assertThat(metadata).isEmpty();
+  }
+
+  @Test
+  public void decodeMetadata_handlesId3WrappedInEmsg() throws Exception {
     EventMessage emsg =
         new EventMessage(
-            EventMessage.ID3_SCHEME_ID,
+            EventMessage.ID3_SCHEME_ID_AOM,
             /* value= */ "",
             /* durationMs= */ 1,
             /* id= */ 0,
             encodeTxxxId3Frame("Test description", "Test value"));
 
-    List<Metadata> metadata = runRenderer(eventMessageEncoder.encode(emsg));
+    List<Metadata> metadata = runRenderer(EMSG_FORMAT, eventMessageEncoder.encode(emsg));
 
     assertThat(metadata).hasSize(1);
     assertThat(metadata.get(0).length()).isEqualTo(1);
@@ -82,26 +112,45 @@ public class MetadataRendererTest {
   }
 
   @Test
+  public void decodeMetadata_handlesScte35WrappedInEmsg() throws Exception {
+
+    EventMessage emsg =
+        new EventMessage(
+            EventMessage.SCTE35_SCHEME_ID,
+            /* value= */ "",
+            /* durationMs= */ 1,
+            /* id= */ 0,
+            SCTE35_TIME_SIGNAL_BYTES);
+
+    List<Metadata> metadata = runRenderer(EMSG_FORMAT, eventMessageEncoder.encode(emsg));
+
+    assertThat(metadata).hasSize(1);
+    assertThat(metadata.get(0).length()).isEqualTo(1);
+    assertThat(metadata.get(0).get(0)).isInstanceOf(TimeSignalCommand.class);
+  }
+
+  @Test
   public void decodeMetadata_skipsMalformedWrappedMetadata() throws Exception {
     EventMessage emsg =
         new EventMessage(
-            EventMessage.ID3_SCHEME_ID,
+            EventMessage.ID3_SCHEME_ID_AOM,
             /* value= */ "",
             /* durationMs= */ 1,
             /* id= */ 0,
             "Not a real ID3 tag".getBytes(ISO_8859_1));
 
-    List<Metadata> metadata = runRenderer(eventMessageEncoder.encode(emsg));
+    List<Metadata> metadata = runRenderer(EMSG_FORMAT, eventMessageEncoder.encode(emsg));
 
     assertThat(metadata).isEmpty();
   }
 
-  private static List<Metadata> runRenderer(byte[] input) throws ExoPlaybackException {
+  private static List<Metadata> runRenderer(Format format, byte[] input)
+      throws ExoPlaybackException {
     List<Metadata> metadata = new ArrayList<>();
     MetadataRenderer renderer = new MetadataRenderer(metadata::add, /* outputLooper= */ null);
     renderer.replaceStream(
-        new Format[] {EMSG_FORMAT},
-        new FakeSampleStream(EMSG_FORMAT, /* eventDispatcher= */ null, input),
+        new Format[] {format},
+        new FakeSampleStream(format, /* eventDispatcher= */ null, input),
         /* offsetUs= */ 0L);
     renderer.render(/* positionUs= */ 0, /* elapsedRealtimeUs= */ 0); // Read the format
     renderer.render(/* positionUs= */ 0, /* elapsedRealtimeUs= */ 0); // Read the data
