@@ -93,11 +93,13 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
   @Nullable private final HashMap<String, String> optionalKeyRequestParameters;
   private final EventDispatcher<DefaultDrmSessionEventListener> eventDispatcher;
   private final boolean multiSession;
+  private final boolean allowPlaceholderSessions;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
 
   private final List<DefaultDrmSession<T>> sessions;
   private final List<DefaultDrmSession<T>> provisioningSessions;
 
+  @Nullable private DefaultDrmSession<T> placeholderDrmSession;
   @Nullable private Looper playbackLooper;
   private int mode;
   @Nullable private byte[] offlineLicenseKeySetId;
@@ -232,6 +234,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
         callback,
         optionalKeyRequestParameters,
         multiSession,
+        /* allowPlaceholderSessions= */ false,
         new DefaultLoadErrorHandlingPolicy(initialDrmRequestRetryCount));
   }
 
@@ -241,6 +244,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       MediaDrmCallback callback,
       @Nullable HashMap<String, String> optionalKeyRequestParameters,
       boolean multiSession,
+      boolean allowPlaceholderSessions,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy) {
     Assertions.checkNotNull(uuid);
     Assertions.checkNotNull(mediaDrm);
@@ -251,6 +255,11 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
     this.optionalKeyRequestParameters = optionalKeyRequestParameters;
     this.eventDispatcher = new EventDispatcher<>();
     this.multiSession = multiSession;
+    boolean canAcquirePlaceholderSessions =
+        !FrameworkMediaCrypto.class.equals(mediaDrm.getExoMediaCryptoType())
+            || !FrameworkMediaCrypto.WORKAROUND_DEVICE_NEEDS_KEYS_TO_CONFIGURE_CODEC;
+    // TODO: Allow customization once this class has a Builder.
+    this.allowPlaceholderSessions = canAcquirePlaceholderSessions && allowPlaceholderSessions;
     this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
     mode = MODE_PLAYBACK;
     sessions = new ArrayList<>();
@@ -334,7 +343,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
 
   /**
    * Sets the mode, which determines the role of sessions acquired from the instance. This must be
-   * called before {@link #acquireSession(Looper, DrmInitData)} is called.
+   * called before {@link #acquireSession(Looper, DrmInitData)} or {@link
+   * #acquirePlaceholderSession(Looper)} is called.
    *
    * <p>By default, the mode is {@link #MODE_PLAYBACK} and a streaming license is requested when
    * required.
@@ -399,14 +409,27 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
   }
 
   @Override
-  public DrmSession<T> acquireSession(Looper playbackLooper, DrmInitData drmInitData) {
-    Assertions.checkState(this.playbackLooper == null || this.playbackLooper == playbackLooper);
-    if (sessions.isEmpty()) {
-      this.playbackLooper = playbackLooper;
-      if (mediaDrmHandler == null) {
-        mediaDrmHandler = new MediaDrmHandler(playbackLooper);
-      }
+  @Nullable
+  public DrmSession<T> acquirePlaceholderSession(Looper playbackLooper) {
+    assertExpectedPlaybackLooper(playbackLooper);
+    if (!allowPlaceholderSessions || mediaDrm.getExoMediaCryptoType() == null) {
+      return null;
     }
+    maybeCreateMediaDrmHandler(playbackLooper);
+    if (placeholderDrmSession == null) {
+      DefaultDrmSession<T> placeholderDrmSession =
+          createNewDefaultSession(/* schemeDatas= */ null, /* isPlaceholderSession= */ true);
+      sessions.add(placeholderDrmSession);
+      this.placeholderDrmSession = placeholderDrmSession;
+    }
+    placeholderDrmSession.acquireReference();
+    return placeholderDrmSession;
+  }
+
+  @Override
+  public DrmSession<T> acquireSession(Looper playbackLooper, DrmInitData drmInitData) {
+    assertExpectedPlaybackLooper(playbackLooper);
+    maybeCreateMediaDrmHandler(playbackLooper);
 
     List<SchemeData> schemeDatas = null;
     if (offlineLicenseKeySetId == null) {
@@ -434,20 +457,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
 
     if (session == null) {
       // Create a new session.
-      session =
-          new DefaultDrmSession<>(
-              uuid,
-              mediaDrm,
-              /* provisioningManager= */ this,
-              /* releaseCallback= */ this::onSessionReleased,
-              schemeDatas,
-              mode,
-              offlineLicenseKeySetId,
-              optionalKeyRequestParameters,
-              callback,
-              playbackLooper,
-              eventDispatcher,
-              loadErrorHandlingPolicy);
+      session = createNewDefaultSession(schemeDatas, /* isPlaceholderSession= */ false);
       sessions.add(session);
     }
     session.acquireReference();
@@ -493,8 +503,40 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
 
   // Internal methods.
 
+  private void assertExpectedPlaybackLooper(Looper playbackLooper) {
+    Assertions.checkState(this.playbackLooper == null || this.playbackLooper == playbackLooper);
+    this.playbackLooper = playbackLooper;
+  }
+
+  private void maybeCreateMediaDrmHandler(Looper playbackLooper) {
+    if (mediaDrmHandler == null) {
+      mediaDrmHandler = new MediaDrmHandler(playbackLooper);
+    }
+  }
+
+  private DefaultDrmSession<T> createNewDefaultSession(
+      @Nullable List<SchemeData> schemeDatas, boolean isPlaceholderSession) {
+    return new DefaultDrmSession<>(
+        uuid,
+        mediaDrm,
+        /* provisioningManager= */ this,
+        /* releaseCallback= */ this::onSessionReleased,
+        schemeDatas,
+        mode,
+        isPlaceholderSession,
+        offlineLicenseKeySetId,
+        optionalKeyRequestParameters,
+        callback,
+        Assertions.checkNotNull(playbackLooper),
+        eventDispatcher,
+        loadErrorHandlingPolicy);
+  }
+
   private void onSessionReleased(DefaultDrmSession<T> drmSession) {
     sessions.remove(drmSession);
+    if (placeholderDrmSession == drmSession) {
+      placeholderDrmSession = null;
+    }
     if (provisioningSessions.size() > 1 && provisioningSessions.get(0) == drmSession) {
       // Other sessions were waiting for the released session to complete a provision operation.
       // We need to have one of those sessions perform the provision operation instead.
