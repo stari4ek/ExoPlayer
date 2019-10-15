@@ -232,7 +232,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     // TVirl
     // throw new ParserException("Failed to parse the playlist, could not identify any tags.");
     throw new ParserException("Failed to parse the playlist, could not identify any tags." +
-        " Lines: >>\n" + TextUtils.join("\n", extraLines) + "\n<<");
+        " Lines: >>>\n" + TextUtils.join("\n", extraLines) + "\n<<<");
   }
 
   private static boolean checkPlaylistHeader(BufferedReader reader) throws IOException {
@@ -311,7 +311,23 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         }
       } else if (line.startsWith(TAG_STREAM_INF)) {
         noClosedCaptions |= line.contains(ATTR_CLOSED_CAPTIONS_NONE);
-        int bitrate = parseIntAttr(line, REGEX_BANDWIDTH);
+        // TVirl
+        //int bitrate = parseIntAttr(line, REGEX_BANDWIDTH);
+        int bitrate;
+        try {
+          bitrate = parseIntAttr(line, REGEX_BANDWIDTH);
+        } catch (ParserException e) {
+          // grab the rest of tags
+          while (iterator.hasNext()) {
+            line = iterator.next();
+            if (line.startsWith(TAG_PREFIX)) {
+              tags.add(line);
+            }
+          }
+          throw new ParserException("Failed to parse required bandwidth. Tags: >>>\n" +
+              TextUtils.join("\n", tags) + "\n<<<", e);
+        }
+        // !TVirl
         String averageBandwidthString =
             parseOptionalStringAttr(line, REGEX_AVERAGE_BANDWIDTH, variableDefinitions);
         if (averageBandwidthString != null) {
