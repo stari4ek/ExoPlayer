@@ -669,7 +669,21 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       } else if (line.startsWith(TAG_TARGET_DURATION)) {
         targetDurationUs = parseIntAttr(line, REGEX_TARGET_DURATION) * C.MICROS_PER_SECOND;
       } else if (line.startsWith(TAG_MEDIA_SEQUENCE)) {
-        mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
+        // TVirl
+        //mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
+        try {
+          mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
+        } catch (ParserException e) {
+          // some crappy services have #EXT-X-MEDIA-SEQUENCE0
+          // since we know that it's TAG_MEDIA_SEQUENCE already - try to be more patient
+          try {
+            mediaSequence = Long.parseLong(line.substring(TAG_MEDIA_SEQUENCE.length()));
+          } catch (NumberFormatException ignored) {
+            // throw original one
+            throw e;
+          }
+        }
+        // !TVirl
         segmentMediaSequence = mediaSequence;
       } else if (line.startsWith(TAG_VERSION)) {
         version = parseIntAttr(line, REGEX_VERSION);
