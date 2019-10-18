@@ -53,7 +53,6 @@ import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.RenderersFactory;
 import com.google.android.exoplayer2.SeekParameters;
-import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
@@ -337,7 +336,20 @@ public final class Util {
   }
 
   /**
-   * Concatenates two non-null type arrays.
+   * Creates a new array containing {@code original} with {@code newElement} appended.
+   *
+   * @param original The input array.
+   * @param newElement The element to append.
+   * @return The new array.
+   */
+  public static <T> T[] nullSafeArrayAppend(T[] original, T newElement) {
+    @NullableType T[] result = Arrays.copyOf(original, original.length + 1);
+    result[original.length] = newElement;
+    return castNonNullTypeArray(result);
+  }
+
+  /**
+   * Creates a new array containing the concatenation of two non-null type arrays.
    *
    * @param first The first array.
    * @param second The second array.
@@ -1240,9 +1252,9 @@ public final class Util {
    * @param codecs A codec sequence string, as defined in RFC 6381.
    * @param trackType One of {@link C}{@code .TRACK_TYPE_*}.
    * @return A copy of {@code codecs} without the codecs whose track type doesn't match {@code
-   *     trackType}.
+   *     trackType}. If this ends up empty, or {@code codecs} is null, return null.
    */
-  public static @Nullable String getCodecsOfType(String codecs, int trackType) {
+  public static @Nullable String getCodecsOfType(@Nullable String codecs, int trackType) {
     String[] codecArray = splitCodecs(codecs);
     if (codecArray.length == 0) {
       return null;
@@ -1263,9 +1275,9 @@ public final class Util {
    * Splits a codecs sequence string, as defined in RFC 6381, into individual codec strings.
    *
    * @param codecs A codec sequence string, as defined in RFC 6381.
-   * @return The split codecs, or an array of length zero if the input was empty.
+   * @return The split codecs, or an array of length zero if the input was empty or null.
    */
-  public static String[] splitCodecs(String codecs) {
+  public static String[] splitCodecs(@Nullable String codecs) {
     if (TextUtils.isEmpty(codecs)) {
       return new String[0];
     }
@@ -2023,42 +2035,6 @@ public final class Util {
       default: // Future mobile network types.
         return C.NETWORK_TYPE_CELLULAR_UNKNOWN;
     }
-  }
-
-  /**
-   * Checks whether the timelines are the same.
-   *
-   * @param firstTimeline The first {@link Timeline}.
-   * @param secondTimeline The second {@link Timeline} to compare with.
-   * @return {@code true} if the both timelines are the same.
-   */
-  public static boolean areTimelinesSame(Timeline firstTimeline, Timeline secondTimeline) {
-    if (firstTimeline == secondTimeline) {
-      return true;
-    }
-    if (secondTimeline.getWindowCount() != firstTimeline.getWindowCount()
-        || secondTimeline.getPeriodCount() != firstTimeline.getPeriodCount()) {
-      return false;
-    }
-    Timeline.Window firstWindow = new Timeline.Window();
-    Timeline.Period firstPeriod = new Timeline.Period();
-    Timeline.Window secondWindow = new Timeline.Window();
-    Timeline.Period secondPeriod = new Timeline.Period();
-    for (int i = 0; i < firstTimeline.getWindowCount(); i++) {
-      if (!firstTimeline
-          .getWindow(i, firstWindow)
-          .equals(secondTimeline.getWindow(i, secondWindow))) {
-        return false;
-      }
-    }
-    for (int i = 0; i < firstTimeline.getPeriodCount(); i++) {
-      if (!firstTimeline
-          .getPeriod(i, firstPeriod, /* setIds= */ true)
-          .equals(secondTimeline.getPeriod(i, secondPeriod, /* setIds= */ true))) {
-        return false;
-      }
-    }
-    return true;
   }
 
   private static HashMap<String, String> createIso3ToIso2Map() {
