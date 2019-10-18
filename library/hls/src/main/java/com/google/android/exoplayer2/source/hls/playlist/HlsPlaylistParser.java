@@ -127,6 +127,11 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       + ":([\\d\\.]+)\\b");
   private static final Pattern REGEX_MEDIA_TITLE =
       Pattern.compile(TAG_MEDIA_DURATION + ":[\\d\\.]+\\b,(.+)");
+  // TVirl
+  private static final String SPACES = "(\\s)*"; // any spaces
+  private static final Pattern REGEX_MEDIA_DURATION_RELAXED = Pattern.compile(TAG_MEDIA_DURATION +
+      ":" + SPACES + "([\\d\\.]+)\\b");
+  // !TVirl
   private static final Pattern REGEX_TIME_OFFSET = Pattern.compile("TIME-OFFSET=(-?[\\d\\.]+)\\b");
   private static final Pattern REGEX_BYTERANGE = Pattern.compile(TAG_BYTERANGE
       + ":(\\d+(?:@\\d+)?)\\b");
@@ -669,15 +674,14 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       } else if (line.startsWith(TAG_TARGET_DURATION)) {
         targetDurationUs = parseIntAttr(line, REGEX_TARGET_DURATION) * C.MICROS_PER_SECOND;
       } else if (line.startsWith(TAG_MEDIA_SEQUENCE)) {
-        // TVirl
+        // TVirl: be nice with "#EXT-X-MEDIA-SEQUENCE0"
         //mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
         try {
           mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
         } catch (ParserException e) {
-          // some crappy services have #EXT-X-MEDIA-SEQUENCE0
           // since we know that it's TAG_MEDIA_SEQUENCE already - try to be more patient
           try {
-            mediaSequence = Long.parseLong(line.substring(TAG_MEDIA_SEQUENCE.length()));
+            mediaSequence = Long.parseLong(line.substring(TAG_MEDIA_SEQUENCE.length()).trim());
           } catch (NumberFormatException ignored) {
             // throw original one
             throw e;
@@ -702,8 +706,23 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
               parseStringAttr(line, REGEX_VALUE, variableDefinitions));
         }
       } else if (line.startsWith(TAG_MEDIA_DURATION)) {
-        segmentDurationUs =
-            (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION) * C.MICROS_PER_SECOND);
+        // TVirl: be nice with "#EXTINF: 4.32,"
+        //segmentDurationUs =
+        //    (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION) * C.MICROS_PER_SECOND);
+        try {
+          segmentDurationUs =
+              (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION) * C.MICROS_PER_SECOND);
+        } catch (ParserException e) {
+          // since we know that it's TAG_MEDIA_DURATION already - try to be more patient
+          try {
+            segmentDurationUs =
+                (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION_RELAXED) * C.MICROS_PER_SECOND);
+          } catch (Exception ignored) {
+            // throw original one
+            throw e;
+          }
+        }
+        // !TVirl
         segmentTitle = parseOptionalStringAttr(line, REGEX_MEDIA_TITLE, "", variableDefinitions);
       } else if (line.startsWith(TAG_KEY)) {
         String method = parseStringAttr(line, REGEX_METHOD, variableDefinitions);
