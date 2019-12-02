@@ -29,7 +29,6 @@ import com.google.android.exoplayer2.Timeline.Window;
 import com.google.android.exoplayer2.source.ClippingMediaSource.IllegalClippingException;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
-import com.google.android.exoplayer2.source.MediaSourceEventListener.MediaLoadData;
 import com.google.android.exoplayer2.testutil.FakeMediaPeriod;
 import com.google.android.exoplayer2.testutil.FakeMediaSource;
 import com.google.android.exoplayer2.testutil.FakeTimeline;
@@ -555,7 +554,7 @@ public final class ClippingMediaSourceTest {
           () ->
               clippingMediaSource.addEventListener(
                   new Handler(),
-                  new DefaultMediaSourceEventListener() {
+                  new MediaSourceEventListener() {
                     @Override
                     public void onDownstreamFormatChanged(
                         int windowIndex,

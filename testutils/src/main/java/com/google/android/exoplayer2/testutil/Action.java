@@ -15,11 +15,9 @@
  */
 package com.google.android.exoplayer2.testutil;
 
-import android.content.Intent;
 import android.os.Handler;
 import android.view.Surface;
 import androidx.annotation.Nullable;
-import androidx.test.core.app.ApplicationProvider;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
@@ -29,6 +27,7 @@ import com.google.android.exoplayer2.PlayerMessage;
 import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.audio.AudioAttributes;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.testutil.ActionSchedule.ActionNode;
 import com.google.android.exoplayer2.testutil.ActionSchedule.PlayerRunnable;
@@ -212,26 +211,6 @@ public abstract class Action {
 
   }
 
-  /** Broadcasts an {@link Intent}. */
-  public static final class SendBroadcast extends Action {
-    private final Intent intent;
-
-    /**
-     * @param tag A tag to use for logging.
-     * @param intent The {@link Intent} to broadcast.
-     */
-    public SendBroadcast(String tag, Intent intent) {
-      super(tag, "SendBroadcast: " + intent.getAction());
-      this.intent = intent;
-    }
-
-    @Override
-    protected void doActionImpl(
-        SimpleExoPlayer player, DefaultTrackSelector trackSelector, Surface surface) {
-      ApplicationProvider.getApplicationContext().sendBroadcast(intent);
-    }
-  }
-
   /**
    * Updates the {@link Parameters} of a {@link DefaultTrackSelector} to specify whether the
    * renderer at a given index should be disabled.
@@ -290,6 +269,31 @@ public abstract class Action {
     }
   }
 
+  /** Calls {@link SimpleExoPlayer#setAudioAttributes(AudioAttributes, boolean)}. */
+  public static final class SetAudioAttributes extends Action {
+
+    private final AudioAttributes audioAttributes;
+    private final boolean handleAudioFocus;
+
+    /**
+     * @param tag A tag to use for logging.
+     * @param audioAttributes The attributes to use for audio playback.
+     * @param handleAudioFocus True if the player should handle audio focus, false otherwise.
+     */
+    public SetAudioAttributes(
+        String tag, AudioAttributes audioAttributes, boolean handleAudioFocus) {
+      super(tag, "SetAudioAttributes");
+      this.audioAttributes = audioAttributes;
+      this.handleAudioFocus = handleAudioFocus;
+    }
+
+    @Override
+    protected void doActionImpl(
+        SimpleExoPlayer player, DefaultTrackSelector trackSelector, Surface surface) {
+      player.setAudioAttributes(audioAttributes, handleAudioFocus);
+    }
+  }
+
   /** Calls {@link ExoPlayer#prepare(MediaSource)}. */
   public static final class PrepareSource extends Action {
 
@@ -297,12 +301,19 @@ public abstract class Action {
     private final boolean resetPosition;
     private final boolean resetState;
 
-    /** @param tag A tag to use for logging. */
+    /**
+     * @param tag A tag to use for logging.
+     * @param mediaSource The {@link MediaSource} to prepare the player with.
+     */
     public PrepareSource(String tag, MediaSource mediaSource) {
       this(tag, mediaSource, true, true);
     }
 
-    /** @param tag A tag to use for logging. */
+    /**
+     * @param tag A tag to use for logging.
+     * @param mediaSource The {@link MediaSource} to prepare the player with.
+     * @param resetPosition Whether the player's position should be reset.
+     */
     public PrepareSource(
         String tag, MediaSource mediaSource, boolean resetPosition, boolean resetState) {
       super(tag, "PrepareSource");
@@ -323,7 +334,10 @@ public abstract class Action {
 
     private final @Player.RepeatMode int repeatMode;
 
-    /** @param tag A tag to use for logging. */
+    /**
+     * @param tag A tag to use for logging.
+     * @param repeatMode The repeat mode.
+     */
     public SetRepeatMode(String tag, @Player.RepeatMode int repeatMode) {
       super(tag, "SetRepeatMode:" + repeatMode);
       this.repeatMode = repeatMode;
@@ -341,7 +355,10 @@ public abstract class Action {
 
     private final boolean shuffleModeEnabled;
 
-    /** @param tag A tag to use for logging. */
+    /**
+     * @param tag A tag to use for logging.
+     * @param shuffleModeEnabled Whether shuffling is enabled.
+     */
     public SetShuffleModeEnabled(String tag, boolean shuffleModeEnabled) {
       super(tag, "SetShuffleModeEnabled:" + shuffleModeEnabled);
       this.shuffleModeEnabled = shuffleModeEnabled;
@@ -612,6 +629,57 @@ public abstract class Action {
   }
 
   /**
+   * Waits for a specified playWhenReady value, returning either immediately or after a call to
+   * {@link Player.EventListener#onPlayerStateChanged(boolean, int)}.
+   */
+  public static final class WaitForPlayWhenReady extends Action {
+
+    private final boolean targetPlayWhenReady;
+
+    /**
+     * @param tag A tag to use for logging.
+     * @param playWhenReady The playWhenReady value to wait for.
+     */
+    public WaitForPlayWhenReady(String tag, boolean playWhenReady) {
+      super(tag, "WaitForPlayWhenReady");
+      targetPlayWhenReady = playWhenReady;
+    }
+
+    @Override
+    protected void doActionAndScheduleNextImpl(
+        SimpleExoPlayer player,
+        DefaultTrackSelector trackSelector,
+        Surface surface,
+        HandlerWrapper handler,
+        ActionNode nextAction) {
+      if (nextAction == null) {
+        return;
+      }
+      if (targetPlayWhenReady == player.getPlayWhenReady()) {
+        nextAction.schedule(player, trackSelector, surface, handler);
+      } else {
+        player.addListener(
+            new Player.EventListener() {
+              @Override
+              public void onPlayerStateChanged(
+                  boolean playWhenReady, @Player.State int playbackState) {
+                if (targetPlayWhenReady == playWhenReady) {
+                  player.removeListener(this);
+                  nextAction.schedule(player, trackSelector, surface, handler);
+                }
+              }
+            });
+      }
+    }
+
+    @Override
+    protected void doActionImpl(
+        SimpleExoPlayer player, DefaultTrackSelector trackSelector, Surface surface) {
+      // Not triggered.
+    }
+  }
+
+  /**
    * Waits for a specified playback state, returning either immediately or after a call to {@link
    * Player.EventListener#onPlayerStateChanged(boolean, int)}.
    */
@@ -619,7 +687,10 @@ public abstract class Action {
 
     private final int targetPlaybackState;
 
-    /** @param tag A tag to use for logging. */
+    /**
+     * @param tag A tag to use for logging.
+     * @param targetPlaybackState The playback state to wait for.
+     */
     public WaitForPlaybackState(String tag, int targetPlaybackState) {
       super(tag, "WaitForPlaybackState");
       this.targetPlaybackState = targetPlaybackState;

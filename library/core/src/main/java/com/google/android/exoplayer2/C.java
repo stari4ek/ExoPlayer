@@ -521,6 +521,7 @@ public final class C {
   /** Indicates that a buffer should be decoded but not rendered. */
   public static final int BUFFER_FLAG_DECODE_ONLY = 1 << 31; // 0x80000000
 
+  // LINT.IfChange
   /**
    * Video decoder output modes. Possible modes are {@link #VIDEO_OUTPUT_MODE_NONE}, {@link
    * #VIDEO_OUTPUT_MODE_YUV} and {@link #VIDEO_OUTPUT_MODE_SURFACE_YUV}.
@@ -535,6 +536,10 @@ public final class C {
   public static final int VIDEO_OUTPUT_MODE_YUV = 0;
   /** Video decoder output mode that renders 4:2:0 YUV planes directly to a surface. */
   public static final int VIDEO_OUTPUT_MODE_SURFACE_YUV = 1;
+  // LINT.ThenChange(
+  //     ../../../../../../../../../extensions/av1/src/main/jni/gav1_jni.cc,
+  //     ../../../../../../../../../extensions/vp9/src/main/jni/vpx_jni.cc
+  // )
 
   /**
    * Video scaling modes for {@link MediaCodec}-based {@link Renderer}s. One of {@link
@@ -829,8 +834,12 @@ public final class C {
    * The type of a message that can be passed to a {@link SimpleDecoderVideoRenderer} via {@link
    * ExoPlayer#createMessage(Target)}. The message payload should be the target {@link
    * VideoDecoderOutputBufferRenderer}, or null.
+   *
+   * <p>This message is intended only for use with extension renderers that expect a {@link
+   * VideoDecoderOutputBufferRenderer}. For other use cases, an output surface should be passed via
+   * {@link #MSG_SET_SURFACE} instead.
    */
-  public static final int MSG_SET_OUTPUT_BUFFER_RENDERER = 8;
+  public static final int MSG_SET_VIDEO_DECODER_OUTPUT_BUFFER_RENDERER = 8;
 
   /**
    * Applications or extensions may define custom {@code MSG_*} constants that can be passed to

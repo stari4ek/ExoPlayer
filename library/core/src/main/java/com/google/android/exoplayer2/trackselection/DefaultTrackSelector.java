@@ -820,7 +820,6 @@ public class DefaultTrackSelector extends MappingTrackSelector {
      * @deprecated This instance does not have {@link Context} constraints configured. Use {@link
      *     #getDefaults(Context)} instead.
      */
-    @SuppressWarnings("deprecation")
     @Deprecated
     public static final Parameters DEFAULT = DEFAULT_WITHOUT_CONTEXT;
 
@@ -1458,7 +1457,6 @@ public class DefaultTrackSelector extends MappingTrackSelector {
 
   /** @deprecated Use {@link #DefaultTrackSelector(Context, TrackSelection.Factory)}. */
   @Deprecated
-  @SuppressWarnings("deprecation")
   public DefaultTrackSelector(TrackSelection.Factory trackSelectionFactory) {
     this(Parameters.DEFAULT_WITHOUT_CONTEXT, trackSelectionFactory);
   }
@@ -1526,7 +1524,7 @@ public class DefaultTrackSelector extends MappingTrackSelector {
     setParameters(buildUponParameters().setRendererDisabled(rendererIndex, disabled));
   }
 
-  /** @deprecated Use {@link Parameters#getRendererDisabled(int)}. * */
+  /** @deprecated Use {@link Parameters#getRendererDisabled(int)}. */
   @Deprecated
   public final boolean getRendererDisabled(int rendererIndex) {
     return getParameters().getRendererDisabled(rendererIndex);
@@ -1542,7 +1540,7 @@ public class DefaultTrackSelector extends MappingTrackSelector {
     setParameters(buildUponParameters().setSelectionOverride(rendererIndex, groups, override));
   }
 
-  /** @deprecated Use {@link Parameters#hasSelectionOverride(int, TrackGroupArray)}. * */
+  /** @deprecated Use {@link Parameters#hasSelectionOverride(int, TrackGroupArray)}. */
   @Deprecated
   public final boolean hasSelectionOverride(int rendererIndex, TrackGroupArray groups) {
     return getParameters().hasSelectionOverride(rendererIndex, groups);

@@ -26,9 +26,9 @@ import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Timeline.Period;
 import com.google.android.exoplayer2.analytics.PlaybackStats.PlaybackState;
+import com.google.android.exoplayer2.source.LoadEventInfo;
+import com.google.android.exoplayer2.source.MediaLoadData;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
-import com.google.android.exoplayer2.source.MediaSourceEventListener.LoadEventInfo;
-import com.google.android.exoplayer2.source.MediaSourceEventListener.MediaLoadData;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
@@ -170,6 +170,7 @@ public final class PlaybackStatsListener
     PlaybackStatsTracker tracker = new PlaybackStatsTracker(keepHistory, eventTime);
     tracker.onPlayerStateChanged(
         eventTime, playWhenReady, playbackState, /* belongsToPlayback= */ true);
+    tracker.onIsSuppressedChanged(eventTime, isSuppressed, /* belongsToPlayback= */ true);
     tracker.onPlaybackSpeedChanged(eventTime, playbackSpeed);
     playbackStatsTrackers.put(session, tracker);
     sessionStartEventTimes.put(session, eventTime);

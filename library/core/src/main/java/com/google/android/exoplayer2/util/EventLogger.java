@@ -30,8 +30,8 @@ import com.google.android.exoplayer2.analytics.AnalyticsListener;
 import com.google.android.exoplayer2.audio.AudioAttributes;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
 import com.google.android.exoplayer2.metadata.Metadata;
-import com.google.android.exoplayer2.source.MediaSourceEventListener.LoadEventInfo;
-import com.google.android.exoplayer2.source.MediaSourceEventListener.MediaLoadData;
+import com.google.android.exoplayer2.source.LoadEventInfo;
+import com.google.android.exoplayer2.source.MediaLoadData;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
@@ -525,8 +525,9 @@ public class EventLogger implements AnalyticsListener {
         windowPeriodString += ", ad=" + eventTime.mediaPeriodId.adIndexInAdGroup;
       }
     }
-    return getTimeString(eventTime.realtimeMs - startTimeMs)
-        + ", "
+    return "eventTime="
+        + getTimeString(eventTime.realtimeMs - startTimeMs)
+        + ", mediaPos="
         + getTimeString(eventTime.currentPlaybackPositionMs)
         + ", "
         + windowPeriodString;
@@ -666,8 +667,8 @@ public class EventLogger implements AnalyticsListener {
     switch (playbackSuppressionReason) {
       case Player.PLAYBACK_SUPPRESSION_REASON_NONE:
         return "NONE";
-      case Player.PLAYBACK_SUPPRESSION_REASON_AUDIO_FOCUS_LOSS:
-        return "AUDIO_FOCUS_LOSS";
+      case Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS:
+        return "TRANSIENT_AUDIO_FOCUS_LOSS";
       default:
         return "?";
     }

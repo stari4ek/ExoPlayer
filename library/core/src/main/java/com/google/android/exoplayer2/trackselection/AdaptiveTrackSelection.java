@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.trackselection;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.chunk.MediaChunk;
 import com.google.android.exoplayer2.source.chunk.MediaChunkIterator;
@@ -609,13 +610,18 @@ public class AdaptiveTrackSelection extends BaseTrackSelection {
 
     @Nullable private long[][] allocationCheckpoints;
 
-    /* package */ DefaultBandwidthProvider(
+    /* package */
+    // the constructor does not initialize fields: allocationCheckpoints
+    @SuppressWarnings("nullness:initialization.fields.uninitialized")
+    DefaultBandwidthProvider(
         BandwidthMeter bandwidthMeter, float bandwidthFraction, long reservedBandwidth) {
       this.bandwidthMeter = bandwidthMeter;
       this.bandwidthFraction = bandwidthFraction;
       this.reservedBandwidth = reservedBandwidth;
     }
 
+    // unboxing a possibly-null reference allocationCheckpoints[nextIndex][0]
+    @SuppressWarnings("nullness:unboxing.of.nullable")
     @Override
     public long getAllocatedBandwidth() {
       long totalBandwidth = (long) (bandwidthMeter.getBitrateEstimate() * bandwidthFraction);

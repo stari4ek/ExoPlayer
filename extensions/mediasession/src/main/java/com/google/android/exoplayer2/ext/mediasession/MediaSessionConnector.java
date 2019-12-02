@@ -30,8 +30,8 @@ import android.support.v4.media.session.MediaControllerCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import android.util.Pair;
+import android.view.KeyEvent;
 import androidx.annotation.LongDef;
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ControlDispatcher;
@@ -501,6 +501,17 @@ public final class MediaSessionConnector {
    * Sets the {@link MediaButtonEventHandler}. Pass {@code null} if the media button event should be
    * handled by {@link MediaSessionCompat.Callback#onMediaButtonEvent(Intent)}.
    *
+   * <p>Please note that prior to API 21 MediaButton events are not delivered to the {@link
+   * MediaSessionCompat}. Instead they are delivered as key events (see <a
+   * href="https://developer.android.com/guide/topics/media-apps/mediabuttons">'Responding to media
+   * buttons'</a>). In an {@link android.app.Activity Activity}, media button events arrive at the
+   * {@link android.app.Activity#dispatchKeyEvent(KeyEvent)} method.
+   *
+   * <p>If you are running the player in a foreground service (prior to API 21), you can create an
+   * intent filter and handle the {@code android.intent.action.MEDIA_BUTTON} action yourself. See <a
+   * href="https://developer.android.com/reference/androidx/media/session/MediaButtonReceiver#service-handling-action_media_button">
+   * Service handling ACTION_MEDIA_BUTTON</a> for more information.
+   *
    * @param mediaButtonEventHandler The {@link MediaButtonEventHandler}, or null to let the event be
    *     handled by {@link MediaSessionCompat.Callback#onMediaButtonEvent(Intent)}.
    */
@@ -648,6 +659,8 @@ public final class MediaSessionConnector {
    * @param customActionProviders The custom action providers, or null to remove all existing custom
    *     action providers.
    */
+  // incompatible types in assignment.
+  @SuppressWarnings("nullness:assignment.type.incompatible")
   public void setCustomActionProviders(@Nullable CustomActionProvider... customActionProviders) {
     this.customActionProviders =
         customActionProviders == null ? new CustomActionProvider[0] : customActionProviders;
@@ -702,6 +715,9 @@ public final class MediaSessionConnector {
               /* position= */ 0,
               /* playbackSpeed= */ 0,
               /* updateTime= */ SystemClock.elapsedRealtime());
+
+      mediaSession.setRepeatMode(PlaybackStateCompat.REPEAT_MODE_NONE);
+      mediaSession.setShuffleMode(PlaybackStateCompat.SHUFFLE_MODE_NONE);
       mediaSession.setPlaybackState(builder.build());
       return;
     }
@@ -751,6 +767,18 @@ public final class MediaSessionConnector {
             sessionPlaybackSpeed,
             /* updateTime= */ SystemClock.elapsedRealtime())
         .setExtras(extras);
+
+    @Player.RepeatMode int repeatMode = player.getRepeatMode();
+    mediaSession.setRepeatMode(
+        repeatMode == Player.REPEAT_MODE_ONE
+            ? PlaybackStateCompat.REPEAT_MODE_ONE
+            : repeatMode == Player.REPEAT_MODE_ALL
+                ? PlaybackStateCompat.REPEAT_MODE_ALL
+                : PlaybackStateCompat.REPEAT_MODE_NONE);
+    mediaSession.setShuffleMode(
+        player.getShuffleModeEnabled()
+            ? PlaybackStateCompat.SHUFFLE_MODE_ALL
+            : PlaybackStateCompat.SHUFFLE_MODE_NONE);
     mediaSession.setPlaybackState(builder.build());
   }
 
@@ -922,6 +950,7 @@ public final class MediaSessionConnector {
         return playWhenReady ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
       case Player.STATE_ENDED:
         return PlaybackStateCompat.STATE_STOPPED;
+      case Player.STATE_IDLE:
       default:
         return PlaybackStateCompat.STATE_NONE;
     }
@@ -1069,21 +1098,11 @@ public final class MediaSessionConnector {
 
     @Override
     public void onRepeatModeChanged(@Player.RepeatMode int repeatMode) {
-      mediaSession.setRepeatMode(
-          repeatMode == Player.REPEAT_MODE_ONE
-              ? PlaybackStateCompat.REPEAT_MODE_ONE
-              : repeatMode == Player.REPEAT_MODE_ALL
-                  ? PlaybackStateCompat.REPEAT_MODE_ALL
-                  : PlaybackStateCompat.REPEAT_MODE_NONE);
       invalidateMediaSessionPlaybackState();
     }
 
     @Override
     public void onShuffleModeEnabledChanged(boolean shuffleModeEnabled) {
-      mediaSession.setShuffleMode(
-          shuffleModeEnabled
-              ? PlaybackStateCompat.SHUFFLE_MODE_ALL
-              : PlaybackStateCompat.SHUFFLE_MODE_NONE);
       invalidateMediaSessionPlaybackState();
       invalidateMediaSessionQueue();
     }
@@ -1225,7 +1244,7 @@ public final class MediaSessionConnector {
     }
 
     @Override
-    public void onCustomAction(@NonNull String action, @Nullable Bundle extras) {
+    public void onCustomAction(String action, @Nullable Bundle extras) {
       if (player != null && customActionMap.containsKey(action)) {
         customActionMap.get(action).onCustomAction(player, controlDispatcher, action, extras);
         invalidateMediaSessionPlaybackState();

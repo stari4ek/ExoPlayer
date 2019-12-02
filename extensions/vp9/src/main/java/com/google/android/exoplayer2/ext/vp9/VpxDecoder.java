@@ -22,6 +22,7 @@ import com.google.android.exoplayer2.decoder.CryptoInfo;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.drm.DecryptionException;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoDecoderInputBuffer;
 import com.google.android.exoplayer2.video.VideoDecoderOutputBuffer;
@@ -40,6 +41,8 @@ import java.nio.ByteBuffer;
   @Nullable private final ExoMediaCrypto exoMediaCrypto;
   private final long vpxDecContext;
 
+  @Nullable private ByteBuffer lastSupplementalData;
+
   @C.VideoOutputMode private volatile int outputMode;
 
   /**
@@ -50,7 +53,6 @@ import java.nio.ByteBuffer;
    * @param initialInputBufferSize The initial size of each input buffer.
    * @param exoMediaCrypto The {@link ExoMediaCrypto} object required for decoding encrypted
    *     content. Maybe null and can be ignored if decoder does not handle encrypted content.
-   * @param disableLoopFilter Disable the libvpx in-loop smoothing filter.
    * @param enableRowMultiThreadMode Whether row multi threading decoding is enabled.
    * @param threads Number of threads libvpx will use to decode.
    * @throws VpxDecoderException Thrown if an exception occurs when initializing the decoder.
@@ -60,7 +62,6 @@ import java.nio.ByteBuffer;
       int numOutputBuffers,
       int initialInputBufferSize,
       @Nullable ExoMediaCrypto exoMediaCrypto,
-      boolean disableLoopFilter,
       boolean enableRowMultiThreadMode,
       int threads)
       throws VpxDecoderException {
@@ -74,7 +75,7 @@ import java.nio.ByteBuffer;
     if (exoMediaCrypto != null && !VpxLibrary.vpxIsSecureDecodeSupported()) {
       throw new VpxDecoderException("Vpx decoder does not support secure decode.");
     }
-    vpxDecContext = vpxInit(disableLoopFilter, enableRowMultiThreadMode, threads);
+    vpxDecContext = vpxInit(/* disableLoopFilter= */ false, enableRowMultiThreadMode, threads);
     if (vpxDecContext == 0) {
       throw new VpxDecoderException("Failed to initialize decoder");
     }
@@ -124,6 +125,11 @@ import java.nio.ByteBuffer;
   @Nullable
   protected VpxDecoderException decode(
       VideoDecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset) {
+    if (reset && lastSupplementalData != null) {
+      // Don't propagate supplemental data across calls to flush the decoder.
+      lastSupplementalData.clear();
+    }
+
     ByteBuffer inputData = Util.castNonNull(inputBuffer.data);
     int inputSize = inputData.limit();
     CryptoInfo cryptoInfo = inputBuffer.cryptoInfo;
@@ -143,11 +149,22 @@ import java.nio.ByteBuffer;
       }
     }
 
+    if (inputBuffer.hasSupplementalData()) {
+      ByteBuffer supplementalData = Assertions.checkNotNull(inputBuffer.supplementalData);
+      int size = supplementalData.remaining();
+      if (size > 0) {
+        if (lastSupplementalData == null || lastSupplementalData.capacity() < size) {
+          lastSupplementalData = ByteBuffer.allocate(size);
+        } else {
+          lastSupplementalData.clear();
+        }
+        lastSupplementalData.put(supplementalData);
+        lastSupplementalData.flip();
+      }
+    }
+
     if (!inputBuffer.isDecodeOnly()) {
-      @Nullable
-      ByteBuffer supplementalData =
-          inputBuffer.hasSupplementalData() ? inputBuffer.supplementalData : null;
-      outputBuffer.init(inputBuffer.timeUs, outputMode, supplementalData);
+      outputBuffer.init(inputBuffer.timeUs, outputMode, lastSupplementalData);
       int getFrameResult = vpxGetFrame(vpxDecContext, outputBuffer);
       if (getFrameResult == 1) {
         outputBuffer.addFlag(C.BUFFER_FLAG_DECODE_ONLY);
@@ -162,6 +179,7 @@ import java.nio.ByteBuffer;
   @Override
   public void release() {
     super.release();
+    lastSupplementalData = null;
     vpxClose(vpxDecContext);
   }
 

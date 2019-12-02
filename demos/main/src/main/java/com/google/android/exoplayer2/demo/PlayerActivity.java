@@ -34,6 +34,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.C.ContentType;
 import com.google.android.exoplayer2.ExoPlaybackException;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.PlaybackPreparer;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.RenderersFactory;
@@ -53,7 +54,9 @@ import com.google.android.exoplayer2.source.BehindLiveWindowException;
 import com.google.android.exoplayer2.source.ConcatenatingMediaSource;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSourceFactory;
+import com.google.android.exoplayer2.source.MergingMediaSource;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
+import com.google.android.exoplayer2.source.SingleSampleMediaSource;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.source.ads.AdsLoader;
 import com.google.android.exoplayer2.source.ads.AdsMediaSource;
@@ -69,7 +72,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.ui.DebugTextViewHelper;
 import com.google.android.exoplayer2.ui.PlayerControlView;
 import com.google.android.exoplayer2.ui.PlayerView;
-import com.google.android.exoplayer2.ui.spherical.SphericalSurfaceView;
+import com.google.android.exoplayer2.ui.spherical.SphericalGLSurfaceView;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.util.ErrorMessageProvider;
@@ -107,13 +110,18 @@ public class PlayerActivity extends AppCompatActivity
 
   public static final String URI_EXTRA = "uri";
   public static final String EXTENSION_EXTRA = "extension";
+  public static final String IS_LIVE_EXTRA = "is_live";
 
   public static final String DRM_SCHEME_EXTRA = "drm_scheme";
   public static final String DRM_LICENSE_URL_EXTRA = "drm_license_url";
   public static final String DRM_KEY_REQUEST_PROPERTIES_EXTRA = "drm_key_request_properties";
   public static final String DRM_MULTI_SESSION_EXTRA = "drm_multi_session";
   public static final String PREFER_EXTENSION_DECODERS_EXTRA = "prefer_extension_decoders";
+  public static final String TUNNELING_EXTRA = "tunneling";
   public static final String AD_TAG_URI_EXTRA = "ad_tag_uri";
+  public static final String SUBTITLE_URI_EXTRA = "subtitle_uri";
+  public static final String SUBTITLE_MIME_TYPE_EXTRA = "subtitle_mime_type";
+  public static final String SUBTITLE_LANGUAGE_EXTRA = "subtitle_language";
   // For backwards compatibility only.
   public static final String DRM_SCHEME_UUID_EXTRA = "drm_scheme_uuid";
 
@@ -192,7 +200,7 @@ public class PlayerActivity extends AppCompatActivity
         finish();
         return;
       }
-      ((SphericalSurfaceView) playerView.getVideoSurfaceView()).setDefaultStereoMode(stereoMode);
+      ((SphericalGLSurfaceView) playerView.getVideoSurfaceView()).setDefaultStereoMode(stereoMode);
     }
 
     if (savedInstanceState != null) {
@@ -201,7 +209,13 @@ public class PlayerActivity extends AppCompatActivity
       startWindow = savedInstanceState.getInt(KEY_WINDOW);
       startPosition = savedInstanceState.getLong(KEY_POSITION);
     } else {
-      trackSelectorParameters = DefaultTrackSelector.Parameters.getDefaults(/* context= */ this);
+      DefaultTrackSelector.ParametersBuilder builder =
+          new DefaultTrackSelector.ParametersBuilder(/* context= */ this);
+      boolean tunneling = intent.getBooleanExtra(TUNNELING_EXTRA, false);
+      if (Util.SDK_INT >= 21 && tunneling) {
+        builder.setTunnelingAudioSessionId(C.generateAudioSessionIdV21(/* context= */ this));
+      }
+      trackSelectorParameters = builder.build();
       clearStartPosition();
     }
   }
@@ -381,7 +395,8 @@ public class PlayerActivity extends AppCompatActivity
     if (haveStartPosition) {
       player.seekTo(startWindow, startPosition);
     }
-    player.prepare(mediaSource, !haveStartPosition, false);
+    player.setMediaItem(mediaSource);
+    player.prepare();
     updateButtonVisibility();
   }
 
@@ -417,6 +432,19 @@ public class PlayerActivity extends AppCompatActivity
     MediaSource[] mediaSources = new MediaSource[samples.length];
     for (int i = 0; i < samples.length; i++) {
       mediaSources[i] = createLeafMediaSource(samples[i]);
+      Sample.SubtitleInfo subtitleInfo = samples[i].subtitleInfo;
+      if (subtitleInfo != null) {
+        Format subtitleFormat =
+            Format.createTextSampleFormat(
+                /* id= */ null,
+                subtitleInfo.mimeType,
+                C.SELECTION_FLAG_DEFAULT,
+                subtitleInfo.language);
+        MediaSource subtitleMediaSource =
+            new SingleSampleMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(subtitleInfo.uri, subtitleFormat, C.TIME_UNSET);
+        mediaSources[i] = new MergingMediaSource(mediaSources[i], subtitleMediaSource);
+      }
     }
     MediaSource mediaSource =
         mediaSources.length == 1 ? mediaSources[0] : new ConcatenatingMediaSource(mediaSources);

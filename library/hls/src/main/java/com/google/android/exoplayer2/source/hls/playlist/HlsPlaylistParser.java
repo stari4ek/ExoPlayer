@@ -48,10 +48,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Queue;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNullIf;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 
 /**
@@ -338,6 +340,9 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
             parseOptionalStringAttr(line, REGEX_SUBTITLES, variableDefinitions);
         String closedCaptionsGroupId =
             parseOptionalStringAttr(line, REGEX_CLOSED_CAPTIONS, variableDefinitions);
+        if (!iterator.hasNext()) {
+          throw new ParserException("#EXT-X-STREAM-INF tag must be followed by another line");
+        }
         line =
             replaceVariableReferences(
                 iterator.next(), variableDefinitions); // #EXT-X-STREAM-INF's URI.
@@ -381,7 +386,9 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         Assertions.checkState(variant.format.metadata == null);
         HlsTrackMetadataEntry hlsMetadataEntry =
             new HlsTrackMetadataEntry(
-                /* groupId= */ null, /* name= */ null, urlToVariantInfos.get(variant.url));
+                /* groupId= */ null,
+                /* name= */ null,
+                Assertions.checkNotNull(urlToVariantInfos.get(variant.url)));
         deduplicatedVariants.add(
             variant.copyWithFormat(
                 variant.format.copyWithMetadata(new Metadata(hlsMetadataEntry))));
@@ -445,7 +452,15 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
                   ? Util.getCodecsOfType(variant.format.codecs, C.TRACK_TYPE_AUDIO)
                   : null;
           sampleMimeType = codecs != null ? MimeTypes.getMediaMimeType(codecs) : null;
-          int channelCount = parseChannelsAttribute(line, variableDefinitions);
+          String channelsString =
+              parseOptionalStringAttr(line, REGEX_CHANNELS, variableDefinitions);
+          int channelCount = Format.NO_VALUE;
+          if (channelsString != null) {
+            channelCount = Integer.parseInt(Util.splitAtFirst(channelsString, "/")[0]);
+            if (MimeTypes.AUDIO_E_AC3.equals(sampleMimeType) && channelsString.endsWith("/JOC")) {
+              sampleMimeType = MimeTypes.AUDIO_E_AC3_JOC;
+            }
+          }
           format =
               Format.createAudioContainerFormat(
                   /* id= */ formatId,
@@ -536,6 +551,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         sessionKeyDrmInitData);
   }
 
+  @Nullable
   private static Variant getVariantWithAudioGroup(ArrayList<Variant> variants, String groupId) {
     for (int i = 0; i < variants.size(); i++) {
       Variant variant = variants.get(i);
@@ -546,6 +562,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     return null;
   }
 
+  @Nullable
   private static Variant getVariantWithVideoGroup(ArrayList<Variant> variants, String groupId) {
     for (int i = 0; i < variants.size(); i++) {
       Variant variant = variants.get(i);
@@ -819,13 +836,6 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     return roleFlags;
   }
 
-  private static int parseChannelsAttribute(String line, Map<String, String> variableDefinitions) {
-    String channelsString = parseOptionalStringAttr(line, REGEX_CHANNELS, variableDefinitions);
-    return channelsString != null
-        ? Integer.parseInt(Util.splitAtFirst(channelsString, "/")[0])
-        : Format.NO_VALUE;
-  }
-
   @Nullable
   private static SchemeData parseDrmSchemeData(
       String line, String keyFormat, Map<String, String> variableDefinitions)
@@ -931,19 +941,20 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     private final BufferedReader reader;
     private final Queue<String> extraLines;
 
-    private String next;
+    @Nullable private String next;
 
     public LineIterator(Queue<String> extraLines, BufferedReader reader) {
       this.extraLines = extraLines;
       this.reader = reader;
     }
 
+    @EnsuresNonNullIf(expression = "next", result = true)
     public boolean hasNext() throws IOException {
       if (next != null) {
         return true;
       }
       if (!extraLines.isEmpty()) {
-        next = extraLines.poll();
+        next = Assertions.checkNotNull(extraLines.poll());
         return true;
       }
       while ((next = reader.readLine()) != null) {
@@ -955,13 +966,15 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       return false;
     }
 
+    /** Return the next line, or throw {@link NoSuchElementException} if none. */
     public String next() throws IOException {
-      String result = null;
       if (hasNext()) {
-        result = next;
+        String result = next;
         next = null;
+        return result;
+      } else {
+        throw new NoSuchElementException();
       }
-      return result;
     }
 
   }

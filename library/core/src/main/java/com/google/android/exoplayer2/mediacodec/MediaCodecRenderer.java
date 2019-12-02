@@ -372,6 +372,8 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   private boolean waitingForKeys;
   private boolean waitingForFirstSyncSample;
   private boolean waitingForFirstSampleInFormat;
+  private boolean skipMediaCodecStopOnRelease;
+  private boolean pendingOutputEndOfStream;
 
   protected DecoderCounters decoderCounters;
 
@@ -433,6 +435,22 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     this.renderTimeLimitMs = renderTimeLimitMs;
   }
 
+  /**
+   * Skip calling {@link MediaCodec#stop()} when the underlying MediaCodec is going to be released.
+   *
+   * <p>By default, when the MediaCodecRenderer is releasing the underlying {@link MediaCodec}, it
+   * first calls {@link MediaCodec#stop()} and then calls {@link MediaCodec#release()}. If this
+   * feature is enabled, the MediaCodecRenderer will skip the call to {@link MediaCodec#stop()}.
+   *
+   * <p>This method is experimental, and will be renamed or removed in a future release. It should
+   * only be called before the renderer is used.
+   *
+   * @param enabled enable or disable the feature.
+   */
+  public void experimental_setSkipMediaCodecStopOnRelease(boolean enabled) {
+    skipMediaCodecStopOnRelease = enabled;
+  }
+
   @Override
   public final int supportsMixedMimeTypeAdaptation() {
     return ADAPTIVE_NOT_SEAMLESS;
@@ -448,11 +466,11 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Returns the extent to which the renderer is capable of supporting a given format.
+   * Returns the extent to which the renderer is capable of supporting a given {@link Format}.
    *
    * @param mediaCodecSelector The decoder selector.
    * @param drmSessionManager The renderer's {@link DrmSessionManager}.
-   * @param format The format.
+   * @param format The {@link Format}.
    * @return The extent to which the renderer is capable of supporting the given format. See {@link
    *     #supportsFormat(Format)} for more detail.
    * @throws DecoderQueryException If there was an error querying decoders.
@@ -467,7 +485,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    * Returns a list of decoders that can decode media in the specified format, in priority order.
    *
    * @param mediaCodecSelector The decoder selector.
-   * @param format The format for which a decoder is required.
+   * @param format The {@link Format} for which a decoder is required.
    * @param requiresSecureDecoder Whether a secure decoder is required.
    * @return A list of {@link MediaCodecInfo}s corresponding to decoders. May be empty.
    * @throws DecoderQueryException Thrown if there was an error querying decoders.
@@ -481,7 +499,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    *
    * @param codecInfo Information about the {@link MediaCodec} being configured.
    * @param codec The {@link MediaCodec} to configure.
-   * @param format The format for which the codec is being configured.
+   * @param format The {@link Format} for which the codec is being configured.
    * @param crypto For drm protected playbacks, a {@link MediaCrypto} to use for decryption.
    * @param codecOperatingRate The codec operating rate, or {@link #CODEC_OPERATING_RATE_UNSET} if
    *     no codec operating rate should be set.
@@ -547,7 +565,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     return true;
   }
 
-  /**
+  /*
    * Returns whether the codec needs the renderer to propagate the end-of-stream signal directly,
    * rather than by using an end-of-stream buffer queued to the codec.
    */
@@ -556,17 +574,17 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Polls the pending output format queue for a given buffer timestamp. If a format is present, it
-   * is removed and returned. Otherwise returns {@code null}. Subclasses should only call this
-   * method if they are taking over responsibility for output format propagation (e.g., when using
-   * video tunneling).
+   * Polls the pending output format queue for a given buffer timestamp. If a format is present,
+   * {@link #onOutputFormatChanged(Format)} is called. Subclasses should only call this method if
+   * they are taking over responsibility for output format propagation (e.g., when using video
+   * tunneling).
    */
-  protected final @Nullable Format updateOutputFormatForTime(long presentationTimeUs) {
-    Format format = formatQueue.pollFloor(presentationTimeUs);
+  protected final void updateOutputFormatForTime(long presentationTimeUs) {
+    @Nullable Format format = formatQueue.pollFloor(presentationTimeUs);
     if (format != null) {
       outputFormat = format;
+      onOutputFormatChanged(outputFormat);
     }
-    return format;
   }
 
   protected final MediaCodec getCodec() {
@@ -586,6 +604,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   protected void onPositionReset(long positionUs, boolean joining) throws ExoPlaybackException {
     inputStreamEnded = false;
     outputStreamEnded = false;
+    pendingOutputEndOfStream = false;
     flushOrReinitializeCodec();
     formatQueue.clear();
   }
@@ -636,7 +655,9 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
       if (codec != null) {
         decoderCounters.decoderReleaseCount++;
         try {
-          codec.stop();
+          if (!skipMediaCodecStopOnRelease) {
+            codec.stop();
+          }
         } finally {
           codec.release();
         }
@@ -667,6 +688,10 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
 
   @Override
   public void render(long positionUs, long elapsedRealtimeUs) throws ExoPlaybackException {
+    if (pendingOutputEndOfStream) {
+      pendingOutputEndOfStream = false;
+      processEndOfStream();
+    }
     try {
       if (outputStreamEnded) {
         renderToEndOfStream();
@@ -769,7 +794,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     return new DecoderException(cause, codecInfo);
   }
 
-  /** Reads into {@link #flagsOnlyBuffer} and returns whether a format was read. */
+  /** Reads into {@link #flagsOnlyBuffer} and returns whether a {@link Format} was read. */
   private boolean readToFlagsOnlyBuffer(boolean requireFormat) throws ExoPlaybackException {
     FormatHolder formatHolder = getFormatHolder();
     flagsOnlyBuffer.clear();
@@ -992,12 +1017,12 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   private void setSourceDrmSession(@Nullable DrmSession<FrameworkMediaCrypto> session) {
-    DrmSession.replaceSessionReferences(sourceDrmSession, session);
+    DrmSession.replaceSession(sourceDrmSession, session);
     sourceDrmSession = session;
   }
 
   private void setCodecDrmSession(@Nullable DrmSession<FrameworkMediaCrypto> session) {
-    DrmSession.replaceSessionReferences(codecDrmSession, session);
+    DrmSession.replaceSession(codecDrmSession, session);
     codecDrmSession = session;
   }
 
@@ -1166,7 +1191,9 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   private boolean shouldWaitForKeys(boolean bufferEncrypted) throws ExoPlaybackException {
-    if (codecDrmSession == null || (!bufferEncrypted && playClearSamplesWithoutKeys)) {
+    if (codecDrmSession == null
+        || (!bufferEncrypted
+            && (playClearSamplesWithoutKeys || codecDrmSession.playClearSamplesWithoutKeys()))) {
       return false;
     }
     @DrmSession.State int drmSessionState = codecDrmSession.getState();
@@ -1192,7 +1219,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Called when a new format is read from the upstream {@link MediaPeriod}.
+   * Called when a new {@link Format} is read from the upstream {@link MediaPeriod}.
    *
    * @param formatHolder A {@link FormatHolder} that holds the new {@link Format}.
    * @throws ExoPlaybackException If an error occurs re-initializing the {@link MediaCodec}.
@@ -1272,16 +1299,27 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Called when the output format of the {@link MediaCodec} changes.
-   * <p>
-   * The default implementation is a no-op.
+   * Called when the output {@link MediaFormat} of the {@link MediaCodec} changes.
+   *
+   * <p>The default implementation is a no-op.
    *
    * @param codec The {@link MediaCodec} instance.
-   * @param outputFormat The new output format.
-   * @throws ExoPlaybackException Thrown if an error occurs handling the new output format.
+   * @param outputMediaFormat The new output {@link MediaFormat}.
+   * @throws ExoPlaybackException Thrown if an error occurs handling the new output media format.
    */
-  protected void onOutputFormatChanged(MediaCodec codec, MediaFormat outputFormat)
+  protected void onOutputMediaFormatChanged(MediaCodec codec, MediaFormat outputMediaFormat)
       throws ExoPlaybackException {
+    // Do nothing.
+  }
+
+  /**
+   * Called when the output {@link Format} changes from the format queue.
+   *
+   * <p>The default implementation is a no-op.
+   *
+   * @param outputFormat The new output {@link Format}.
+   */
+  protected void onOutputFormatChanged(Format outputFormat) {
     // Do nothing.
   }
 
@@ -1321,15 +1359,15 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Determines whether the existing {@link MediaCodec} can be kept for a new format, and if it can
-   * whether it requires reconfiguration.
+   * Determines whether the existing {@link MediaCodec} can be kept for a new {@link Format}, and if
+   * it can whether it requires reconfiguration.
    *
    * <p>The default implementation returns {@link #KEEP_CODEC_RESULT_NO}.
    *
    * @param codec The existing {@link MediaCodec} instance.
    * @param codecInfo A {@link MediaCodecInfo} describing the decoder.
-   * @param oldFormat The format for which the existing instance is configured.
-   * @param newFormat The new format.
+   * @param oldFormat The {@link Format} for which the existing instance is configured.
+   * @param newFormat The new {@link Format}.
    * @return Whether the instance can be kept, and if it can whether it requires reconfiguration.
    */
   protected @KeepCodecResult int canKeepCodec(
@@ -1363,12 +1401,12 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
 
   /**
    * Returns the {@link MediaFormat#KEY_OPERATING_RATE} value for a given renderer operating rate,
-   * current format and set of possible stream formats.
+   * current {@link Format} and set of possible stream formats.
    *
    * <p>The default implementation returns {@link #CODEC_OPERATING_RATE_UNSET}.
    *
    * @param operatingRate The renderer operating rate.
-   * @param format The format for which the codec is being configured.
+   * @param format The {@link Format} for which the codec is being configured.
    * @param streamFormats The possible stream formats.
    * @return The codec operating rate, or {@link #CODEC_OPERATING_RATE_UNSET} if no codec operating
    *     rate should be set.
@@ -1479,7 +1517,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
 
       if (outputIndex < 0) {
         if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED /* (-2) */) {
-          processOutputFormat();
+          processOutputMediaFormat();
           return true;
         } else if (outputIndex == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED /* (-3) */) {
           processOutputBuffersChanged();
@@ -1570,22 +1608,21 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
     return false;
   }
 
-  /**
-   * Processes a new output format.
-   */
-  private void processOutputFormat() throws ExoPlaybackException {
-    MediaFormat format = codec.getOutputFormat();
+  /** Processes a new output {@link MediaFormat}. */
+  private void processOutputMediaFormat() throws ExoPlaybackException {
+    MediaFormat mediaFormat = codec.getOutputFormat();
     if (codecAdaptationWorkaroundMode != ADAPTATION_WORKAROUND_MODE_NEVER
-        && format.getInteger(MediaFormat.KEY_WIDTH) == ADAPTATION_WORKAROUND_SLICE_WIDTH_HEIGHT
-        && format.getInteger(MediaFormat.KEY_HEIGHT) == ADAPTATION_WORKAROUND_SLICE_WIDTH_HEIGHT) {
+        && mediaFormat.getInteger(MediaFormat.KEY_WIDTH) == ADAPTATION_WORKAROUND_SLICE_WIDTH_HEIGHT
+        && mediaFormat.getInteger(MediaFormat.KEY_HEIGHT)
+            == ADAPTATION_WORKAROUND_SLICE_WIDTH_HEIGHT) {
       // We assume this format changed event was caused by the adaptation workaround.
       shouldSkipAdaptationWorkaroundOutputBuffer = true;
       return;
     }
     if (codecNeedsMonoChannelCountWorkaround) {
-      format.setInteger(MediaFormat.KEY_CHANNEL_COUNT, 1);
+      mediaFormat.setInteger(MediaFormat.KEY_CHANNEL_COUNT, 1);
     }
-    onOutputFormatChanged(codec, format);
+    onOutputMediaFormatChanged(codec, mediaFormat);
   }
 
   /**
@@ -1623,7 +1660,7 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
    * @param isDecodeOnlyBuffer Whether the buffer was marked with {@link C#BUFFER_FLAG_DECODE_ONLY}
    *     by the source.
    * @param isLastBuffer Whether the buffer is the last sample of the current stream.
-   * @param format The format associated with the buffer.
+   * @param format The {@link Format} associated with the buffer.
    * @return Whether the output buffer was fully processed (e.g. rendered or skipped).
    * @throws ExoPlaybackException If an error occurs processing the output buffer.
    */
@@ -1673,6 +1710,14 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
         renderToEndOfStream();
         break;
     }
+  }
+
+  /**
+   * Notifies the renderer that output end of stream is pending and should be handled on the next
+   * render.
+   */
+  protected final void setPendingOutputEndOfStream() {
+    pendingOutputEndOfStream = true;
   }
 
   private void reinitializeCodec() throws ExoPlaybackException {
@@ -1823,11 +1868,12 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   /**
    * Returns whether the decoder is an H.264/AVC decoder known to fail if NAL units are queued
    * before the codec specific data.
-   * <p>
-   * If true is returned, the renderer will work around the issue by discarding data up to the SPS.
+   *
+   * <p>If true is returned, the renderer will work around the issue by discarding data up to the
+   * SPS.
    *
    * @param name The name of the decoder.
-   * @param format The format used to configure the decoder.
+   * @param format The {@link Format} used to configure the decoder.
    * @return True if the decoder is known to fail if NAL units are queued before CSD.
    */
   private static boolean codecNeedsDiscardToSpsWorkaround(String name, Format format) {
@@ -1891,17 +1937,18 @@ public abstract class MediaCodecRenderer extends BaseRenderer {
   }
 
   /**
-   * Returns whether the decoder is known to set the number of audio channels in the output format
-   * to 2 for the given input format, whilst only actually outputting a single channel.
-   * <p>
-   * If true is returned then we explicitly override the number of channels in the output format,
-   * setting it to 1.
+   * Returns whether the decoder is known to set the number of audio channels in the output {@link
+   * Format} to 2 for the given input {@link Format}, whilst only actually outputting a single
+   * channel.
+   *
+   * <p>If true is returned then we explicitly override the number of channels in the output {@link
+   * Format}, setting it to 1.
    *
    * @param name The decoder name.
-   * @param format The input format.
-   * @return True if the decoder is known to set the number of audio channels in the output format
-   *     to 2 for the given input format, whilst only actually outputting a single channel. False
-   *     otherwise.
+   * @param format The input {@link Format}.
+   * @return True if the decoder is known to set the number of audio channels in the output {@link
+   *     Format} to 2 for the given input {@link Format}, whilst only actually outputting a single
+   *     channel. False otherwise.
    */
   private static boolean codecNeedsMonoChannelCountWorkaround(String name, Format format) {
     return Util.SDK_INT <= 18 && format.channelCount == 1

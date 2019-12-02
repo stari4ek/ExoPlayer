@@ -31,6 +31,7 @@ import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.video.VideoDecoderOutputBufferRenderer;
 import com.google.android.exoplayer2.video.VideoFrameMetadataListener;
 import com.google.android.exoplayer2.video.VideoListener;
 import com.google.android.exoplayer2.video.spherical.CameraMotionListener;
@@ -216,7 +217,7 @@ public interface Player {
      *
      * @param surface The surface to clear.
      */
-    void clearVideoSurface(Surface surface);
+    void clearVideoSurface(@Nullable Surface surface);
 
     /**
      * Sets the {@link Surface} onto which video will be rendered. The caller is responsible for
@@ -239,7 +240,7 @@ public interface Player {
      *
      * @param surfaceHolder The surface holder.
      */
-    void setVideoSurfaceHolder(SurfaceHolder surfaceHolder);
+    void setVideoSurfaceHolder(@Nullable SurfaceHolder surfaceHolder);
 
     /**
      * Clears the {@link SurfaceHolder} that holds the {@link Surface} onto which video is being
@@ -247,7 +248,7 @@ public interface Player {
      *
      * @param surfaceHolder The surface holder to clear.
      */
-    void clearVideoSurfaceHolder(SurfaceHolder surfaceHolder);
+    void clearVideoSurfaceHolder(@Nullable SurfaceHolder surfaceHolder);
 
     /**
      * Sets the {@link SurfaceView} onto which video will be rendered. The player will track the
@@ -255,7 +256,7 @@ public interface Player {
      *
      * @param surfaceView The surface view.
      */
-    void setVideoSurfaceView(SurfaceView surfaceView);
+    void setVideoSurfaceView(@Nullable SurfaceView surfaceView);
 
     /**
      * Clears the {@link SurfaceView} onto which video is being rendered if it matches the one
@@ -263,7 +264,7 @@ public interface Player {
      *
      * @param surfaceView The texture view to clear.
      */
-    void clearVideoSurfaceView(SurfaceView surfaceView);
+    void clearVideoSurfaceView(@Nullable SurfaceView surfaceView);
 
     /**
      * Sets the {@link TextureView} onto which video will be rendered. The player will track the
@@ -271,7 +272,7 @@ public interface Player {
      *
      * @param textureView The texture view.
      */
-    void setVideoTextureView(TextureView textureView);
+    void setVideoTextureView(@Nullable TextureView textureView);
 
     /**
      * Clears the {@link TextureView} onto which video is being rendered if it matches the one
@@ -279,7 +280,31 @@ public interface Player {
      *
      * @param textureView The texture view to clear.
      */
-    void clearVideoTextureView(TextureView textureView);
+    void clearVideoTextureView(@Nullable TextureView textureView);
+
+    /**
+     * Sets the video decoder output buffer renderer. This is intended for use only with extension
+     * renderers that accept {@link C#MSG_SET_VIDEO_DECODER_OUTPUT_BUFFER_RENDERER}. For most use
+     * cases, an output surface or view should be passed via {@link #setVideoSurface(Surface)} or
+     * {@link #setVideoSurfaceView(SurfaceView)} instead.
+     *
+     * @param videoDecoderOutputBufferRenderer The video decoder output buffer renderer, or {@code
+     *     null} to clear the output buffer renderer.
+     */
+    void setVideoDecoderOutputBufferRenderer(
+        @Nullable VideoDecoderOutputBufferRenderer videoDecoderOutputBufferRenderer);
+
+    /** Clears the video decoder output buffer renderer. */
+    void clearVideoDecoderOutputBufferRenderer();
+
+    /**
+     * Clears the video decoder output buffer renderer if it matches the one passed. Else does
+     * nothing.
+     *
+     * @param videoDecoderOutputBufferRenderer The video decoder output buffer renderer to clear.
+     */
+    void clearVideoDecoderOutputBufferRenderer(
+        @Nullable VideoDecoderOutputBufferRenderer videoDecoderOutputBufferRenderer);
   }
 
   /** The text component of a {@link Player}. */
@@ -470,7 +495,6 @@ public interface Player {
   abstract class DefaultEventListener implements EventListener {
 
     @Override
-    @SuppressWarnings("deprecation")
     public void onTimelineChanged(Timeline timeline, @TimelineChangeReason int reason) {
       Object manifest = null;
       if (timeline.getWindowCount() == 1) {
@@ -525,18 +549,21 @@ public interface Player {
   int STATE_ENDED = 4;
 
   /**
-   * Reason why playback is suppressed even if {@link #getPlaybackState()} is {@link #STATE_READY}
-   * and {@link #getPlayWhenReady()} is {@code true}. One of {@link
-   * #PLAYBACK_SUPPRESSION_REASON_NONE} or {@link #PLAYBACK_SUPPRESSION_REASON_AUDIO_FOCUS_LOSS}.
+   * Reason why playback is suppressed even though {@link #getPlayWhenReady()} is {@code true}. One
+   * of {@link #PLAYBACK_SUPPRESSION_REASON_NONE} or {@link
+   * #PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS}.
    */
   @Documented
   @Retention(RetentionPolicy.SOURCE)
-  @IntDef({PLAYBACK_SUPPRESSION_REASON_NONE, PLAYBACK_SUPPRESSION_REASON_AUDIO_FOCUS_LOSS})
+  @IntDef({
+    PLAYBACK_SUPPRESSION_REASON_NONE,
+    PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
+  })
   @interface PlaybackSuppressionReason {}
   /** Playback is not suppressed. */
   int PLAYBACK_SUPPRESSION_REASON_NONE = 0;
-  /** Playback is suppressed because audio focus is lost or can't be acquired. */
-  int PLAYBACK_SUPPRESSION_REASON_AUDIO_FOCUS_LOSS = 1;
+  /** Playback is suppressed due to transient audio focus loss. */
+  int PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS = 1;
 
   /**
    * Repeat modes for playback. One of {@link #REPEAT_MODE_OFF}, {@link #REPEAT_MODE_ONE} or {@link
@@ -661,13 +688,10 @@ public interface Player {
   int getPlaybackState();
 
   /**
-   * Returns reason why playback is suppressed even if {@link #getPlaybackState()} is {@link
-   * #STATE_READY} and {@link #getPlayWhenReady()} is {@code true}.
+   * Returns the reason why playback is suppressed even though {@link #getPlayWhenReady()} is {@code
+   * true}, or {@link #PLAYBACK_SUPPRESSION_REASON_NONE} if playback is not suppressed.
    *
-   * <p>Note that {@link #PLAYBACK_SUPPRESSION_REASON_NONE} indicates that playback is not
-   * suppressed.
-   *
-   * @return The current {@link PlaybackSuppressionReason}.
+   * @return The current {@link PlaybackSuppressionReason playback suppression reason}.
    */
   @PlaybackSuppressionReason
   int getPlaybackSuppressionReason();
@@ -721,7 +745,7 @@ public interface Player {
   /**
    * Sets the {@link RepeatMode} to be used for playback.
    *
-   * @param repeatMode A repeat mode.
+   * @param repeatMode The repeat mode.
    */
   void setRepeatMode(@RepeatMode int repeatMode);
 

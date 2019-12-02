@@ -38,8 +38,8 @@ public final class SsaDecoder extends SimpleSubtitleDecoder {
 
   private static final String TAG = "SsaDecoder";
 
-  private static final Pattern SSA_TIMECODE_PATTERN = Pattern.compile(
-      "(?:(\\d+):)?(\\d+):(\\d+)(?::|\\.)(\\d+)");
+  private static final Pattern SSA_TIMECODE_PATTERN =
+      Pattern.compile("(?:(\\d+):)?(\\d+):(\\d+)[:.](\\d+)");
   private static final String FORMAT_LINE_PREFIX = "Format: ";
   private static final String DIALOGUE_LINE_PREFIX = "Dialogue: ";
 
@@ -180,32 +180,27 @@ public final class SsaDecoder extends SimpleSubtitleDecoder {
       return;
     }
 
-    long startTimeUs = SsaDecoder.parseTimecodeUs(lineValues[formatStartIndex]);
+    long startTimeUs = parseTimecodeUs(lineValues[formatStartIndex]);
     if (startTimeUs == C.TIME_UNSET) {
       Log.w(TAG, "Skipping invalid timing: " + dialogueLine);
       return;
     }
 
-    long endTimeUs = C.TIME_UNSET;
-    String endTimeString = lineValues[formatEndIndex];
-    if (!endTimeString.trim().isEmpty()) {
-      endTimeUs = SsaDecoder.parseTimecodeUs(endTimeString);
-      if (endTimeUs == C.TIME_UNSET) {
-        Log.w(TAG, "Skipping invalid timing: " + dialogueLine);
-        return;
-      }
+    long endTimeUs = parseTimecodeUs(lineValues[formatEndIndex]);
+    if (endTimeUs == C.TIME_UNSET) {
+      Log.w(TAG, "Skipping invalid timing: " + dialogueLine);
+      return;
     }
 
-    String text = lineValues[formatTextIndex]
-        .replaceAll("\\{.*?\\}", "")
-        .replaceAll("\\\\N", "\n")
-        .replaceAll("\\\\n", "\n");
+    String text =
+        lineValues[formatTextIndex]
+            .replaceAll("\\{.*?\\}", "") // Warning that \\} can be replaced with } is bogus.
+            .replaceAll("\\\\N", "\n")
+            .replaceAll("\\\\n", "\n");
     cues.add(new Cue(text));
     cueTimesUs.add(startTimeUs);
-    if (endTimeUs != C.TIME_UNSET) {
-      cues.add(Cue.EMPTY);
-      cueTimesUs.add(endTimeUs);
-    }
+    cues.add(Cue.EMPTY);
+    cueTimesUs.add(endTimeUs);
   }
 
   /**

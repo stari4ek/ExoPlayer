@@ -59,11 +59,12 @@ import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.ui.AspectRatioFrameLayout.ResizeMode;
 import com.google.android.exoplayer2.ui.spherical.SingleTapListener;
-import com.google.android.exoplayer2.ui.spherical.SphericalSurfaceView;
+import com.google.android.exoplayer2.ui.spherical.SphericalGLSurfaceView;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.ErrorMessageProvider;
 import com.google.android.exoplayer2.util.RepeatModeUtil;
 import com.google.android.exoplayer2.util.Util;
+import com.google.android.exoplayer2.video.VideoDecoderGLSurfaceView;
 import com.google.android.exoplayer2.video.VideoListener;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
@@ -130,11 +131,11 @@ import java.util.List;
  *         <li>Default: {@code fit}
  *       </ul>
  *   <li><b>{@code surface_type}</b> - The type of surface view used for video playbacks. Valid
- *       values are {@code surface_view}, {@code texture_view}, {@code spherical_view} and {@code
- *       none}. Using {@code none} is recommended for audio only applications, since creating the
- *       surface can be expensive. Using {@code surface_view} is recommended for video applications.
- *       Note, TextureView can only be used in a hardware accelerated window. When rendered in
- *       software, TextureView will draw nothing.
+ *       values are {@code surface_view}, {@code texture_view}, {@code spherical_gl_surface_view},
+ *       {@code video_decoder_gl_surface_view} and {@code none}. Using {@code none} is recommended
+ *       for audio only applications, since creating the surface can be expensive. Using {@code
+ *       surface_view} is recommended for video applications. Note, TextureView can only be used in
+ *       a hardware accelerated window. When rendered in software, TextureView will draw nothing.
  *       <ul>
  *         <li>Corresponding method: None
  *         <li>Default: {@code surface_view}
@@ -275,7 +276,8 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
   private static final int SURFACE_TYPE_NONE = 0;
   private static final int SURFACE_TYPE_SURFACE_VIEW = 1;
   private static final int SURFACE_TYPE_TEXTURE_VIEW = 2;
-  private static final int SURFACE_TYPE_MONO360_VIEW = 3;
+  private static final int SURFACE_TYPE_SPHERICAL_GL_SURFACE_VIEW = 3;
+  private static final int SURFACE_TYPE_VIDEO_DECODER_GL_SURFACE_VIEW = 4;
   // LINT.ThenChange(../../../../../../res/values/attrs.xml)
 
   @Nullable private final AspectRatioFrameLayout contentFrame;
@@ -292,6 +294,7 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
 
   private Player player;
   private boolean useController;
+  @Nullable private PlayerControlView.VisibilityListener controllerVisibilityListener;
   private boolean useArtwork;
   @Nullable private Drawable defaultArtwork;
   private @ShowBuffering int showBuffering;
@@ -406,10 +409,13 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
         case SURFACE_TYPE_TEXTURE_VIEW:
           surfaceView = new TextureView(context);
           break;
-        case SURFACE_TYPE_MONO360_VIEW:
-          SphericalSurfaceView sphericalSurfaceView = new SphericalSurfaceView(context);
-          sphericalSurfaceView.setSingleTapListener(componentListener);
-          surfaceView = sphericalSurfaceView;
+        case SURFACE_TYPE_SPHERICAL_GL_SURFACE_VIEW:
+          SphericalGLSurfaceView sphericalGLSurfaceView = new SphericalGLSurfaceView(context);
+          sphericalGLSurfaceView.setSingleTapListener(componentListener);
+          surfaceView = sphericalGLSurfaceView;
+          break;
+        case SURFACE_TYPE_VIDEO_DECODER_GL_SURFACE_VIEW:
+          surfaceView = new VideoDecoderGLSurfaceView(context);
           break;
         default:
           surfaceView = new SurfaceView(context);
@@ -478,6 +484,10 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
     this.controllerHideDuringAds = controllerHideDuringAds;
     this.useController = useController && controller != null;
     hideController();
+    updateContentDescription();
+    if (controller != null) {
+      controller.addVisibilityListener(/* listener= */ componentListener);
+    }
   }
 
   /**
@@ -537,8 +547,10 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
         oldVideoComponent.removeVideoListener(componentListener);
         if (surfaceView instanceof TextureView) {
           oldVideoComponent.clearVideoTextureView((TextureView) surfaceView);
-        } else if (surfaceView instanceof SphericalSurfaceView) {
-          ((SphericalSurfaceView) surfaceView).setVideoComponent(null);
+        } else if (surfaceView instanceof SphericalGLSurfaceView) {
+          ((SphericalGLSurfaceView) surfaceView).setVideoComponent(null);
+        } else if (surfaceView instanceof VideoDecoderGLSurfaceView) {
+          oldVideoComponent.setVideoDecoderOutputBufferRenderer(null);
         } else if (surfaceView instanceof SurfaceView) {
           oldVideoComponent.clearVideoSurfaceView((SurfaceView) surfaceView);
         }
@@ -563,8 +575,11 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
       if (newVideoComponent != null) {
         if (surfaceView instanceof TextureView) {
           newVideoComponent.setVideoTextureView((TextureView) surfaceView);
-        } else if (surfaceView instanceof SphericalSurfaceView) {
-          ((SphericalSurfaceView) surfaceView).setVideoComponent(newVideoComponent);
+        } else if (surfaceView instanceof SphericalGLSurfaceView) {
+          ((SphericalGLSurfaceView) surfaceView).setVideoComponent(newVideoComponent);
+        } else if (surfaceView instanceof VideoDecoderGLSurfaceView) {
+          newVideoComponent.setVideoDecoderOutputBufferRenderer(
+              ((VideoDecoderGLSurfaceView) surfaceView).getVideoDecoderOutputBufferRenderer());
         } else if (surfaceView instanceof SurfaceView) {
           newVideoComponent.setVideoSurfaceView((SurfaceView) surfaceView);
         }
@@ -677,8 +692,9 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
       controller.setPlayer(player);
     } else if (controller != null) {
       controller.hide();
-      controller.setPlayer(null);
+      controller.setPlayer(/* player= */ null);
     }
+    updateContentDescription();
   }
 
   /**
@@ -736,8 +752,8 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
    * buffering spinner is not displayed by default.
    *
    * @param showBuffering The mode that defines when the buffering spinner is displayed. One of
-   *     {@link #SHOW_BUFFERING_NEVER}, {@link #SHOW_BUFFERING_WHEN_PLAYING} and
-   *     {@link #SHOW_BUFFERING_ALWAYS}.
+   *     {@link #SHOW_BUFFERING_NEVER}, {@link #SHOW_BUFFERING_WHEN_PLAYING} and {@link
+   *     #SHOW_BUFFERING_ALWAYS}.
    */
   public void setShowBuffering(@ShowBuffering int showBuffering) {
     if (this.showBuffering != showBuffering) {
@@ -870,6 +886,7 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
   public void setControllerHideOnTouch(boolean controllerHideOnTouch) {
     Assertions.checkState(controller != null);
     this.controllerHideOnTouch = controllerHideOnTouch;
+    updateContentDescription();
   }
 
   /**
@@ -911,7 +928,16 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
   public void setControllerVisibilityListener(
       @Nullable PlayerControlView.VisibilityListener listener) {
     Assertions.checkState(controller != null);
-    controller.setVisibilityListener(listener);
+    if (this.controllerVisibilityListener == listener) {
+      return;
+    }
+    if (this.controllerVisibilityListener != null) {
+      controller.removeVisibilityListener(this.controllerVisibilityListener);
+    }
+    this.controllerVisibilityListener = listener;
+    if (listener != null) {
+      controller.addVisibilityListener(listener);
+    }
   }
 
   /**
@@ -1023,12 +1049,15 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
    *   <li>{@link SurfaceView} by default, or if the {@code surface_type} attribute is set to {@code
    *       surface_view}.
    *   <li>{@link TextureView} if {@code surface_type} is {@code texture_view}.
-   *   <li>{@link SphericalSurfaceView} if {@code surface_type} is {@code spherical_view}.
+   *   <li>{@link SphericalGLSurfaceView} if {@code surface_type} is {@code
+   *       spherical_gl_surface_view}.
+   *   <li>{@link VideoDecoderGLSurfaceView} if {@code surface_type} is {@code
+   *       video_decoder_gl_surface_view}.
    *   <li>{@code null} if {@code surface_type} is {@code none}.
    * </ul>
    *
-   * @return The {@link SurfaceView}, {@link TextureView}, {@link SphericalSurfaceView} or {@code
-   *     null}.
+   * @return The {@link SurfaceView}, {@link TextureView}, {@link SphericalGLSurfaceView}, {@link
+   *     VideoDecoderGLSurfaceView} or {@code null}.
    */
   @Nullable
   public View getVideoSurfaceView() {
@@ -1096,34 +1125,34 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
 
   /**
    * Should be called when the player is visible to the user and if {@code surface_type} is {@code
-   * spherical_view}. It is the counterpart to {@link #onPause()}.
+   * spherical_gl_surface_view}. It is the counterpart to {@link #onPause()}.
    *
    * <p>This method should typically be called in {@code Activity.onStart()}, or {@code
    * Activity.onResume()} for API versions &lt;= 23.
    */
   public void onResume() {
-    if (surfaceView instanceof SphericalSurfaceView) {
-      ((SphericalSurfaceView) surfaceView).onResume();
+    if (surfaceView instanceof SphericalGLSurfaceView) {
+      ((SphericalGLSurfaceView) surfaceView).onResume();
     }
   }
 
   /**
    * Should be called when the player is no longer visible to the user and if {@code surface_type}
-   * is {@code spherical_view}. It is the counterpart to {@link #onResume()}.
+   * is {@code spherical_gl_surface_view}. It is the counterpart to {@link #onResume()}.
    *
    * <p>This method should typically be called in {@code Activity.onStop()}, or {@code
    * Activity.onPause()} for API versions &lt;= 23.
    */
   public void onPause() {
-    if (surfaceView instanceof SphericalSurfaceView) {
-      ((SphericalSurfaceView) surfaceView).onPause();
+    if (surfaceView instanceof SphericalGLSurfaceView) {
+      ((SphericalGLSurfaceView) surfaceView).onPause();
     }
   }
 
   /**
    * Called when there's a change in the aspect ratio of the content being displayed. The default
    * implementation sets the aspect ratio of the content frame to that of the content, unless the
-   * content view is a {@link SphericalSurfaceView} in which case the frame's aspect ratio is
+   * content view is a {@link SphericalGLSurfaceView} in which case the frame's aspect ratio is
    * cleared.
    *
    * @param contentAspectRatio The aspect ratio of the content.
@@ -1136,7 +1165,7 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
       @Nullable View contentView) {
     if (contentFrame != null) {
       contentFrame.setAspectRatio(
-          contentView instanceof SphericalSurfaceView ? 0 : contentAspectRatio);
+          contentView instanceof SphericalGLSurfaceView ? 0 : contentAspectRatio);
     }
   }
 
@@ -1349,6 +1378,20 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
     }
   }
 
+  private void updateContentDescription() {
+    if (controller == null || !useController) {
+      setContentDescription(/* contentDescription= */ null);
+    } else if (controller.getVisibility() == View.VISIBLE) {
+      setContentDescription(
+          /* contentDescription= */ controllerHideOnTouch
+              ? getResources().getString(R.string.exo_controls_hide)
+              : null);
+    } else {
+      setContentDescription(
+          /* contentDescription= */ getResources().getString(R.string.exo_controls_show));
+    }
+  }
+
   @TargetApi(23)
   private static void configureEditModeLogoV23(Resources resources, ImageView logo) {
     logo.setImageDrawable(resources.getDrawable(R.drawable.exo_edit_mode_logo, null));
@@ -1408,7 +1451,8 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
           TextOutput,
           VideoListener,
           OnLayoutChangeListener,
-          SingleTapListener {
+          SingleTapListener,
+          PlayerControlView.VisibilityListener {
 
     // TextOutput implementation
 
@@ -1502,6 +1546,13 @@ public class PlayerView extends FrameLayout implements AdsLoader.AdViewProvider 
     @Override
     public boolean onSingleTapUp(MotionEvent e) {
       return toggleControllerVisibility();
+    }
+
+    // PlayerControlView.VisibilityListener implementation
+
+    @Override
+    public void onVisibilityChange(int visibility) {
+      updateContentDescription();
     }
   }
 }
