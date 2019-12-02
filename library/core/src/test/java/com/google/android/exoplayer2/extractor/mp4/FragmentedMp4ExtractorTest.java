@@ -15,8 +15,8 @@
  */
 package com.google.android.exoplayer2.extractor.mp4;
 
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.Format;
-import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.testutil.ExtractorAsserts;
 import com.google.android.exoplayer2.testutil.ExtractorAsserts.ExtractorFactory;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -24,10 +24,9 @@ import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
 
 /** Unit test for {@link FragmentedMp4Extractor}. */
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public final class FragmentedMp4ExtractorTest {
 
   @Test
@@ -53,11 +52,6 @@ public final class FragmentedMp4ExtractorTest {
   }
 
   private static ExtractorFactory getExtractorFactory(final List<Format> closedCaptionFormats) {
-    return new ExtractorFactory() {
-      @Override
-      public Extractor create() {
-        return new FragmentedMp4Extractor(0, null, null, null, closedCaptionFormats);
-      }
-    };
+    return () -> new FragmentedMp4Extractor(0, null, null, null, closedCaptionFormats);
   }
 }

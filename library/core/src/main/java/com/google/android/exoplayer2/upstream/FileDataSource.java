@@ -15,10 +15,15 @@
  */
 package com.google.android.exoplayer2.upstream;
 
+import static com.google.android.exoplayer2.util.Util.castNonNull;
+
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import android.text.TextUtils;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.util.Assertions;
 import java.io.EOFException;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 
@@ -34,10 +39,13 @@ public final class FileDataSource extends BaseDataSource {
       super(cause);
     }
 
+    public FileDataSourceException(String message, IOException cause) {
+      super(message, cause);
+    }
   }
 
-  private @Nullable RandomAccessFile file;
-  private @Nullable Uri uri;
+  @Nullable private RandomAccessFile file;
+  @Nullable private Uri uri;
   private long bytesRemaining;
   private boolean opened;
 
@@ -45,24 +53,16 @@ public final class FileDataSource extends BaseDataSource {
     super(/* isNetwork= */ false);
   }
 
-  /**
-   * @param listener An optional listener.
-   * @deprecated Use {@link #FileDataSource()} and {@link #addTransferListener(TransferListener)}
-   */
-  @Deprecated
-  public FileDataSource(@Nullable TransferListener listener) {
-    this();
-    if (listener != null) {
-      addTransferListener(listener);
-    }
-  }
-
   @Override
   public long open(DataSpec dataSpec) throws FileDataSourceException {
     try {
-      uri = dataSpec.uri;
+      Uri uri = dataSpec.uri;
+      this.uri = uri;
+
       transferInitializing(dataSpec);
-      file = new RandomAccessFile(dataSpec.uri.getPath(), "r");
+
+      this.file = openLocalFile(uri);
+
       file.seek(dataSpec.position);
       bytesRemaining = dataSpec.length == C.LENGTH_UNSET ? file.length() - dataSpec.position
           : dataSpec.length;
@@ -79,6 +79,23 @@ public final class FileDataSource extends BaseDataSource {
     return bytesRemaining;
   }
 
+  private static RandomAccessFile openLocalFile(Uri uri) throws FileDataSourceException {
+    try {
+      return new RandomAccessFile(Assertions.checkNotNull(uri.getPath()), "r");
+    } catch (FileNotFoundException e) {
+      if (!TextUtils.isEmpty(uri.getQuery()) || !TextUtils.isEmpty(uri.getFragment())) {
+        throw new FileDataSourceException(
+            String.format(
+                "uri has query and/or fragment, which are not supported. Did you call Uri.parse()"
+                    + " on a string containing '?' or '#'? Use Uri.fromFile(new File(path)) to"
+                    + " avoid this. path=%s,query=%s,fragment=%s",
+                uri.getPath(), uri.getQuery(), uri.getFragment()),
+            e);
+      }
+      throw new FileDataSourceException(e);
+    }
+  }
+
   @Override
   public int read(byte[] buffer, int offset, int readLength) throws FileDataSourceException {
     if (readLength == 0) {
@@ -88,7 +105,8 @@ public final class FileDataSource extends BaseDataSource {
     } else {
       int bytesRead;
       try {
-        bytesRead = file.read(buffer, offset, (int) Math.min(bytesRemaining, readLength));
+        bytesRead =
+            castNonNull(file).read(buffer, offset, (int) Math.min(bytesRemaining, readLength));
       } catch (IOException e) {
         throw new FileDataSourceException(e);
       }
@@ -103,7 +121,8 @@ public final class FileDataSource extends BaseDataSource {
   }
 
   @Override
-  public @Nullable Uri getUri() {
+  @Nullable
+  public Uri getUri() {
     return uri;
   }
 

@@ -16,7 +16,7 @@
 package com.google.android.exoplayer2.upstream;
 
 import android.net.Uri;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import java.io.IOException;
 
 /**
@@ -27,12 +27,7 @@ public final class DummyDataSource implements DataSource {
   public static final DummyDataSource INSTANCE = new DummyDataSource();
 
   /** A factory that produces {@link DummyDataSource}. */
-  public static final Factory FACTORY = new Factory() {
-    @Override
-    public DataSource createDataSource() {
-      return new DummyDataSource();
-    }
-  };
+  public static final Factory FACTORY = DummyDataSource::new;
 
   private DummyDataSource() {}
 
@@ -47,17 +42,18 @@ public final class DummyDataSource implements DataSource {
   }
 
   @Override
-  public int read(byte[] buffer, int offset, int readLength) throws IOException {
+  public int read(byte[] buffer, int offset, int readLength) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public @Nullable Uri getUri() {
+  @Nullable
+  public Uri getUri() {
     return null;
   }
 
   @Override
-  public void close() throws IOException {
+  public void close() {
     // do nothing.
   }
 }

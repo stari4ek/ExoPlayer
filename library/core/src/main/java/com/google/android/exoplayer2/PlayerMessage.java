@@ -16,7 +16,7 @@
 package com.google.android.exoplayer2;
 
 import android.os.Handler;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.util.Assertions;
 
 /**
@@ -36,7 +36,7 @@ public final class PlayerMessage {
      * @throws ExoPlaybackException If an error occurred whilst handling the message. Should only be
      *     thrown by targets that handle messages on the playback thread.
      */
-    void handleMessage(int messageType, Object payload) throws ExoPlaybackException;
+    void handleMessage(int messageType, @Nullable Object payload) throws ExoPlaybackException;
   }
 
   /** A sender for messages. */
@@ -55,7 +55,7 @@ public final class PlayerMessage {
   private final Timeline timeline;
 
   private int type;
-  private Object payload;
+  @Nullable private Object payload;
   private Handler handler;
   private int windowIndex;
   private long positionMs;
@@ -134,6 +134,7 @@ public final class PlayerMessage {
   }
 
   /** Returns the message payload forwarded to {@link Target#handleMessage(int, Object)}. */
+  @Nullable
   public Object getPayload() {
     return payload;
   }
@@ -157,6 +158,14 @@ public final class PlayerMessage {
   }
 
   /**
+   * Returns position in window at {@link #getWindowIndex()} at which the message will be delivered,
+   * in milliseconds. If {@link C#TIME_UNSET}, the message will be delivered immediately.
+   */
+  public long getPositionMs() {
+    return positionMs;
+  }
+
+  /**
    * Sets a position in the current window at which the message will be delivered.
    *
    * @param positionMs The position in the current window at which the message will be sent, in
@@ -168,14 +177,6 @@ public final class PlayerMessage {
     Assertions.checkState(!isSent);
     this.positionMs = positionMs;
     return this;
-  }
-
-  /**
-   * Returns position in window at {@link #getWindowIndex()} at which the message will be delivered,
-   * in milliseconds. If {@link C#TIME_UNSET}, the message will be delivered immediately.
-   */
-  public long getPositionMs() {
-    return positionMs;
   }
 
   /**
@@ -231,7 +232,7 @@ public final class PlayerMessage {
    * Player.EventListener#onPlayerError(ExoPlaybackException)}.
    *
    * @return This message.
-   * @throws IllegalStateException If {@link #send()} has already been called.
+   * @throws IllegalStateException If this message has already been sent.
    */
   public PlayerMessage send() {
     Assertions.checkState(!isSent);

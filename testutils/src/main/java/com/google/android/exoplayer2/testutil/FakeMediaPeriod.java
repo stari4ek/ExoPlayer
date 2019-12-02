@@ -20,7 +20,7 @@ import static com.google.common.truth.Truth.assertThat;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.SystemClock;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.source.MediaPeriod;
@@ -31,6 +31,7 @@ import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import java.io.IOException;
+import java.util.Collections;
 
 /**
  * Fake {@link MediaPeriod} that provides tracks from the given {@link TrackGroupArray}. Selecting
@@ -93,13 +94,7 @@ public class FakeMediaPeriod implements MediaPeriod {
   public synchronized void setPreparationComplete() {
     deferOnPrepared = false;
     if (playerHandler != null && prepareCallback != null) {
-      playerHandler.post(
-          new Runnable() {
-            @Override
-            public void run() {
-              finishPreparation();
-            }
-          });
+      playerHandler.post(this::finishPreparation);
     }
   }
 
@@ -121,7 +116,6 @@ public class FakeMediaPeriod implements MediaPeriod {
   public synchronized void prepare(Callback callback, long positionUs) {
     eventDispatcher.loadStarted(
         FAKE_DATA_SPEC,
-        FAKE_DATA_SPEC.uri,
         C.DATA_TYPE_MEDIA,
         C.TRACK_TYPE_UNKNOWN,
         /* trackFormat= */ null,
@@ -223,6 +217,11 @@ public class FakeMediaPeriod implements MediaPeriod {
     return false;
   }
 
+  @Override
+  public boolean isLoading() {
+    return false;
+  }
+
   protected SampleStream createSampleStream(TrackSelection selection) {
     return new FakeSampleStream(
         selection.getSelectedFormat(), eventDispatcher, /* shouldOutputSample= */ true);
@@ -234,6 +233,7 @@ public class FakeMediaPeriod implements MediaPeriod {
     eventDispatcher.loadCompleted(
         FAKE_DATA_SPEC,
         FAKE_DATA_SPEC.uri,
+        /* responseHeaders= */ Collections.emptyMap(),
         C.DATA_TYPE_MEDIA,
         C.TRACK_TYPE_UNKNOWN,
         /* trackFormat= */ null,

@@ -15,17 +15,20 @@
  */
 package com.google.android.exoplayer2.trackselection;
 
-import android.support.annotation.IntDef;
-import android.support.annotation.Nullable;
 import android.util.Pair;
+import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.RendererConfiguration;
+import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.util.Util;
+import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Arrays;
@@ -43,7 +46,12 @@ public abstract class MappingTrackSelector extends TrackSelector {
    */
   public static final class MappedTrackInfo {
 
-    /** Levels of renderer support. Higher numerical values indicate higher levels of support. */
+    /**
+     * Levels of renderer support. Higher numerical values indicate higher levels of support. One of
+     * {@link #RENDERER_SUPPORT_NO_TRACKS}, {@link #RENDERER_SUPPORT_UNSUPPORTED_TRACKS}, {@link
+     * #RENDERER_SUPPORT_EXCEEDS_CAPABILITIES_TRACKS} or {@link #RENDERER_SUPPORT_PLAYABLE_TRACKS}.
+     */
+    @Documented
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({
       RENDERER_SUPPORT_NO_TRACKS,
@@ -95,6 +103,7 @@ public abstract class MappingTrackSelector extends TrackSelector {
      *     each mapped track, indexed by renderer, track group and track (in that order).
      * @param unmappedTrackGroups {@link TrackGroup}s not mapped to any renderer.
      */
+    @SuppressWarnings("deprecation")
     /* package */ MappedTrackInfo(
         int[] rendererTrackTypes,
         TrackGroupArray[] rendererTrackGroups,
@@ -147,10 +156,10 @@ public abstract class MappingTrackSelector extends TrackSelector {
     public @RendererSupport int getRendererSupport(int rendererIndex) {
       int bestRendererSupport = RENDERER_SUPPORT_NO_TRACKS;
       int[][] rendererFormatSupport = rendererFormatSupports[rendererIndex];
-      for (int i = 0; i < rendererFormatSupport.length; i++) {
-        for (int j = 0; j < rendererFormatSupport[i].length; j++) {
+      for (int[] trackGroupFormatSupport : rendererFormatSupport) {
+        for (int trackFormatSupport : trackGroupFormatSupport) {
           int trackRendererSupport;
-          switch (rendererFormatSupport[i][j] & RendererCapabilities.FORMAT_SUPPORT_MASK) {
+          switch (trackFormatSupport & RendererCapabilities.FORMAT_SUPPORT_MASK) {
             case RendererCapabilities.FORMAT_HANDLED:
               return RENDERER_SUPPORT_PLAYABLE_TRACKS;
             case RendererCapabilities.FORMAT_EXCEEDS_CAPABILITIES:
@@ -303,7 +312,7 @@ public abstract class MappingTrackSelector extends TrackSelector {
 
   }
 
-  private @Nullable MappedTrackInfo currentMappedTrackInfo;
+  @Nullable private MappedTrackInfo currentMappedTrackInfo;
 
   /**
    * Returns the mapping information for the currently active track selection, or null if no
@@ -321,8 +330,12 @@ public abstract class MappingTrackSelector extends TrackSelector {
   }
 
   @Override
-  public final TrackSelectorResult selectTracks(RendererCapabilities[] rendererCapabilities,
-      TrackGroupArray trackGroups) throws ExoPlaybackException {
+  public final TrackSelectorResult selectTracks(
+      RendererCapabilities[] rendererCapabilities,
+      TrackGroupArray trackGroups,
+      MediaPeriodId periodId,
+      Timeline timeline)
+      throws ExoPlaybackException {
     // Structures into which data will be written during the selection. The extra item at the end
     // of each array is to store data associated with track groups that cannot be associated with
     // any renderer.

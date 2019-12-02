@@ -18,6 +18,8 @@ package com.google.android.exoplayer2.extractor.ts;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.util.SparseArray;
+import androidx.test.core.app.ApplicationProvider;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.extractor.Extractor;
@@ -27,7 +29,6 @@ import com.google.android.exoplayer2.extractor.TrackOutput;
 import com.google.android.exoplayer2.extractor.ts.TsPayloadReader.EsInfo;
 import com.google.android.exoplayer2.extractor.ts.TsPayloadReader.TrackIdGenerator;
 import com.google.android.exoplayer2.testutil.ExtractorAsserts;
-import com.google.android.exoplayer2.testutil.ExtractorAsserts.ExtractorFactory;
 import com.google.android.exoplayer2.testutil.FakeExtractorInput;
 import com.google.android.exoplayer2.testutil.FakeExtractorOutput;
 import com.google.android.exoplayer2.testutil.FakeTrackOutput;
@@ -38,11 +39,9 @@ import java.io.ByteArrayOutputStream;
 import java.util.Random;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
-import org.robolectric.RuntimeEnvironment;
 
 /** Unit test for {@link TsExtractor}. */
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public final class TsExtractorTest {
 
   private static final int TS_PACKET_SIZE = 188;
@@ -50,20 +49,14 @@ public final class TsExtractorTest {
 
   @Test
   public void testSample() throws Exception {
-    ExtractorAsserts.assertBehavior(
-        new ExtractorFactory() {
-          @Override
-          public Extractor create() {
-            return new TsExtractor();
-          }
-        },
-        "ts/sample.ts");
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample.ts");
   }
 
   @Test
   public void testStreamWithJunkData() throws Exception {
     Random random = new Random(0);
-    byte[] fileData = TestUtil.getByteArray(RuntimeEnvironment.application, "ts/sample.ts");
+    byte[] fileData =
+        TestUtil.getByteArray(ApplicationProvider.getApplicationContext(), "ts/sample.ts");
     ByteArrayOutputStream out = new ByteArrayOutputStream(fileData.length * 2);
     int bytesLeft = fileData.length;
 
@@ -82,15 +75,7 @@ public final class TsExtractorTest {
     fileData = out.toByteArray();
 
     ExtractorAsserts.assertOutput(
-        new ExtractorFactory() {
-          @Override
-          public Extractor create() {
-            return new TsExtractor();
-          }
-        },
-        "ts/sample.ts",
-        fileData,
-        RuntimeEnvironment.application);
+        TsExtractor::new, "ts/sample.ts", fileData, ApplicationProvider.getApplicationContext());
   }
 
   @Test
@@ -100,7 +85,8 @@ public final class TsExtractorTest {
         new TsExtractor(TsExtractor.MODE_MULTI_PMT, new TimestampAdjuster(0), factory);
     FakeExtractorInput input =
         new FakeExtractorInput.Builder()
-            .setData(TestUtil.getByteArray(RuntimeEnvironment.application, "ts/sample.ts"))
+            .setData(
+                TestUtil.getByteArray(ApplicationProvider.getApplicationContext(), "ts/sample.ts"))
             .setSimulateIOErrors(false)
             .setSimulateUnknownLength(false)
             .setSimulatePartialReads(false)
@@ -130,7 +116,9 @@ public final class TsExtractorTest {
         new TsExtractor(TsExtractor.MODE_MULTI_PMT, new TimestampAdjuster(0), factory);
     FakeExtractorInput input =
         new FakeExtractorInput.Builder()
-            .setData(TestUtil.getByteArray(RuntimeEnvironment.application, "ts/sample_with_sdt.ts"))
+            .setData(
+                TestUtil.getByteArray(
+                    ApplicationProvider.getApplicationContext(), "ts/sample_with_sdt.ts"))
             .setSimulateIOErrors(false)
             .setSimulateUnknownLength(false)
             .setSimulatePartialReads(false)
@@ -218,7 +206,7 @@ public final class TsExtractorTest {
     }
 
     @Override
-    public void packetStarted(long pesTimeUs, boolean dataAlignmentIndicator) {}
+    public void packetStarted(long pesTimeUs, @TsPayloadReader.Flags int flags) {}
 
     @Override
     public void consume(ParsableByteArray data) {}

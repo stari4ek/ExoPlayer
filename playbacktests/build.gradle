@@ -16,7 +16,6 @@ apply plugin: 'com.android.library'
 
 android {
     compileSdkVersion project.ext.compileSdkVersion
-    buildToolsVersion project.ext.buildToolsVersion
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -26,10 +25,16 @@ android {
     defaultConfig {
         minSdkVersion project.ext.minSdkVersion
         targetSdkVersion project.ext.targetSdkVersion
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
+
+    testOptions.unitTests.includeAndroidResources = true
 }
 
 dependencies {
+    androidTestImplementation 'androidx.test:rules:' + androidxTestVersion
+    androidTestImplementation 'androidx.test:runner:' + androidxTestVersion
+    androidTestImplementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
     androidTestImplementation project(modulePrefix + 'library-core')
     androidTestImplementation project(modulePrefix + 'library-dash')
     androidTestImplementation project(modulePrefix + 'library-hls')

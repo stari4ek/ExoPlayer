@@ -12,13 +12,14 @@ libs
 obj
 lint.xml
 
-# IntelliJ IDEA
+# IntelliJ IDEA & Android Studio
 .idea
 *.iml
 *.ipr
 *.iws
 classes
 gen-external-apklibs
+*.li
 
 # Eclipse
 .project
@@ -43,6 +44,12 @@ ant.properties
 local.properties
 proguard.cfg
 proguard-project.txt
+
+# Bazel
+bazel-bin
+bazel-genfiles
+bazel-out
+bazel-testlogs
 
 # Other
 .DS_Store

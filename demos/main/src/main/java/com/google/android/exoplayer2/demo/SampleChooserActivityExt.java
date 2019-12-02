@@ -9,11 +9,11 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Environment;
-import android.support.annotation.NonNull;
 import android.view.View;
 import android.widget.ExpandableListView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import com.google.android.exoplayer2.util.Assertions;
 
 import java.io.BufferedReader;
@@ -29,12 +29,10 @@ import java.util.List;
  */
 public class SampleChooserActivityExt extends SampleChooserActivity {
 
-    private final Sample logcatSample = new Sample(
-        "Save logcat", false, null, null) {
+    private final Sample logcatSample = new Sample("Save logcat") {
         @Override
-        public Intent buildIntent(Context context) {
+        public void addToIntent(Intent intent) {
             Assertions.checkState(false, "Should not be called");
-            return null;
         }
     };
 
@@ -91,19 +89,17 @@ public class SampleChooserActivityExt extends SampleChooserActivity {
     @Override
     public void onRequestPermissionsResult(
             int requestCode,
-            @NonNull String permissions[], @NonNull int[] grantResults) {
+            @NonNull String[] permissions, @NonNull int[] grantResults) {
 
-        switch (requestCode) {
-            case MY_PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE: {
-                // If request is cancelled, the result arrays are empty.
-                if (grantResults.length > 0
-                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode == MY_PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE) {
+            // If request is cancelled, the result arrays are empty.
+            if (grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
 
-                    saveLogcat();
+                saveLogcat();
 
-                } else {
-                    sendAsEmail();
-                }
+            } else {
+                sendAsEmail();
             }
         }
     }

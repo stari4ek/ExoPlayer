@@ -28,18 +28,19 @@ EXOPLAYER_ROOT="$(pwd)"
 FLAC_EXT_PATH="${EXOPLAYER_ROOT}/extensions/flac/src/main"
 ```
 
-* Download the [Android NDK][] and set its location in an environment variable:
+* Download the [Android NDK][] (version <= 17c) and set its location in an
+  environment variable:
 
 ```
 NDK_PATH="<path to Android NDK>"
 ```
 
-* Download and extract flac-1.3.1 as "${FLAC_EXT_PATH}/jni/flac" folder:
+* Download and extract flac-1.3.2 as "${FLAC_EXT_PATH}/jni/flac" folder:
 
 ```
 cd "${FLAC_EXT_PATH}/jni" && \
-curl https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.3.1.tar.xz | tar xJ && \
-mv flac-1.3.1 flac
+curl https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.3.2.tar.xz | tar xJ && \
+mv flac-1.3.2 flac
 ```
 
 * Build the JNI native libraries from the command line:
@@ -67,22 +68,22 @@ renderer.
 
 ### Using `LibflacAudioRenderer` ###
 
-* If you're passing a `DefaultRenderersFactory` to
-  `ExoPlayerFactory.newSimpleInstance`, you can enable using the extension by
-  setting the `extensionRendererMode` parameter of the `DefaultRenderersFactory`
-  constructor to `EXTENSION_RENDERER_MODE_ON`. This will use
-  `LibflacAudioRenderer` for playback if `MediaCodecAudioRenderer` doesn't
-  support the input format. Pass `EXTENSION_RENDERER_MODE_PREFER` to give
-  `LibflacAudioRenderer` priority over `MediaCodecAudioRenderer`.
+* If you're passing a `DefaultRenderersFactory` to `SimpleExoPlayer.Builder`,
+  you can enable using the extension by setting the `extensionRendererMode`
+  parameter of the `DefaultRenderersFactory` constructor to
+  `EXTENSION_RENDERER_MODE_ON`. This will use `LibflacAudioRenderer` for
+  playback if `MediaCodecAudioRenderer` doesn't support the input format. Pass
+  `EXTENSION_RENDERER_MODE_PREFER` to give `LibflacAudioRenderer` priority over
+  `MediaCodecAudioRenderer`.
 * If you've subclassed `DefaultRenderersFactory`, add a `LibflacAudioRenderer`
   to the output list in `buildAudioRenderers`. ExoPlayer will use the first
   `Renderer` in the list that supports the input media format.
 * If you've implemented your own `RenderersFactory`, return a
   `LibflacAudioRenderer` instance from `createRenderers`. ExoPlayer will use the
   first `Renderer` in the returned array that supports the input media format.
-* If you're using `ExoPlayerFactory.newInstance`, pass a `LibflacAudioRenderer`
-  in the array of `Renderer`s. ExoPlayer will use the first `Renderer` in the
-  list that supports the input media format.
+* If you're using `ExoPlayer.Builder`, pass a `LibflacAudioRenderer` in the
+  array of `Renderer`s. ExoPlayer will use the first `Renderer` in the list that
+  supports the input media format.
 
 Note: These instructions assume you're using `DefaultTrackSelector`. If you have
 a custom track selector the choice of `Renderer` is up to your implementation,
@@ -94,4 +95,4 @@ player, then implement your own logic to use the renderer for a given track.
 * [Javadoc][]: Classes matching `com.google.android.exoplayer2.ext.flac.*`
   belong to this module.
 
-[Javadoc]: https://google.github.io/ExoPlayer/doc/reference/index.html
+[Javadoc]: https://exoplayer.dev/doc/reference/index.html

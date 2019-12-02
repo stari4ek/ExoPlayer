@@ -17,6 +17,7 @@ package com.google.android.exoplayer2.ext.flac;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.amr.AmrExtractor;
@@ -27,6 +28,7 @@ import com.google.android.exoplayer2.extractor.mp4.FragmentedMp4Extractor;
 import com.google.android.exoplayer2.extractor.mp4.Mp4Extractor;
 import com.google.android.exoplayer2.extractor.ogg.OggExtractor;
 import com.google.android.exoplayer2.extractor.ts.Ac3Extractor;
+import com.google.android.exoplayer2.extractor.ts.Ac4Extractor;
 import com.google.android.exoplayer2.extractor.ts.AdtsExtractor;
 import com.google.android.exoplayer2.extractor.ts.PsExtractor;
 import com.google.android.exoplayer2.extractor.ts.TsExtractor;
@@ -35,10 +37,9 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RobolectricTestRunner;
 
 /** Unit test for {@link DefaultExtractorsFactory}. */
-@RunWith(RobolectricTestRunner.class)
+@RunWith(AndroidJUnit4.class)
 public final class DefaultExtractorsFactoryTest {
 
   @Test
@@ -46,19 +47,20 @@ public final class DefaultExtractorsFactoryTest {
     DefaultExtractorsFactory defaultExtractorsFactory = new DefaultExtractorsFactory();
 
     Extractor[] extractors = defaultExtractorsFactory.createExtractors();
-    List<Class> listCreatedExtractorClasses = new ArrayList<>();
+    List<Class<?>> listCreatedExtractorClasses = new ArrayList<>();
     for (Extractor extractor : extractors) {
       listCreatedExtractorClasses.add(extractor.getClass());
     }
 
-    Class[] expectedExtractorClassses =
-        new Class[] {
+    Class<?>[] expectedExtractorClassses =
+        new Class<?>[] {
           MatroskaExtractor.class,
           FragmentedMp4Extractor.class,
           Mp4Extractor.class,
           Mp3Extractor.class,
           AdtsExtractor.class,
           Ac3Extractor.class,
+          Ac4Extractor.class,
           TsExtractor.class,
           FlvExtractor.class,
           OggExtractor.class,

@@ -15,15 +15,16 @@
  */
 package com.google.android.exoplayer2.upstream;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.upstream.HttpDataSource.BaseFactory;
 import com.google.android.exoplayer2.upstream.HttpDataSource.Factory;
+import com.google.android.exoplayer2.util.Assertions;
 
 /** A {@link Factory} that produces {@link DefaultHttpDataSource} instances. */
 public final class DefaultHttpDataSourceFactory extends BaseFactory {
 
   private final String userAgent;
-  private final @Nullable TransferListener listener;
+  @Nullable private final TransferListener listener;
   private final int connectTimeoutMillis;
   private final int readTimeoutMillis;
   private final boolean allowCrossProtocolRedirects;
@@ -93,7 +94,7 @@ public final class DefaultHttpDataSourceFactory extends BaseFactory {
       int connectTimeoutMillis,
       int readTimeoutMillis,
       boolean allowCrossProtocolRedirects) {
-    this.userAgent = userAgent;
+    this.userAgent = Assertions.checkNotEmpty(userAgent);
     this.listener = listener;
     this.connectTimeoutMillis = connectTimeoutMillis;
     this.readTimeoutMillis = readTimeoutMillis;
@@ -103,7 +104,16 @@ public final class DefaultHttpDataSourceFactory extends BaseFactory {
   @Override
   protected DefaultHttpDataSource createDataSourceInternal(
       HttpDataSource.RequestProperties defaultRequestProperties) {
-    return new DefaultHttpDataSource(userAgent, null, listener, connectTimeoutMillis,
-        readTimeoutMillis, allowCrossProtocolRedirects, defaultRequestProperties);
+    DefaultHttpDataSource dataSource =
+        new DefaultHttpDataSource(
+            userAgent,
+            connectTimeoutMillis,
+            readTimeoutMillis,
+            allowCrossProtocolRedirects,
+            defaultRequestProperties);
+    if (listener != null) {
+      dataSource.addTransferListener(listener);
+    }
+    return dataSource;
   }
 }
