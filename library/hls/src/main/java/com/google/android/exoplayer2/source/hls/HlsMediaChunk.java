@@ -196,11 +196,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   /** The url of the playlist from which this chunk was obtained. */
   public final Uri playlistUrl;
 
-  // These should be final, but can't be due to
-  // https://github.com/typetools/checker-framework/issues/2215
-  @MonotonicNonNull private DataSource initDataSource;
-  @MonotonicNonNull private DataSpec initDataSpec;
-  @MonotonicNonNull private Extractor previousExtractor;
+  @Nullable private final DataSource initDataSource;
+  @Nullable private final DataSpec initDataSpec;
+  @Nullable private final Extractor previousExtractor;
 
   private final boolean isMasterTimestampSource;
   private final boolean hasGapTag;
@@ -214,9 +212,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private final boolean mediaSegmentEncrypted;
   private final boolean initSegmentEncrypted;
 
-  @MonotonicNonNull private Extractor extractor;
+  private @MonotonicNonNull Extractor extractor;
   private boolean isExtractorReusable;
-  @MonotonicNonNull private HlsSampleStreamWrapper output;
+  private @MonotonicNonNull HlsSampleStreamWrapper output;
   // nextLoadPosition refers to the init segment if initDataLoadRequired is true.
   // Otherwise, nextLoadPosition refers to the media segment.
   private int nextLoadPosition;
@@ -260,12 +258,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
         chunkMediaSequence);
     this.mediaSegmentEncrypted = mediaSegmentEncrypted;
     this.discontinuitySequenceNumber = discontinuitySequenceNumber;
-    // Workaround for https://github.com/typetools/checker-framework/issues/2215
-    if (initDataSpec != null) {
-      this.initDataSpec = initDataSpec;
-      this.initDataSource = Assertions.checkNotNull(initDataSource);
-      initDataLoadRequired = true;
-    }
+    this.initDataSpec = initDataSpec;
+    this.initDataSource = initDataSource;
+    this.initDataLoadRequired = initDataSpec != null;
     this.initSegmentEncrypted = initSegmentEncrypted;
     this.playlistUrl = playlistUrl;
     this.isMasterTimestampSource = isMasterTimestampSource;
@@ -274,10 +269,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     this.extractorFactory = extractorFactory;
     this.muxedCaptionFormats = muxedCaptionFormats;
     this.drmInitData = drmInitData;
-    // Workaround for https://github.com/typetools/checker-framework/issues/2215
-    if (previousExtractor != null) {
-      this.previousExtractor = previousExtractor;
-    }
+    this.previousExtractor = previousExtractor;
     this.id3Decoder = id3Decoder;
     this.scratchId3Data = scratchId3Data;
     this.shouldSpliceIn = shouldSpliceIn;
@@ -292,6 +284,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
    */
   public void init(HlsSampleStreamWrapper output) {
     this.output = output;
+    output.init(uid, shouldSpliceIn);
   }
 
   @Override
@@ -314,7 +307,6 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       extractor = previousExtractor;
       isExtractorReusable = true;
       initDataLoadRequired = false;
-      output.init(uid, shouldSpliceIn, /* reusingExtractor= */ true);
     }
     maybeLoadInitData();
     if (!loadCanceled) {
@@ -426,7 +418,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
         // the timestamp offset.
         output.setSampleOffsetUs(/* sampleOffsetUs= */ 0L);
       }
-      output.init(uid, shouldSpliceIn, /* reusingExtractor= */ false);
+      output.onNewExtractor();
       extractor.init(output);
     }
 

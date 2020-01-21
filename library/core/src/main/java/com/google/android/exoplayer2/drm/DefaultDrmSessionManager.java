@@ -23,7 +23,6 @@ import android.os.Message;
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.drm.DefaultDrmSession.ProvisioningManager;
 import com.google.android.exoplayer2.drm.DrmInitData.SchemeData;
 import com.google.android.exoplayer2.drm.DrmSession.DrmSessionException;
 import com.google.android.exoplayer2.drm.ExoMediaDrm.OnEventListener;
@@ -45,8 +44,7 @@ import java.util.UUID;
 
 /** A {@link DrmSessionManager} that supports playbacks using {@link ExoMediaDrm}. */
 @TargetApi(18)
-public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
-    implements DrmSessionManager<T>, ProvisioningManager<T> {
+public class DefaultDrmSessionManager<T extends ExoMediaCrypto> implements DrmSessionManager<T> {
 
   /**
    * Builder for {@link DefaultDrmSessionManager} instances.
@@ -59,8 +57,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
     private UUID uuid;
     private ExoMediaDrm.Provider<ExoMediaCrypto> exoMediaDrmProvider;
     private boolean multiSession;
-    private boolean allowPlaceholderSessions;
-    @Flags private int flags;
+    private int[] useDrmSessionsForClearContentTrackTypes;
+    private boolean playClearSamplesWithoutKeys;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
 
     /**
@@ -71,10 +69,9 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
      *   <li>{@link #setUuidAndExoMediaDrmProvider UUID}: {@link C#WIDEVINE_UUID}.
      *   <li>{@link #setUuidAndExoMediaDrmProvider ExoMediaDrm.Provider}: {@link
      *       FrameworkMediaDrm#DEFAULT_PROVIDER}.
-     *   <li>{@link #setMultiSession multiSession}: Not allowed by default.
-     *   <li>{@link #setAllowPlaceholderSessions allowPlaceholderSession}: Not allowed by default.
-     *   <li>{@link #setPlayClearSamplesWithoutKeys playClearSamplesWithoutKeys}: Not allowed by
-     *       default.
+     *   <li>{@link #setMultiSession multiSession}: {@code false}.
+     *   <li>{@link #setUseDrmSessionsForClearContent useDrmSessionsForClearContent}: No tracks.
+     *   <li>{@link #setPlayClearSamplesWithoutKeys playClearSamplesWithoutKeys}: {@code false}.
      *   <li>{@link #setLoadErrorHandlingPolicy LoadErrorHandlingPolicy}: {@link
      *       DefaultLoadErrorHandlingPolicy}.
      * </ul>
@@ -84,14 +81,15 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       keyRequestParameters = new HashMap<>();
       uuid = C.WIDEVINE_UUID;
       exoMediaDrmProvider = (ExoMediaDrm.Provider) FrameworkMediaDrm.DEFAULT_PROVIDER;
-      multiSession = false;
-      allowPlaceholderSessions = false;
-      flags = 0;
       loadErrorHandlingPolicy = new DefaultLoadErrorHandlingPolicy();
+      useDrmSessionsForClearContentTrackTypes = new int[0];
     }
 
     /**
-     * Sets the parameters to pass to {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}.
+     * Sets the key request parameters to pass as the last argument to {@link
+     * ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}.
+     *
+     * <p>Custom data for PlayReady should be set under {@link #PLAYREADY_CUSTOM_DATA_KEY}.
      *
      * @param keyRequestParameters A map with parameters.
      * @return This builder.
@@ -133,35 +131,40 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
     }
 
     /**
-     * Sets whether this session manager is allowed to acquire placeholder sessions.
+     * Sets whether this session manager should attach {@link DrmSession DrmSessions} to the clear
+     * sections of the media content.
      *
-     * <p>Placeholder sessions allow the use of secure renderers to play clear content.
+     * <p>Using {@link DrmSession DrmSessions} for clear content avoids the recreation of decoders
+     * when transitioning between clear and encrypted sections of content.
      *
-     * @param allowPlaceholderSessions Whether this session manager is allowed to acquire
-     *     placeholder sessions.
+     * @param useDrmSessionsForClearContentTrackTypes The track types ({@link C#TRACK_TYPE_AUDIO}
+     *     and/or {@link C#TRACK_TYPE_VIDEO}) for which to use a {@link DrmSession} regardless of
+     *     whether the content is clear or encrypted.
      * @return This builder.
+     * @throws IllegalArgumentException If {@code useDrmSessionsForClearContentTrackTypes} contains
+     *     track types other than {@link C#TRACK_TYPE_AUDIO} and {@link C#TRACK_TYPE_VIDEO}.
      */
-    public Builder setAllowPlaceholderSessions(boolean allowPlaceholderSessions) {
-      this.allowPlaceholderSessions = allowPlaceholderSessions;
+    public Builder setUseDrmSessionsForClearContent(
+        int... useDrmSessionsForClearContentTrackTypes) {
+      for (int trackType : useDrmSessionsForClearContentTrackTypes) {
+        Assertions.checkArgument(
+            trackType == C.TRACK_TYPE_VIDEO || trackType == C.TRACK_TYPE_AUDIO);
+      }
+      this.useDrmSessionsForClearContentTrackTypes =
+          useDrmSessionsForClearContentTrackTypes.clone();
       return this;
     }
 
     /**
-     * Sets whether clear samples should be played when keys are not available. Keys are considered
-     * unavailable when the load request is taking place, or when the key request has failed.
+     * Sets whether clear samples within protected content should be played when keys for the
+     * encrypted part of the content have yet to be loaded.
      *
-     * <p>This option does not affect placeholder sessions.
-     *
-     * @param playClearSamplesWithoutKeys Whether clear samples should be played when keys are not
-     *     available.
+     * @param playClearSamplesWithoutKeys Whether clear samples within protected content should be
+     *     played when keys for the encrypted part of the content have yet to be loaded.
      * @return This builder.
      */
     public Builder setPlayClearSamplesWithoutKeys(boolean playClearSamplesWithoutKeys) {
-      if (playClearSamplesWithoutKeys) {
-        this.flags |= FLAG_PLAY_CLEAR_SAMPLES_WITHOUT_KEYS;
-      } else {
-        this.flags &= ~FLAG_PLAY_CLEAR_SAMPLES_WITHOUT_KEYS;
-      }
+      this.playClearSamplesWithoutKeys = playClearSamplesWithoutKeys;
       return this;
     }
 
@@ -184,8 +187,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
           mediaDrmCallback,
           keyRequestParameters,
           multiSession,
-          allowPlaceholderSessions,
-          flags,
+          useDrmSessionsForClearContentTrackTypes,
+          playClearSamplesWithoutKeys,
           loadErrorHandlingPolicy);
     }
   }
@@ -202,7 +205,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
   }
 
   /**
-   * The key to use when passing CustomData to a PlayReady instance in an optional parameter map.
+   * A key for specifying PlayReady custom data in the key request parameters passed to {@link
+   * Builder#setKeyRequestParameters(Map)}.
    */
   public static final String PLAYREADY_CUSTOM_DATA_KEY = "PRCustomData";
 
@@ -233,11 +237,12 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
   private final UUID uuid;
   private final ExoMediaDrm.Provider<T> exoMediaDrmProvider;
   private final MediaDrmCallback callback;
-  @Nullable private final HashMap<String, String> optionalKeyRequestParameters;
+  private final HashMap<String, String> keyRequestParameters;
   private final EventDispatcher<DefaultDrmSessionEventListener> eventDispatcher;
   private final boolean multiSession;
-  private final boolean allowPlaceholderSessions;
-  @Flags private final int flags;
+  private final int[] useDrmSessionsForClearContentTrackTypes;
+  private final boolean playClearSamplesWithoutKeys;
+  private final ProvisioningManagerImpl provisioningManagerImpl;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
 
   private final List<DefaultDrmSession<T>> sessions;
@@ -257,21 +262,22 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
    * @param uuid The UUID of the drm scheme.
    * @param exoMediaDrm An underlying {@link ExoMediaDrm} for use by the manager.
    * @param callback Performs key and provisioning requests.
-   * @param optionalKeyRequestParameters An optional map of parameters to pass as the last argument
-   *     to {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}. May be null.
+   * @param keyRequestParameters An optional map of parameters to pass as the last argument to
+   *     {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}. May be null.
    * @deprecated Use {@link Builder} instead.
    */
+  @SuppressWarnings("deprecation")
   @Deprecated
   public DefaultDrmSessionManager(
       UUID uuid,
       ExoMediaDrm<T> exoMediaDrm,
       MediaDrmCallback callback,
-      @Nullable HashMap<String, String> optionalKeyRequestParameters) {
+      @Nullable HashMap<String, String> keyRequestParameters) {
     this(
         uuid,
         exoMediaDrm,
         callback,
-        optionalKeyRequestParameters,
+        keyRequestParameters == null ? new HashMap<>() : keyRequestParameters,
         /* multiSession= */ false,
         INITIAL_DRM_REQUEST_RETRY_COUNT);
   }
@@ -280,8 +286,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
    * @param uuid The UUID of the drm scheme.
    * @param exoMediaDrm An underlying {@link ExoMediaDrm} for use by the manager.
    * @param callback Performs key and provisioning requests.
-   * @param optionalKeyRequestParameters An optional map of parameters to pass as the last argument
-   *     to {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}. May be null.
+   * @param keyRequestParameters An optional map of parameters to pass as the last argument to
+   *     {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}. May be null.
    * @param multiSession A boolean that specify whether multiple key session support is enabled.
    *     Default is false.
    * @deprecated Use {@link Builder} instead.
@@ -291,13 +297,13 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       UUID uuid,
       ExoMediaDrm<T> exoMediaDrm,
       MediaDrmCallback callback,
-      @Nullable HashMap<String, String> optionalKeyRequestParameters,
+      @Nullable HashMap<String, String> keyRequestParameters,
       boolean multiSession) {
     this(
         uuid,
         exoMediaDrm,
         callback,
-        optionalKeyRequestParameters,
+        keyRequestParameters == null ? new HashMap<>() : keyRequestParameters,
         multiSession,
         INITIAL_DRM_REQUEST_RETRY_COUNT);
   }
@@ -306,8 +312,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
    * @param uuid The UUID of the drm scheme.
    * @param exoMediaDrm An underlying {@link ExoMediaDrm} for use by the manager.
    * @param callback Performs key and provisioning requests.
-   * @param optionalKeyRequestParameters An optional map of parameters to pass as the last argument
-   *     to {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}. May be null.
+   * @param keyRequestParameters An optional map of parameters to pass as the last argument to
+   *     {@link ExoMediaDrm#getKeyRequest(byte[], List, int, HashMap)}. May be null.
    * @param multiSession A boolean that specify whether multiple key session support is enabled.
    *     Default is false.
    * @param initialDrmRequestRetryCount The number of times to retry for initial provisioning and
@@ -319,17 +325,17 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       UUID uuid,
       ExoMediaDrm<T> exoMediaDrm,
       MediaDrmCallback callback,
-      @Nullable HashMap<String, String> optionalKeyRequestParameters,
+      @Nullable HashMap<String, String> keyRequestParameters,
       boolean multiSession,
       int initialDrmRequestRetryCount) {
     this(
         uuid,
         new ExoMediaDrm.AppManagedProvider<>(exoMediaDrm),
         callback,
-        optionalKeyRequestParameters,
+        keyRequestParameters == null ? new HashMap<>() : keyRequestParameters,
         multiSession,
-        /* allowPlaceholderSessions= */ false,
-        /* flags= */ 0,
+        /* useDrmSessionsForClearContentTrackTypes= */ new int[0],
+        /* playClearSamplesWithoutKeys= */ false,
         new DefaultLoadErrorHandlingPolicy(initialDrmRequestRetryCount));
   }
 
@@ -337,22 +343,23 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       UUID uuid,
       ExoMediaDrm.Provider<T> exoMediaDrmProvider,
       MediaDrmCallback callback,
-      @Nullable HashMap<String, String> optionalKeyRequestParameters,
+      HashMap<String, String> keyRequestParameters,
       boolean multiSession,
-      boolean allowPlaceholderSessions,
-      @Flags int flags,
+      int[] useDrmSessionsForClearContentTrackTypes,
+      boolean playClearSamplesWithoutKeys,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy) {
     Assertions.checkNotNull(uuid);
     Assertions.checkArgument(!C.COMMON_PSSH_UUID.equals(uuid), "Use C.CLEARKEY_UUID instead");
     this.uuid = uuid;
     this.exoMediaDrmProvider = exoMediaDrmProvider;
     this.callback = callback;
-    this.optionalKeyRequestParameters = optionalKeyRequestParameters;
+    this.keyRequestParameters = keyRequestParameters;
     this.eventDispatcher = new EventDispatcher<>();
     this.multiSession = multiSession;
-    this.allowPlaceholderSessions = allowPlaceholderSessions;
-    this.flags = flags;
+    this.useDrmSessionsForClearContentTrackTypes = useDrmSessionsForClearContentTrackTypes;
+    this.playClearSamplesWithoutKeys = playClearSamplesWithoutKeys;
     this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
+    provisioningManagerImpl = new ProvisioningManagerImpl();
     mode = MODE_PLAYBACK;
     sessions = new ArrayList<>();
     provisioningSessions = new ArrayList<>();
@@ -380,7 +387,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
   /**
    * Sets the mode, which determines the role of sessions acquired from the instance. This must be
    * called before {@link #acquireSession(Looper, DrmInitData)} or {@link
-   * #acquirePlaceholderSession(Looper)} is called.
+   * #acquirePlaceholderSession} is called.
    *
    * <p>By default, the mode is {@link #MODE_PLAYBACK} and a streaming license is requested when
    * required.
@@ -417,13 +424,6 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
     if (prepareCallsCount++ == 0) {
       Assertions.checkState(exoMediaDrm == null);
       exoMediaDrm = exoMediaDrmProvider.acquireExoMediaDrm(uuid);
-      if (multiSession && C.WIDEVINE_UUID.equals(uuid) && Util.SDK_INT >= 19) {
-        // TODO: Enabling session sharing probably doesn't do anything useful here. It would only be
-        // useful if DefaultDrmSession instances were aware of one another's state, which is not
-        // implemented. Or if custom renderers are being used that allow playback to proceed before
-        // keys, which seems unlikely to be true in practice.
-        exoMediaDrm.setPropertyString("sessionSharing", "enable");
-      }
       exoMediaDrm.setOnEventListener(new MediaDrmEventListener());
     }
   }
@@ -470,14 +470,15 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
 
   @Override
   @Nullable
-  public DrmSession<T> acquirePlaceholderSession(Looper playbackLooper) {
+  public DrmSession<T> acquirePlaceholderSession(Looper playbackLooper, int trackType) {
     assertExpectedPlaybackLooper(playbackLooper);
-    Assertions.checkNotNull(exoMediaDrm);
+    ExoMediaDrm<T> exoMediaDrm = Assertions.checkNotNull(this.exoMediaDrm);
     boolean avoidPlaceholderDrmSessions =
         FrameworkMediaCrypto.class.equals(exoMediaDrm.getExoMediaCryptoType())
             && FrameworkMediaCrypto.WORKAROUND_DEVICE_NEEDS_KEYS_TO_CONFIGURE_CODEC;
+    // Avoid attaching a session to sparse formats.
     if (avoidPlaceholderDrmSessions
-        || !allowPlaceholderSessions
+        || Util.linearSearch(useDrmSessionsForClearContentTrackTypes, trackType) == C.INDEX_UNSET
         || exoMediaDrm.getExoMediaCryptoType() == null) {
       return null;
     }
@@ -489,7 +490,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       sessions.add(placeholderDrmSession);
       this.placeholderDrmSession = placeholderDrmSession;
     }
-    placeholderDrmSession.acquireReference();
+    placeholderDrmSession.acquire();
     return placeholderDrmSession;
   }
 
@@ -498,7 +499,7 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
     assertExpectedPlaybackLooper(playbackLooper);
     maybeCreateMediaDrmHandler(playbackLooper);
 
-    List<SchemeData> schemeDatas = null;
+    @Nullable List<SchemeData> schemeDatas = null;
     if (offlineLicenseKeySetId == null) {
       schemeDatas = getSchemeDatas(drmInitData, uuid, false);
       if (schemeDatas.isEmpty()) {
@@ -530,14 +531,8 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
       }
       sessions.add(session);
     }
-    session.acquireReference();
+    session.acquire();
     return session;
-  }
-
-  @Override
-  @Flags
-  public final int getFlags() {
-    return flags;
   }
 
   @Override
@@ -546,37 +541,6 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
     return canAcquireSession(drmInitData)
         ? Assertions.checkNotNull(exoMediaDrm).getExoMediaCryptoType()
         : null;
-  }
-
-  // ProvisioningManager implementation.
-
-  @Override
-  public void provisionRequired(DefaultDrmSession<T> session) {
-    if (provisioningSessions.contains(session)) {
-      // The session has already requested provisioning.
-      return;
-    }
-    provisioningSessions.add(session);
-    if (provisioningSessions.size() == 1) {
-      // This is the first session requesting provisioning, so have it perform the operation.
-      session.provision();
-    }
-  }
-
-  @Override
-  public void onProvisionCompleted() {
-    for (DefaultDrmSession<T> session : provisioningSessions) {
-      session.onProvisionCompleted();
-    }
-    provisioningSessions.clear();
-  }
-
-  @Override
-  public void onProvisionError(Exception error) {
-    for (DefaultDrmSession<T> session : provisioningSessions) {
-      session.onProvisionError(error);
-    }
-    provisioningSessions.clear();
   }
 
   // Internal methods.
@@ -595,16 +559,19 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
   private DefaultDrmSession<T> createNewDefaultSession(
       @Nullable List<SchemeData> schemeDatas, boolean isPlaceholderSession) {
     Assertions.checkNotNull(exoMediaDrm);
+    // Placeholder sessions should always play clear samples without keys.
+    boolean playClearSamplesWithoutKeys = this.playClearSamplesWithoutKeys | isPlaceholderSession;
     return new DefaultDrmSession<>(
         uuid,
         exoMediaDrm,
-        /* provisioningManager= */ this,
+        /* provisioningManager= */ provisioningManagerImpl,
         /* releaseCallback= */ this::onSessionReleased,
         schemeDatas,
         mode,
+        playClearSamplesWithoutKeys,
         isPlaceholderSession,
         offlineLicenseKeySetId,
-        optionalKeyRequestParameters,
+        keyRequestParameters,
         callback,
         Assertions.checkNotNull(playbackLooper),
         eventDispatcher,
@@ -673,6 +640,37 @@ public class DefaultDrmSessionManager<T extends ExoMediaCrypto>
           return;
         }
       }
+    }
+  }
+
+  private class ProvisioningManagerImpl implements DefaultDrmSession.ProvisioningManager<T> {
+    @Override
+    public void provisionRequired(DefaultDrmSession<T> session) {
+      if (provisioningSessions.contains(session)) {
+        // The session has already requested provisioning.
+        return;
+      }
+      provisioningSessions.add(session);
+      if (provisioningSessions.size() == 1) {
+        // This is the first session requesting provisioning, so have it perform the operation.
+        session.provision();
+      }
+    }
+
+    @Override
+    public void onProvisionCompleted() {
+      for (DefaultDrmSession<T> session : provisioningSessions) {
+        session.onProvisionCompleted();
+      }
+      provisioningSessions.clear();
+    }
+
+    @Override
+    public void onProvisionError(Exception error) {
+      for (DefaultDrmSession<T> session : provisioningSessions) {
+        session.onProvisionError(error);
+      }
+      provisioningSessions.clear();
     }
   }
 

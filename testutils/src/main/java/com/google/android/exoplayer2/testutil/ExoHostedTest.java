@@ -131,7 +131,7 @@ public abstract class ExoHostedTest implements AnalyticsListener, HostedTest {
     trackSelector = buildTrackSelector(host);
     String userAgent = "ExoPlayerPlaybackTests";
     player = buildExoPlayer(host, surface, trackSelector);
-    player.setPlayWhenReady(true);
+    player.play();
     player.addAnalyticsListener(this);
     player.addAnalyticsListener(new EventLogger(trackSelector, tag));
     // Schedule any pending actions.
@@ -141,7 +141,8 @@ public abstract class ExoHostedTest implements AnalyticsListener, HostedTest {
       pendingSchedule = null;
     }
     DrmSessionManager<FrameworkMediaCrypto> drmSessionManager = buildDrmSessionManager(userAgent);
-    player.prepare(buildSource(host, Util.getUserAgent(host, userAgent), drmSessionManager));
+    player.setMediaSource(buildSource(host, Util.getUserAgent(host, userAgent), drmSessionManager));
+    player.prepare();
   }
 
   @Override

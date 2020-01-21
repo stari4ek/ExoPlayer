@@ -11,7 +11,7 @@ more external libraries as described below. These are licensed separately.
 
 [Apache 2.0]: https://github.com/google/ExoPlayer/blob/release-v2/LICENSE
 
-## Build instructions ##
+## Build instructions (Linux, macOS) ##
 
 To use this extension you need to clone the ExoPlayer repository and depend on
 its modules locally. Instructions for doing this can be found in ExoPlayer's
@@ -29,7 +29,7 @@ FFMPEG_EXT_PATH="$(pwd)/extensions/ffmpeg/src/main/jni"
 ```
 
 * Download the [Android NDK][] and set its location in a shell variable.
-  Only versions up to NDK 15c are supported currently.
+  This build configuration has been tested on NDK r20.
 
 ```
 NDK_PATH="<path to Android NDK>"
@@ -50,7 +50,7 @@ ENABLED_DECODERS=(vorbis opus flac)
 ```
 
 * Fetch and build FFmpeg. For example, executing script `build_ffmpeg.sh` will
-  fetch and build FFmpeg release 4.0 for armeabi-v7a, arm64-v8a and x86:
+  fetch and build FFmpeg release 4.2 for armeabi-v7a, arm64-v8a and x86:
 
 ```
 cd "${FFMPEG_EXT_PATH}" && \
@@ -65,6 +65,13 @@ cd "${FFMPEG_EXT_PATH}" && \
 cd "${FFMPEG_EXT_PATH}" && \
 ${NDK_PATH}/ndk-build APP_ABI="armeabi-v7a arm64-v8a x86" -j4
 ```
+
+## Build instructions (Windows) ##
+
+We do not provide support for building this extension on Windows, however it
+should be possible to follow the Linux instructions in [Windows PowerShell][].
+
+[Windows PowerShell]: https://docs.microsoft.com/en-us/powershell/scripting/getting-started/getting-started-with-windows-powershell
 
 ## Using the extension ##
 
@@ -99,9 +106,19 @@ then implement your own logic to use the renderer for a given track.
 [#2781]: https://github.com/google/ExoPlayer/issues/2781
 [Supported formats]: https://exoplayer.dev/supported-formats.html#ffmpeg-extension
 
+## Using the extension in the demo application ##
+
+To try out playback using the extension in the [demo application][], see
+[enabling extension decoders][].
+
+[demo application]: https://exoplayer.dev/demo-application.html
+[enabling extension decoders]: https://exoplayer.dev/demo-application.html#enabling-extension-decoders
+
 ## Links ##
 
+* [Troubleshooting using extensions][]
 * [Javadoc][]: Classes matching `com.google.android.exoplayer2.ext.ffmpeg.*`
   belong to this module.
 
+[Troubleshooting using extensions]: https://exoplayer.dev/troubleshooting.html#how-can-i-get-a-decoding-extension-to-load-and-be-used-for-playback
 [Javadoc]: https://exoplayer.dev/doc/reference/index.html

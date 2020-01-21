@@ -36,12 +36,15 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction;
 import androidx.annotation.ColorInt;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
+import java.util.Collections;
 import java.util.Formatter;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArraySet;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /**
  * A time bar that shows a current position, buffered position, duration and ad markers.
@@ -126,35 +129,21 @@ import java.util.concurrent.CopyOnWriteArraySet;
  */
 public class DefaultTimeBar extends View implements TimeBar {
 
-  /**
-   * Default height for the time bar, in dp.
-   */
+  /** Default height for the time bar, in dp. */
   public static final int DEFAULT_BAR_HEIGHT_DP = 4;
-  /**
-   * Default height for the touch target, in dp.
-   */
+  /** Default height for the touch target, in dp. */
   public static final int DEFAULT_TOUCH_TARGET_HEIGHT_DP = 26;
-  /**
-   * Default width for ad markers, in dp.
-   */
+  /** Default width for ad markers, in dp. */
   public static final int DEFAULT_AD_MARKER_WIDTH_DP = 4;
-  /**
-   * Default diameter for the scrubber when enabled, in dp.
-   */
+  /** Default diameter for the scrubber when enabled, in dp. */
   public static final int DEFAULT_SCRUBBER_ENABLED_SIZE_DP = 12;
-  /**
-   * Default diameter for the scrubber when disabled, in dp.
-   */
+  /** Default diameter for the scrubber when disabled, in dp. */
   public static final int DEFAULT_SCRUBBER_DISABLED_SIZE_DP = 0;
-  /**
-   * Default diameter for the scrubber when dragged, in dp.
-   */
+  /** Default diameter for the scrubber when dragged, in dp. */
   public static final int DEFAULT_SCRUBBER_DRAGGED_SIZE_DP = 16;
-  /**
-   * Default color for the played portion of the time bar.
-   */
-  public static final int DEFAULT_PLAYED_COLOR = 0xFFFFFFFF;
   /** Default color for the played portion of the time bar. */
+  public static final int DEFAULT_PLAYED_COLOR = 0xFFFFFFFF;
+  /** Default color for the unplayed portion of the time bar. */
   public static final int DEFAULT_UNPLAYED_COLOR = 0x33FFFFFF;
   /** Default color for the buffered portion of the time bar. */
   public static final int DEFAULT_BUFFERED_COLOR = 0xCCFFFFFF;
@@ -165,19 +154,16 @@ public class DefaultTimeBar extends View implements TimeBar {
   /** Default color for played ad markers. */
   public static final int DEFAULT_PLAYED_AD_MARKER_COLOR = 0x33FFFF00;
 
-  /**
-   * The threshold in dps above the bar at which touch events trigger fine scrub mode.
-   */
+  /** The threshold in dps above the bar at which touch events trigger fine scrub mode. */
   private static final int FINE_SCRUB_Y_THRESHOLD_DP = -50;
-  /**
-   * The ratio by which times are reduced in fine scrub mode.
-   */
+  /** The ratio by which times are reduced in fine scrub mode. */
   private static final int FINE_SCRUB_RATIO = 3;
   /**
    * The time after which the scrubbing listener is notified that scrubbing has stopped after
    * performing an incremental scrub using key input.
    */
   private static final long STOP_SCRUBBING_TIMEOUT_MS = 1000;
+
   private static final int DEFAULT_INCREMENT_COUNT = 20;
 
   /**
@@ -216,6 +202,7 @@ public class DefaultTimeBar extends View implements TimeBar {
   private int keyCountIncrement;
   private long keyTimeIncrement;
   private int lastCoarseScrubXPosition;
+  private @MonotonicNonNull Rect lastExclusionRectangle;
 
   private boolean scrubbing;
   private long scrubPosition;
@@ -617,6 +604,9 @@ public class DefaultTimeBar extends View implements TimeBar {
     seekBounds.set(seekLeft, barY, seekRight, barY + touchTargetHeight);
     progressBar.set(seekBounds.left + scrubberPadding, progressY,
         seekBounds.right - scrubberPadding, progressY + barHeight);
+    if (Util.SDK_INT >= 29) {
+      setSystemGestureExclusionRectsV29(width, height);
+    }
     update();
   }
 
@@ -845,6 +835,18 @@ public class DefaultTimeBar extends View implements TimeBar {
         && scrubberDrawable.setState(getDrawableState())) {
       invalidate();
     }
+  }
+
+  @RequiresApi(29)
+  private void setSystemGestureExclusionRectsV29(int width, int height) {
+    if (lastExclusionRectangle != null
+        && lastExclusionRectangle.width() == width
+        && lastExclusionRectangle.height() == height) {
+      // Allocating inside onLayout is considered a DrawAllocation lint error, so avoid if possible.
+      return;
+    }
+    lastExclusionRectangle = new Rect(/* left= */ 0, /* top= */ 0, width, height);
+    setSystemGestureExclusionRects(Collections.singletonList(lastExclusionRectangle));
   }
 
   private String getProgressText() {

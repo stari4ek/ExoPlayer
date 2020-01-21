@@ -17,6 +17,7 @@ package com.google.android.exoplayer2.video;
 
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.GlUtil;
 import java.nio.FloatBuffer;
@@ -89,7 +90,6 @@ import javax.microedition.khronos.opengles.GL10;
 
   // Kept in field rather than a local variable in order not to get garbage collected before
   // glDrawArrays uses it.
-  @SuppressWarnings("FieldCanBeLocal")
   private FloatBuffer[] textureCoords;
 
   private int program;
@@ -98,6 +98,7 @@ import javax.microedition.khronos.opengles.GL10;
   private int[] previousWidths;
   private int[] previousStrides;
 
+  @Nullable
   private VideoDecoderOutputBuffer renderedOutputBuffer; // Accessed only from the GL thread.
 
   public VideoDecoderRenderer(GLSurfaceView surfaceView) {

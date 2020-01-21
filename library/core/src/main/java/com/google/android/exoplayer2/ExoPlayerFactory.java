@@ -278,6 +278,7 @@ public final class ExoPlayerFactory {
    *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
    *     MediaSource} factories.
    */
+  @SuppressWarnings("deprecation")
   @Deprecated
   public static SimpleExoPlayer newSimpleInstance(
       Context context,
@@ -296,6 +297,7 @@ public final class ExoPlayerFactory {
         drmSessionManager,
         bandwidthMeter,
         analyticsCollector,
+        /* useLazyPreparation= */ true,
         Clock.DEFAULT,
         looper);
   }
@@ -344,6 +346,13 @@ public final class ExoPlayerFactory {
       BandwidthMeter bandwidthMeter,
       Looper looper) {
     return new ExoPlayerImpl(
-        renderers, trackSelector, loadControl, bandwidthMeter, Clock.DEFAULT, looper);
+        renderers,
+        trackSelector,
+        loadControl,
+        bandwidthMeter,
+        /* analyticsCollector= */ null,
+        /* useLazyPreparation= */ true,
+        Clock.DEFAULT,
+        looper);
   }
 }

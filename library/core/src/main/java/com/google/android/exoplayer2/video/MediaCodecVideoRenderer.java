@@ -26,11 +26,11 @@ import android.media.MediaCrypto;
 import android.media.MediaFormat;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Message;
 import android.os.SystemClock;
 import android.util.Pair;
 import android.view.Surface;
 import androidx.annotation.CallSuper;
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
@@ -38,6 +38,7 @@ import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
 import com.google.android.exoplayer2.PlayerMessage.Target;
+import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
@@ -48,6 +49,7 @@ import com.google.android.exoplayer2.mediacodec.MediaCodecSelector;
 import com.google.android.exoplayer2.mediacodec.MediaCodecUtil;
 import com.google.android.exoplayer2.mediacodec.MediaCodecUtil.DecoderQueryException;
 import com.google.android.exoplayer2.mediacodec.MediaFormatUtil;
+import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -93,6 +95,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * playbacks. See {@link #getCodecMaxValues(MediaCodecInfo, Format, Format[])}.
    */
   private static final float INITIAL_FORMAT_MAX_INPUT_SIZE_SCALE_FACTOR = 1.5f;
+
+  /** Magic frame render timestamp that indicates the EOS in tunneling mode. */
+  private static final long TUNNELING_EOS_PRESENTATION_TIME_US = Long.MAX_VALUE;
 
   /** A {@link DecoderException} with additional surface information. */
   public static final class VideoDecoderException extends DecoderException {
@@ -154,7 +159,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   private boolean tunneling;
   private int tunnelingAudioSessionId;
-  /* package */ OnFrameRenderedListenerV23 tunnelingOnFrameRenderedListener;
+  /* package */ @Nullable OnFrameRenderedListenerV23 tunnelingOnFrameRenderedListener;
 
   private long lastInputTimeUs;
   private long outputStreamOffsetUs;
@@ -197,6 +202,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
    *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
    */
+  @SuppressWarnings("deprecation")
   public MediaCodecVideoRenderer(
       Context context,
       MediaCodecSelector mediaCodecSelector,
@@ -232,7 +238,12 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
    *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
+   * @deprecated Use {@link #MediaCodecVideoRenderer(Context, MediaCodecSelector, long, boolean,
+   *     Handler, VideoRendererEventListener, int)} instead, and pass DRM-related parameters to the
+   *     {@link MediaSource} factories.
    */
+  @Deprecated
+  @SuppressWarnings("deprecation")
   public MediaCodecVideoRenderer(
       Context context,
       MediaCodecSelector mediaCodecSelector,
@@ -259,6 +270,41 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * @param mediaCodecSelector A decoder selector.
    * @param allowedJoiningTimeMs The maximum duration in milliseconds for which this video renderer
    *     can attempt to seamlessly join an ongoing playback.
+   * @param enableDecoderFallback Whether to enable fallback to lower-priority decoders if decoder
+   *     initialization fails. This may result in using a decoder that is slower/less efficient than
+   *     the primary decoder.
+   * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
+   *     null if delivery of events is not required.
+   * @param eventListener A listener of events. May be null if delivery of events is not required.
+   * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
+   *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
+   */
+  @SuppressWarnings("deprecation")
+  public MediaCodecVideoRenderer(
+      Context context,
+      MediaCodecSelector mediaCodecSelector,
+      long allowedJoiningTimeMs,
+      boolean enableDecoderFallback,
+      @Nullable Handler eventHandler,
+      @Nullable VideoRendererEventListener eventListener,
+      int maxDroppedFramesToNotify) {
+    this(
+        context,
+        mediaCodecSelector,
+        allowedJoiningTimeMs,
+        /* drmSessionManager= */ null,
+        /* playClearSamplesWithoutKeys= */ false,
+        enableDecoderFallback,
+        eventHandler,
+        eventListener,
+        maxDroppedFramesToNotify);
+  }
+
+  /**
+   * @param context A context.
+   * @param mediaCodecSelector A decoder selector.
+   * @param allowedJoiningTimeMs The maximum duration in milliseconds for which this video renderer
+   *     can attempt to seamlessly join an ongoing playback.
    * @param drmSessionManager For use with encrypted content. May be null if support for encrypted
    *     content is not required.
    * @param playClearSamplesWithoutKeys Encrypted media may contain clear (un-encrypted) regions.
@@ -274,7 +320,11 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
    *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
+   * @deprecated Use {@link #MediaCodecVideoRenderer(Context, MediaCodecSelector, long, boolean,
+   *     Handler, VideoRendererEventListener, int)} instead, and pass DRM-related parameters to the
+   *     {@link MediaSource} factories.
    */
+  @Deprecated
   public MediaCodecVideoRenderer(
       Context context,
       MediaCodecSelector mediaCodecSelector,
@@ -312,6 +362,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @Override
+  @Capabilities
   protected int supportsFormat(
       MediaCodecSelector mediaCodecSelector,
       @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
@@ -319,7 +370,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       throws DecoderQueryException {
     String mimeType = format.sampleMimeType;
     if (!MimeTypes.isVideo(mimeType)) {
-      return FORMAT_UNSUPPORTED_TYPE;
+      return RendererCapabilities.create(FORMAT_UNSUPPORTED_TYPE);
     }
     @Nullable DrmInitData drmInitData = format.drmInitData;
     // Assume encrypted content requires secure decoders.
@@ -340,7 +391,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
               /* requiresTunnelingDecoder= */ false);
     }
     if (decoderInfos.isEmpty()) {
-      return FORMAT_UNSUPPORTED_SUBTYPE;
+      return RendererCapabilities.create(FORMAT_UNSUPPORTED_SUBTYPE);
     }
     boolean supportsFormatDrm =
         drmInitData == null
@@ -348,16 +399,17 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
             || (format.exoMediaCryptoType == null
                 && supportsFormatDrm(drmSessionManager, drmInitData));
     if (!supportsFormatDrm) {
-      return FORMAT_UNSUPPORTED_DRM;
+      return RendererCapabilities.create(FORMAT_UNSUPPORTED_DRM);
     }
     // Check capabilities for the first decoder in the list, which takes priority.
     MediaCodecInfo decoderInfo = decoderInfos.get(0);
     boolean isFormatSupported = decoderInfo.isFormatSupported(format);
+    @AdaptiveSupport
     int adaptiveSupport =
         decoderInfo.isSeamlessAdaptationSupported(format)
             ? ADAPTIVE_SEAMLESS
             : ADAPTIVE_NOT_SEAMLESS;
-    int tunnelingSupport = TUNNELING_NOT_SUPPORTED;
+    @TunnelingSupport int tunnelingSupport = TUNNELING_NOT_SUPPORTED;
     if (isFormatSupported) {
       List<MediaCodecInfo> tunnelingDecoderInfos =
           getDecoderInfos(
@@ -373,8 +425,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
         }
       }
     }
+    @FormatSupport
     int formatSupport = isFormatSupported ? FORMAT_HANDLED : FORMAT_EXCEEDS_CAPABILITIES;
-    return adaptiveSupport | tunnelingSupport | formatSupport;
+    return RendererCapabilities.create(formatSupport, adaptiveSupport, tunnelingSupport);
   }
 
   @Override
@@ -390,11 +443,15 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       boolean requiresSecureDecoder,
       boolean requiresTunnelingDecoder)
       throws DecoderQueryException {
+    @Nullable String mimeType = format.sampleMimeType;
+    if (mimeType == null) {
+      return Collections.emptyList();
+    }
     List<MediaCodecInfo> decoderInfos =
         mediaCodecSelector.getDecoderInfos(
-            format.sampleMimeType, requiresSecureDecoder, requiresTunnelingDecoder);
+            mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
     decoderInfos = MediaCodecUtil.getDecoderInfosSortedByFormatSupport(decoderInfos, format);
-    if (MimeTypes.VIDEO_DOLBY_VISION.equals(format.sampleMimeType)) {
+    if (MimeTypes.VIDEO_DOLBY_VISION.equals(mimeType)) {
       // Fall back to H.264/AVC or H.265/HEVC for the relevant DV profiles.
       @Nullable
       Pair<Integer, Integer> codecProfileAndLevel = MediaCodecUtil.getCodecProfileAndLevel(format);
@@ -601,8 +658,8 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   @Override
   protected boolean getCodecNeedsEosPropagation() {
-    // In tunneling mode we can't dequeue an end-of-stream buffer, so propagate it in the renderer.
-    return tunneling;
+    // Since API 23, onFrameRenderedListener allows for detection of the renderer EOS.
+    return tunneling && Util.SDK_INT < 23;
   }
 
   @Override
@@ -652,22 +709,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   @CallSuper
   @Override
-  protected void releaseCodec() {
-    try {
-      super.releaseCodec();
-    } finally {
-      buffersInCodecCount = 0;
-    }
-  }
-
-  @CallSuper
-  @Override
-  protected boolean flushOrReleaseCodec() {
-    try {
-      return super.flushOrReleaseCodec();
-    } finally {
-      buffersInCodecCount = 0;
-    }
+  protected void resetCodecStateForFlush() {
+    super.resetCodecStateForFlush();
+    buffersInCodecCount = 0;
   }
 
   @Override
@@ -711,7 +755,11 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   @CallSuper
   @Override
   protected void onQueueInputBuffer(DecoderInputBuffer buffer) {
-    buffersInCodecCount++;
+    // In tunneling mode the device may do frame rate conversion, so in general we can't keep track
+    // of the number of buffers in the codec.
+    if (!tunneling) {
+      buffersInCodecCount++;
+    }
     lastInputTimeUs = Math.max(buffer.timeUs, lastInputTimeUs);
     if (Util.SDK_INT < 23 && tunneling) {
       // In tunneled mode before API 23 we don't have a way to know when the buffer is output, so
@@ -721,20 +769,26 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @Override
-  protected void onOutputFormatChanged(MediaCodec codec, MediaFormat outputFormat) {
-    currentMediaFormat = outputFormat;
-    boolean hasCrop = outputFormat.containsKey(KEY_CROP_RIGHT)
-        && outputFormat.containsKey(KEY_CROP_LEFT) && outputFormat.containsKey(KEY_CROP_BOTTOM)
-        && outputFormat.containsKey(KEY_CROP_TOP);
-    int width =
+  protected void onOutputMediaFormatChanged(MediaCodec codec, MediaFormat outputMediaFormat) {
+    currentMediaFormat = outputMediaFormat;
+    boolean hasCrop =
+        outputMediaFormat.containsKey(KEY_CROP_RIGHT)
+            && outputMediaFormat.containsKey(KEY_CROP_LEFT)
+            && outputMediaFormat.containsKey(KEY_CROP_BOTTOM)
+            && outputMediaFormat.containsKey(KEY_CROP_TOP);
+    int mediaFormatWidth =
         hasCrop
-            ? outputFormat.getInteger(KEY_CROP_RIGHT) - outputFormat.getInteger(KEY_CROP_LEFT) + 1
-            : outputFormat.getInteger(MediaFormat.KEY_WIDTH);
-    int height =
+            ? outputMediaFormat.getInteger(KEY_CROP_RIGHT)
+                - outputMediaFormat.getInteger(KEY_CROP_LEFT)
+                + 1
+            : outputMediaFormat.getInteger(MediaFormat.KEY_WIDTH);
+    int mediaFormatHeight =
         hasCrop
-            ? outputFormat.getInteger(KEY_CROP_BOTTOM) - outputFormat.getInteger(KEY_CROP_TOP) + 1
-            : outputFormat.getInteger(MediaFormat.KEY_HEIGHT);
-    processOutputFormat(codec, width, height);
+            ? outputMediaFormat.getInteger(KEY_CROP_BOTTOM)
+                - outputMediaFormat.getInteger(KEY_CROP_TOP)
+                + 1
+            : outputMediaFormat.getInteger(MediaFormat.KEY_HEIGHT);
+    processOutputFormat(codec, mediaFormatWidth, mediaFormatHeight);
   }
 
   @Override
@@ -905,7 +959,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       // On API level 20 and below the decoder does not apply the rotation.
       currentUnappliedRotationDegrees = pendingRotationDegrees;
     }
-    // Must be applied each time the output format changes.
+    // Must be applied each time the output MediaFormat changes.
     codec.setVideoScalingMode(scalingMode);
   }
 
@@ -937,6 +991,11 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     onProcessedOutputBuffer(presentationTimeUs);
   }
 
+  /** Called when a output EOS was received in tunneling mode. */
+  private void onProcessedTunneledEndOfStream() {
+    setPendingOutputEndOfStream();
+  }
+
   /**
    * Called when an output buffer is successfully processed.
    *
@@ -945,7 +1004,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   @CallSuper
   @Override
   protected void onProcessedOutputBuffer(long presentationTimeUs) {
-    buffersInCodecCount--;
+    if (!tunneling) {
+      buffersInCodecCount--;
+    }
     while (pendingOutputStreamOffsetCount != 0
         && presentationTimeUs >= pendingOutputStreamSwitchTimesUs[0]) {
       outputStreamOffsetUs = pendingOutputStreamOffsetsUs[0];
@@ -1242,7 +1303,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   /**
    * Returns the framework {@link MediaFormat} that should be used to configure the decoder.
    *
-   * @param format The format of media.
+   * @param format The {@link Format} of media.
    * @param codecMimeType The MIME type handled by the codec.
    * @param codecMaxValues Codec max values that should be used when configuring the decoder.
    * @param codecOperatingRate The codec operating rate, or {@link #CODEC_OPERATING_RATE_UNSET} if
@@ -1307,7 +1368,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * that will allow possible adaptation to other compatible formats in {@code streamFormats}.
    *
    * @param codecInfo Information about the {@link MediaCodec} being configured.
-   * @param format The format for which the codec is being configured.
+   * @param format The {@link Format} for which the codec is being configured.
    * @param streamFormats The possible stream formats.
    * @return Suitable {@link CodecMaxValues}.
    */
@@ -1373,7 +1434,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
    * aspect ratio, but whose sizes are unknown.
    *
    * @param codecInfo Information about the {@link MediaCodec} being configured.
-   * @param format The format for which the codec is being configured.
+   * @param format The {@link Format} for which the codec is being configured.
    * @return The maximum video size to use, or null if the size of {@code format} should be used.
    */
   private static Point getCodecMaxSize(MediaCodecInfo codecInfo, Format format) {
@@ -1413,7 +1474,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   /**
-   * Returns a maximum input buffer size for a given codec and format.
+   * Returns a maximum input buffer size for a given {@link MediaCodec} and {@link Format}.
    *
    * @param codecInfo Information about the {@link MediaCodec} being configured.
    * @param format The format.
@@ -1718,11 +1779,6 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     return surface;
   }
 
-  /** Returns true if the first frame has been rendered (playback has not necessarily begun). */
-  protected final boolean haveRenderedFirstFrame() {
-    return renderedFirstFrame;
-  }
-
   protected static final class CodecMaxValues {
 
     public final int width;
@@ -1738,21 +1794,61 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @TargetApi(23)
-  private final class OnFrameRenderedListenerV23 implements MediaCodec.OnFrameRenderedListener {
+  private final class OnFrameRenderedListenerV23
+      implements MediaCodec.OnFrameRenderedListener, Handler.Callback {
 
-    private OnFrameRenderedListenerV23(MediaCodec codec) {
-      codec.setOnFrameRenderedListener(this, new Handler());
+    private static final int HANDLE_FRAME_RENDERED = 0;
+
+    private final Handler handler;
+
+    public OnFrameRenderedListenerV23(MediaCodec codec) {
+      handler = Util.createHandler(/* callback= */ this);
+      codec.setOnFrameRenderedListener(/* listener= */ this, handler);
     }
 
     @Override
-    public void onFrameRendered(@NonNull MediaCodec codec, long presentationTimeUs, long nanoTime) {
+    public void onFrameRendered(MediaCodec codec, long presentationTimeUs, long nanoTime) {
+      // Workaround bug in MediaCodec that causes deadlock if you call directly back into the
+      // MediaCodec from this listener method.
+      // Deadlock occurs because MediaCodec calls this listener method holding a lock,
+      // which may also be required by calls made back into the MediaCodec.
+      // This was fixed in https://android-review.googlesource.com/1156807.
+      //
+      // The workaround queues the event for subsequent processing, where the lock will not be held.
+      if (Util.SDK_INT < 30) {
+        Message message =
+            Message.obtain(
+                handler,
+                /* what= */ HANDLE_FRAME_RENDERED,
+                /* arg1= */ (int) (presentationTimeUs >> 32),
+                /* arg2= */ (int) presentationTimeUs);
+        handler.sendMessageAtFrontOfQueue(message);
+      } else {
+        handleFrameRendered(presentationTimeUs);
+      }
+    }
+
+    @Override
+    public boolean handleMessage(Message message) {
+      switch (message.what) {
+        case HANDLE_FRAME_RENDERED:
+          handleFrameRendered(Util.toLong(message.arg1, message.arg2));
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    private void handleFrameRendered(long presentationTimeUs) {
       if (this != tunnelingOnFrameRenderedListener) {
         // Stale event.
         return;
       }
-      onProcessedTunneledBuffer(presentationTimeUs);
+      if (presentationTimeUs == TUNNELING_EOS_PRESENTATION_TIME_US) {
+        onProcessedTunneledEndOfStream();
+      } else {
+        onProcessedTunneledBuffer(presentationTimeUs);
+      }
     }
-
   }
-
 }

@@ -22,16 +22,22 @@ import static com.google.android.exoplayer2.demo.PlayerActivity.DRM_LICENSE_URL_
 import static com.google.android.exoplayer2.demo.PlayerActivity.DRM_MULTI_SESSION_EXTRA;
 import static com.google.android.exoplayer2.demo.PlayerActivity.DRM_SCHEME_EXTRA;
 import static com.google.android.exoplayer2.demo.PlayerActivity.DRM_SCHEME_UUID_EXTRA;
+import static com.google.android.exoplayer2.demo.PlayerActivity.DRM_SESSION_FOR_CLEAR_TYPES_EXTRA;
 import static com.google.android.exoplayer2.demo.PlayerActivity.EXTENSION_EXTRA;
 import static com.google.android.exoplayer2.demo.PlayerActivity.IS_LIVE_EXTRA;
+import static com.google.android.exoplayer2.demo.PlayerActivity.SUBTITLE_LANGUAGE_EXTRA;
+import static com.google.android.exoplayer2.demo.PlayerActivity.SUBTITLE_MIME_TYPE_EXTRA;
+import static com.google.android.exoplayer2.demo.PlayerActivity.SUBTITLE_URI_EXTRA;
 import static com.google.android.exoplayer2.demo.PlayerActivity.URI_EXTRA;
 
 import android.content.Intent;
 import android.net.Uri;
 import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.UUID;
 
 /* package */ abstract class Sample {
@@ -51,7 +57,8 @@ import java.util.UUID;
           isLive,
           DrmInfo.createFromIntent(intent, extrasKeySuffix),
           adTagUri,
-          /* sphericalStereoMode= */ null);
+          /* sphericalStereoMode= */ null,
+          SubtitleInfo.createFromIntent(intent, extrasKeySuffix));
     }
 
     public final Uri uri;
@@ -60,6 +67,7 @@ import java.util.UUID;
     public final DrmInfo drmInfo;
     public final Uri adTagUri;
     @Nullable public final String sphericalStereoMode;
+    @Nullable SubtitleInfo subtitleInfo;
 
     public UriSample(
         String name,
@@ -68,7 +76,8 @@ import java.util.UUID;
         boolean isLive,
         DrmInfo drmInfo,
         Uri adTagUri,
-        @Nullable String sphericalStereoMode) {
+        @Nullable String sphericalStereoMode,
+        @Nullable SubtitleInfo subtitleInfo) {
       super(name);
       this.uri = uri;
       this.extension = extension;
@@ -76,6 +85,7 @@ import java.util.UUID;
       this.drmInfo = drmInfo;
       this.adTagUri = adTagUri;
       this.sphericalStereoMode = sphericalStereoMode;
+      this.subtitleInfo = subtitleInfo;
     }
 
     @Override
@@ -99,6 +109,9 @@ import java.util.UUID;
               AD_TAG_URI_EXTRA + extrasKeySuffix, adTagUri != null ? adTagUri.toString() : null);
       if (drmInfo != null) {
         drmInfo.addToIntent(intent, extrasKeySuffix);
+      }
+      if (subtitleInfo != null) {
+        subtitleInfo.addToIntent(intent, extrasKeySuffix);
       }
     }
   }
@@ -137,24 +150,35 @@ import java.util.UUID;
       String drmLicenseUrl = intent.getStringExtra(DRM_LICENSE_URL_EXTRA + extrasKeySuffix);
       String[] keyRequestPropertiesArray =
           intent.getStringArrayExtra(DRM_KEY_REQUEST_PROPERTIES_EXTRA + extrasKeySuffix);
+      String[] drmSessionForClearTypesExtra =
+          intent.getStringArrayExtra(DRM_SESSION_FOR_CLEAR_TYPES_EXTRA + extrasKeySuffix);
+      int[] drmSessionForClearTypes = toTrackTypeArray(drmSessionForClearTypesExtra);
       boolean drmMultiSession =
           intent.getBooleanExtra(DRM_MULTI_SESSION_EXTRA + extrasKeySuffix, false);
-      return new DrmInfo(drmScheme, drmLicenseUrl, keyRequestPropertiesArray, drmMultiSession);
+      return new DrmInfo(
+          drmScheme,
+          drmLicenseUrl,
+          keyRequestPropertiesArray,
+          drmSessionForClearTypes,
+          drmMultiSession);
     }
 
     public final UUID drmScheme;
     public final String drmLicenseUrl;
     public final String[] drmKeyRequestProperties;
+    public final int[] drmSessionForClearTypes;
     public final boolean drmMultiSession;
 
     public DrmInfo(
         UUID drmScheme,
         String drmLicenseUrl,
         String[] drmKeyRequestProperties,
+        int[] drmSessionForClearTypes,
         boolean drmMultiSession) {
       this.drmScheme = drmScheme;
       this.drmLicenseUrl = drmLicenseUrl;
       this.drmKeyRequestProperties = drmKeyRequestProperties;
+      this.drmSessionForClearTypes = drmSessionForClearTypes;
       this.drmMultiSession = drmMultiSession;
     }
 
@@ -163,8 +187,65 @@ import java.util.UUID;
       intent.putExtra(DRM_SCHEME_EXTRA + extrasKeySuffix, drmScheme.toString());
       intent.putExtra(DRM_LICENSE_URL_EXTRA + extrasKeySuffix, drmLicenseUrl);
       intent.putExtra(DRM_KEY_REQUEST_PROPERTIES_EXTRA + extrasKeySuffix, drmKeyRequestProperties);
+      ArrayList<String> typeStrings = new ArrayList<>();
+      for (int type : drmSessionForClearTypes) {
+        // Only audio and video are supported.
+        typeStrings.add(type == C.TRACK_TYPE_AUDIO ? "audio" : "video");
+      }
+      intent.putExtra(
+          DRM_SESSION_FOR_CLEAR_TYPES_EXTRA + extrasKeySuffix, typeStrings.toArray(new String[0]));
       intent.putExtra(DRM_MULTI_SESSION_EXTRA + extrasKeySuffix, drmMultiSession);
     }
+  }
+
+  public static final class SubtitleInfo {
+
+    @Nullable
+    public static SubtitleInfo createFromIntent(Intent intent, String extrasKeySuffix) {
+      if (!intent.hasExtra(SUBTITLE_URI_EXTRA + extrasKeySuffix)) {
+        return null;
+      }
+      return new SubtitleInfo(
+          Uri.parse(intent.getStringExtra(SUBTITLE_URI_EXTRA + extrasKeySuffix)),
+          intent.getStringExtra(SUBTITLE_MIME_TYPE_EXTRA + extrasKeySuffix),
+          intent.getStringExtra(SUBTITLE_LANGUAGE_EXTRA + extrasKeySuffix));
+    }
+
+    public final Uri uri;
+    public final String mimeType;
+    @Nullable public final String language;
+
+    public SubtitleInfo(Uri uri, String mimeType, @Nullable String language) {
+      this.uri = Assertions.checkNotNull(uri);
+      this.mimeType = Assertions.checkNotNull(mimeType);
+      this.language = language;
+    }
+
+    public void addToIntent(Intent intent, String extrasKeySuffix) {
+      intent.putExtra(SUBTITLE_URI_EXTRA + extrasKeySuffix, uri.toString());
+      intent.putExtra(SUBTITLE_MIME_TYPE_EXTRA + extrasKeySuffix, mimeType);
+      intent.putExtra(SUBTITLE_LANGUAGE_EXTRA + extrasKeySuffix, language);
+    }
+  }
+
+  public static int[] toTrackTypeArray(@Nullable String[] trackTypeStringsArray) {
+    if (trackTypeStringsArray == null) {
+      return new int[0];
+    }
+    HashSet<Integer> trackTypes = new HashSet<>();
+    for (String trackTypeString : trackTypeStringsArray) {
+      switch (Util.toLowerInvariant(trackTypeString)) {
+        case "audio":
+          trackTypes.add(C.TRACK_TYPE_AUDIO);
+          break;
+        case "video":
+          trackTypes.add(C.TRACK_TYPE_VIDEO);
+          break;
+        default:
+          throw new IllegalArgumentException("Invalid track type: " + trackTypeString);
+      }
+    }
+    return Util.toArray(new ArrayList<>(trackTypes));
   }
 
   public static Sample createFromIntent(Intent intent) {

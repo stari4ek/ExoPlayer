@@ -265,11 +265,11 @@ FLACParser::FLACParser(DataSource *source)
     : mDataSource(source),
       mCopy(copyTrespass),
       mDecoder(NULL),
-      mSeekTable(NULL),
-      firstFrameOffset(0LL),
       mCurrentPos(0LL),
       mEOF(false),
       mStreamInfoValid(false),
+      mSeekTable(NULL),
+      firstFrameOffset(0LL),
       mVorbisCommentsValid(false),
       mPicturesValid(false),
       mWriteRequested(false),
@@ -456,11 +456,15 @@ bool FLACParser::getSeekPositions(int64_t timeUs,
 
   for (unsigned i = length; i != 0; i--) {
     int64_t sampleNumber = points[i - 1].sample_number;
+    if (sampleNumber == -1) {  // placeholder
+      continue;
+    }
     if (sampleNumber <= targetSampleNumber) {
       result[0] = (sampleNumber * 1000000LL) / sampleRate;
       result[1] = firstFrameOffset + points[i - 1].stream_offset;
-      if (sampleNumber == targetSampleNumber || i >= length) {
-        // exact seek, or no following seek point.
+      if (sampleNumber == targetSampleNumber || i >= length ||
+          points[i].sample_number == -1) {  // placeholder
+        // exact seek, or no following non-placeholder seek point
         result[2] = result[0];
         result[3] = result[1];
       } else {

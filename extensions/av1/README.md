@@ -11,7 +11,7 @@ more external libraries as described below. These are licensed separately.
 
 [Apache 2.0]: https://github.com/google/ExoPlayer/blob/release-v2/LICENSE
 
-## Build instructions ##
+## Build instructions (Linux, macOS) ##
 
 To use this extension you need to clone the ExoPlayer repository and depend on
 its modules locally. Instructions for doing this can be found in ExoPlayer's
@@ -59,7 +59,14 @@ to configure and build libgav1 and the extension's [JNI wrapper library][].
 [Install CMake]: https://developer.android.com/studio/projects/install-ndk
 [CMake]: https://cmake.org/
 [Ninja]: https://ninja-build.org
-[JNI wrapper library]: https://github.com/google/ExoPlayer/blob/dev-v2/extensions/av1/src/main/jni/gav1_jni.cc
+[JNI wrapper library]: https://github.com/google/ExoPlayer/blob/release-v2/extensions/av1/src/main/jni/gav1_jni.cc
+
+## Build instructions (Windows) ##
+
+We do not provide support for building this extension on Windows, however it
+should be possible to follow the Linux instructions in [Windows PowerShell][].
+
+[Windows PowerShell]: https://docs.microsoft.com/en-us/powershell/scripting/getting-started/getting-started-with-windows-powershell
 
 ## Using the extension ##
 
@@ -89,6 +96,14 @@ a custom track selector the choice of `Renderer` is up to your implementation.
 You need to make sure you are passing a `Libgav1VideoRenderer` to the player and
 then you need to implement your own logic to use the renderer for a given track.
 
+## Using the extension in the demo application ##
+
+To try out playback using the extension in the [demo application][], see
+[enabling extension decoders][].
+
+[demo application]: https://exoplayer.dev/demo-application.html
+[enabling extension decoders]: https://exoplayer.dev/demo-application.html#enabling-extension-decoders
+
 ## Rendering options ##
 
 There are two possibilities for rendering the output `Libgav1VideoRenderer`
@@ -96,9 +111,10 @@ gets from the libgav1 decoder:
 
 * GL rendering using GL shader for color space conversion
   * If you are using `SimpleExoPlayer` with `PlayerView`, enable this option by
-    setting `surface_type` of `PlayerView` to be `video_decoder_surface_view`.
+    setting `surface_type` of `PlayerView` to be
+    `video_decoder_gl_surface_view`.
   * Otherwise, enable this option by sending `Libgav1VideoRenderer` a message
-    of type `C.MSG_SET_OUTPUT_BUFFER_RENDERER` with an instance of
+    of type `C.MSG_SET_VIDEO_DECODER_OUTPUT_BUFFER_RENDERER` with an instance of
     `VideoDecoderOutputBufferRenderer` as its object.
 
 * Native rendering using `ANativeWindow`

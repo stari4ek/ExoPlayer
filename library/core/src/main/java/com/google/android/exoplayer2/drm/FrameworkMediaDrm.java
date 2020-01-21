@@ -23,6 +23,7 @@ import android.media.MediaDrm;
 import android.media.MediaDrmException;
 import android.media.NotProvisionedException;
 import android.media.UnsupportedSchemeException;
+import android.os.PersistableBundle;
 import android.text.TextUtils;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
@@ -54,8 +55,6 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
    * {@link ExoMediaDrm.Provider} that returns a new {@link FrameworkMediaDrm} for the requested
    * UUID. Returns a {@link DummyExoMediaDrm} if the protection scheme identified by the given UUID
    * is not supported by the device.
-   *
-   * <p>This provider should be used to make ExoPlayer handle {@link ExoMediaDrm} resources.
    */
   public static final Provider<FrameworkMediaCrypto> DEFAULT_PROVIDER =
       uuid -> {
@@ -77,8 +76,8 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
   private int referenceCount;
 
   /**
-   * Creates an instance with an {@link #acquire() acquired reference} for the specified scheme
-   * UUID.
+   * Creates an instance with an initial reference count of 1. {@link #release()} must be called on
+   * the instance when it's no longer required.
    *
    * @param uuid The scheme uuid.
    * @return The created instance.
@@ -223,6 +222,16 @@ public final class FrameworkMediaDrm implements ExoMediaDrm<FrameworkMediaCrypto
   @Override
   public void restoreKeys(byte[] sessionId, byte[] keySetId) {
     mediaDrm.restoreKeys(sessionId, keySetId);
+  }
+
+  @Override
+  @Nullable
+  @TargetApi(28)
+  public PersistableBundle getMetrics() {
+    if (Util.SDK_INT < 28) {
+      return null;
+    }
+    return mediaDrm.getMetrics();
   }
 
   @Override

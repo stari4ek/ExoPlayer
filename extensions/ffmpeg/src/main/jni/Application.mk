@@ -15,8 +15,6 @@
 #
 
 APP_OPTIM := release
-#TVirl: NDK 19 requires c++_static or c++_shared
-#APP_STL := gnustl_static
 APP_STL := c++_static
 APP_CPPFLAGS := -frtti
 # TVirl: bump to version we have as minimal

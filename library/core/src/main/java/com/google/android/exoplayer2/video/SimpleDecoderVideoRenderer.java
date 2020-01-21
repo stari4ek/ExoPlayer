@@ -157,6 +157,7 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
   // BaseRenderer implementation.
 
   @Override
+  @Capabilities
   public final int supportsFormat(Format format) {
     return supportsFormatInternal(drmSessionManager, format);
   }
@@ -197,7 +198,7 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
         while (feedInputBuffer()) {}
         TraceUtil.endSection();
       } catch (VideoDecoderException e) {
-        throw ExoPlaybackException.createForRenderer(e, getIndex());
+        throw createRendererException(e, inputFormat);
       }
       decoderCounters.ensureUpdated();
     }
@@ -498,13 +499,14 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
   }
 
   /**
-   * Returns the extent to which the subclass supports a given format.
+   * Returns the {@link Capabilities} for the given {@link Format}.
    *
    * @param drmSessionManager The renderer's {@link DrmSessionManager}.
    * @param format The format, which has a video {@link Format#sampleMimeType}.
-   * @return The extent to which the subclass supports the format itself.
+   * @return The {@link Capabilities} for this {@link Format}.
    * @see RendererCapabilities#supportsFormat(Format)
    */
+  @Capabilities
   protected abstract int supportsFormatInternal(
       @Nullable DrmSessionManager<ExoMediaCrypto> drmSessionManager, Format format);
 
@@ -580,6 +582,7 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
       // The output has changed.
       this.surface = surface;
       if (surface != null) {
+        outputBufferRenderer = null;
         outputMode = C.VIDEO_OUTPUT_MODE_SURFACE_YUV;
         if (decoder != null) {
           setDecoderOutputMode(outputMode);
@@ -608,6 +611,7 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
       // The output has changed.
       this.outputBufferRenderer = outputBufferRenderer;
       if (outputBufferRenderer != null) {
+        surface = null;
         outputMode = C.VIDEO_OUTPUT_MODE_YUV;
         if (decoder != null) {
           setDecoderOutputMode(outputMode);
@@ -635,12 +639,12 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
   // Internal methods.
 
   private void setSourceDrmSession(@Nullable DrmSession<ExoMediaCrypto> session) {
-    DrmSession.replaceSessionReferences(sourceDrmSession, session);
+    DrmSession.replaceSession(sourceDrmSession, session);
     sourceDrmSession = session;
   }
 
   private void setDecoderDrmSession(@Nullable DrmSession<ExoMediaCrypto> session) {
-    DrmSession.replaceSessionReferences(decoderDrmSession, session);
+    DrmSession.replaceSession(decoderDrmSession, session);
     decoderDrmSession = session;
   }
 
@@ -677,7 +681,7 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
           decoderInitializedTimestamp - decoderInitializingTimestamp);
       decoderCounters.decoderInitCount++;
     } catch (VideoDecoderException e) {
-      throw ExoPlaybackException.createForRenderer(e, getIndex());
+      throw createRendererException(e, inputFormat);
     }
   }
 
@@ -876,12 +880,14 @@ public abstract class SimpleDecoderVideoRenderer extends BaseRenderer {
   }
 
   private boolean shouldWaitForKeys(boolean bufferEncrypted) throws ExoPlaybackException {
-    if (decoderDrmSession == null || (!bufferEncrypted && playClearSamplesWithoutKeys)) {
+    if (decoderDrmSession == null
+        || (!bufferEncrypted
+            && (playClearSamplesWithoutKeys || decoderDrmSession.playClearSamplesWithoutKeys()))) {
       return false;
     }
     @DrmSession.State int drmSessionState = decoderDrmSession.getState();
     if (drmSessionState == DrmSession.STATE_ERROR) {
-      throw ExoPlaybackException.createForRenderer(decoderDrmSession.getError(), getIndex());
+      throw createRendererException(decoderDrmSession.getError(), inputFormat);
     }
     return drmSessionState != DrmSession.STATE_OPENED_WITH_KEYS;
   }
