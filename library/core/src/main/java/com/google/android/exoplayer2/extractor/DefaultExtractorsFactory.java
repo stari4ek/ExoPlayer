@@ -15,6 +15,7 @@
  */
 package com.google.android.exoplayer2.extractor;
 
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.extractor.amr.AmrExtractor;
 import com.google.android.exoplayer2.extractor.flac.FlacExtractor;
 import com.google.android.exoplayer2.extractor.flv.FlvExtractor;
@@ -56,16 +57,25 @@ import java.lang.reflect.Constructor;
  */
 public final class DefaultExtractorsFactory implements ExtractorsFactory {
 
+  @Nullable
   private static final Constructor<? extends Extractor> FLAC_EXTENSION_EXTRACTOR_CONSTRUCTOR;
 
   static {
-    Constructor<? extends Extractor> flacExtensionExtractorConstructor = null;
+    @Nullable Constructor<? extends Extractor> flacExtensionExtractorConstructor = null;
     try {
       // LINT.IfChange
-      flacExtensionExtractorConstructor =
-          Class.forName("com.google.android.exoplayer2.ext.flac.FlacExtractor")
-              .asSubclass(Extractor.class)
-              .getConstructor();
+      @SuppressWarnings("nullness:argument.type.incompatible")
+      boolean isFlacNativeLibraryAvailable =
+          Boolean.TRUE.equals(
+              Class.forName("com.google.android.exoplayer2.ext.flac.FlacLibrary")
+                  .getMethod("isAvailable")
+                  .invoke(/* obj= */ null));
+      if (isFlacNativeLibraryAvailable) {
+        flacExtensionExtractorConstructor =
+            Class.forName("com.google.android.exoplayer2.ext.flac.FlacExtractor")
+                .asSubclass(Extractor.class)
+                .getConstructor();
+      }
       // LINT.ThenChange(../../../../../../../../proguard-rules.txt)
     } catch (ClassNotFoundException e) {
       // Expected if the app was built without the FLAC extension.
@@ -239,7 +249,10 @@ public final class DefaultExtractorsFactory implements ExtractorsFactory {
                     ? AmrExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING
                     : 0));
     extractors[12] = new Ac4Extractor();
-    // Prefer the FLAC extension extractor because it supports seeking.
+    // Prefer the FLAC extension extractor because it outputs raw audio, which can be handled by the
+    // framework on all API levels, unlike the core library FLAC extractor, which outputs FLAC audio
+    // frames and so relies on having a FLAC decoder (e.g., a MediaCodec decoder that handles FLAC
+    // (from API 27), or the FFmpeg extension with FLAC enabled).
     if (FLAC_EXTENSION_EXTRACTOR_CONSTRUCTOR != null) {
       try {
         extractors[13] = FLAC_EXTENSION_EXTRACTOR_CONSTRUCTOR.newInstance();

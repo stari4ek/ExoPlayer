@@ -25,6 +25,7 @@ import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Player.PlaybackSuppressionReason;
 import com.google.android.exoplayer2.RendererCapabilities;
+import com.google.android.exoplayer2.RendererCapabilities.AdaptiveSupport;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.analytics.AnalyticsListener;
 import com.google.android.exoplayer2.audio.AudioAttributes;
@@ -210,12 +211,13 @@ public class EventLogger implements AnalyticsListener {
           String adaptiveSupport =
               getAdaptiveSupportString(
                   trackGroup.length,
-                  mappedTrackInfo.getAdaptiveSupport(rendererIndex, groupIndex, false));
+                  mappedTrackInfo.getAdaptiveSupport(
+                      rendererIndex, groupIndex, /* includeCapabilitiesExceededTracks= */ false));
           logd("    Group:" + groupIndex + ", adaptive_supported=" + adaptiveSupport + " [");
           for (int trackIndex = 0; trackIndex < trackGroup.length; trackIndex++) {
             String status = getTrackStatusString(trackSelection, trackGroup, trackIndex);
             String formatSupport =
-                getFormatSupportString(
+                RendererCapabilities.getFormatSupportString(
                     mappedTrackInfo.getTrackSupport(rendererIndex, groupIndex, trackIndex));
             logd(
                 "      "
@@ -254,7 +256,8 @@ public class EventLogger implements AnalyticsListener {
         for (int trackIndex = 0; trackIndex < trackGroup.length; trackIndex++) {
           String status = getTrackStatusString(false);
           String formatSupport =
-              getFormatSupportString(RendererCapabilities.FORMAT_UNSUPPORTED_TYPE);
+              RendererCapabilities.getFormatSupportString(
+                  RendererCapabilities.FORMAT_UNSUPPORTED_TYPE);
           logd(
               "      "
                   + status
@@ -286,7 +289,7 @@ public class EventLogger implements AnalyticsListener {
 
   @Override
   public void onDecoderEnabled(EventTime eventTime, int trackType, DecoderCounters counters) {
-    logd(eventTime, "decoderEnabled", getTrackTypeString(trackType));
+    logd(eventTime, "decoderEnabled", Util.getTrackTypeString(trackType));
   }
 
   @Override
@@ -316,7 +319,7 @@ public class EventLogger implements AnalyticsListener {
   @Override
   public void onDecoderInitialized(
       EventTime eventTime, int trackType, String decoderName, long initializationDurationMs) {
-    logd(eventTime, "decoderInitialized", getTrackTypeString(trackType) + ", " + decoderName);
+    logd(eventTime, "decoderInitialized", Util.getTrackTypeString(trackType) + ", " + decoderName);
   }
 
   @Override
@@ -324,12 +327,12 @@ public class EventLogger implements AnalyticsListener {
     logd(
         eventTime,
         "decoderInputFormat",
-        getTrackTypeString(trackType) + ", " + Format.toLogString(format));
+        Util.getTrackTypeString(trackType) + ", " + Format.toLogString(format));
   }
 
   @Override
   public void onDecoderDisabled(EventTime eventTime, int trackType, DecoderCounters counters) {
-    logd(eventTime, "decoderDisabled", getTrackTypeString(trackType));
+    logd(eventTime, "decoderDisabled", Util.getTrackTypeString(trackType));
   }
 
   @Override
@@ -552,24 +555,8 @@ public class EventLogger implements AnalyticsListener {
     }
   }
 
-  private static String getFormatSupportString(int formatSupport) {
-    switch (formatSupport) {
-      case RendererCapabilities.FORMAT_HANDLED:
-        return "YES";
-      case RendererCapabilities.FORMAT_EXCEEDS_CAPABILITIES:
-        return "NO_EXCEEDS_CAPABILITIES";
-      case RendererCapabilities.FORMAT_UNSUPPORTED_DRM:
-        return "NO_UNSUPPORTED_DRM";
-      case RendererCapabilities.FORMAT_UNSUPPORTED_SUBTYPE:
-        return "NO_UNSUPPORTED_TYPE";
-      case RendererCapabilities.FORMAT_UNSUPPORTED_TYPE:
-        return "NO";
-      default:
-        return "?";
-    }
-  }
-
-  private static String getAdaptiveSupportString(int trackCount, int adaptiveSupport) {
+  private static String getAdaptiveSupportString(
+      int trackCount, @AdaptiveSupport int adaptiveSupport) {
     if (trackCount < 2) {
       return "N/A";
     }
@@ -581,7 +568,7 @@ public class EventLogger implements AnalyticsListener {
       case RendererCapabilities.ADAPTIVE_NOT_SUPPORTED:
         return "NO";
       default:
-        return "?";
+        throw new IllegalStateException();
     }
   }
 
@@ -630,35 +617,12 @@ public class EventLogger implements AnalyticsListener {
 
   private static String getTimelineChangeReasonString(@Player.TimelineChangeReason int reason) {
     switch (reason) {
-      case Player.TIMELINE_CHANGE_REASON_PREPARED:
-        return "PREPARED";
-      case Player.TIMELINE_CHANGE_REASON_RESET:
-        return "RESET";
-      case Player.TIMELINE_CHANGE_REASON_DYNAMIC:
-        return "DYNAMIC";
+      case Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE:
+        return "SOURCE_UPDATE";
+      case Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED:
+        return "PLAYLIST_CHANGED";
       default:
         return "?";
-    }
-  }
-
-  private static String getTrackTypeString(int trackType) {
-    switch (trackType) {
-      case C.TRACK_TYPE_AUDIO:
-        return "audio";
-      case C.TRACK_TYPE_DEFAULT:
-        return "default";
-      case C.TRACK_TYPE_METADATA:
-        return "metadata";
-      case C.TRACK_TYPE_CAMERA_MOTION:
-        return "camera motion";
-      case C.TRACK_TYPE_NONE:
-        return "none";
-      case C.TRACK_TYPE_TEXT:
-        return "text";
-      case C.TRACK_TYPE_VIDEO:
-        return "video";
-      default:
-        return trackType >= C.TRACK_TYPE_CUSTOM_BASE ? "custom (" + trackType + ")" : "?";
     }
   }
 

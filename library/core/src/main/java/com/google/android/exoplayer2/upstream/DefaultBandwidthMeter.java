@@ -203,14 +203,15 @@ public final class DefaultBandwidthMeter implements BandwidthMeter, TransferList
       result.append(C.NETWORK_TYPE_2G, DEFAULT_INITIAL_BITRATE_ESTIMATES_2G[groupIndices[1]]);
       result.append(C.NETWORK_TYPE_3G, DEFAULT_INITIAL_BITRATE_ESTIMATES_3G[groupIndices[2]]);
       result.append(C.NETWORK_TYPE_4G, DEFAULT_INITIAL_BITRATE_ESTIMATES_4G[groupIndices[3]]);
-      // Assume default Wifi bitrate for Ethernet to prevent using the slower fallback bitrate.
+      // Assume default Wifi bitrate for Ethernet and 5G to prevent using the slower fallback.
       result.append(
           C.NETWORK_TYPE_ETHERNET, DEFAULT_INITIAL_BITRATE_ESTIMATES_WIFI[groupIndices[0]]);
+      result.append(C.NETWORK_TYPE_5G, DEFAULT_INITIAL_BITRATE_ESTIMATES_WIFI[groupIndices[0]]);
       return result;
     }
 
     private static int[] getCountryGroupIndices(String countryCode) {
-      int[] groupIndices = DEFAULT_INITIAL_BITRATE_COUNTRY_GROUPS.get(countryCode);
+      @Nullable int[] groupIndices = DEFAULT_INITIAL_BITRATE_COUNTRY_GROUPS.get(countryCode);
       // Assume median group if not found.
       return groupIndices == null ? new int[] {2, 2, 2, 2} : groupIndices;
     }
@@ -304,7 +305,6 @@ public final class DefaultBandwidthMeter implements BandwidthMeter, TransferList
   }
 
   @Override
-  @Nullable
   public TransferListener getTransferListener() {
     return this;
   }
@@ -327,7 +327,7 @@ public final class DefaultBandwidthMeter implements BandwidthMeter, TransferList
   @Override
   public synchronized void onTransferStart(
       DataSource source, DataSpec dataSpec, boolean isNetwork) {
-    if (!isNetwork) {
+    if (!isTransferAtFullNetworkSpeed(dataSpec, isNetwork)) {
       return;
     }
     if (streamCount == 0) {
@@ -339,7 +339,7 @@ public final class DefaultBandwidthMeter implements BandwidthMeter, TransferList
   @Override
   public synchronized void onBytesTransferred(
       DataSource source, DataSpec dataSpec, boolean isNetwork, int bytes) {
-    if (!isNetwork) {
+    if (!isTransferAtFullNetworkSpeed(dataSpec, isNetwork)) {
       return;
     }
     sampleBytesTransferred += bytes;
@@ -347,7 +347,7 @@ public final class DefaultBandwidthMeter implements BandwidthMeter, TransferList
 
   @Override
   public synchronized void onTransferEnd(DataSource source, DataSpec dataSpec, boolean isNetwork) {
-    if (!isNetwork) {
+    if (!isTransferAtFullNetworkSpeed(dataSpec, isNetwork)) {
       return;
     }
     Assertions.checkState(streamCount > 0);
@@ -419,6 +419,10 @@ public final class DefaultBandwidthMeter implements BandwidthMeter, TransferList
       initialBitrateEstimate = DEFAULT_INITIAL_BITRATE_ESTIMATE;
     }
     return initialBitrateEstimate;
+  }
+
+  private static boolean isTransferAtFullNetworkSpeed(DataSpec dataSpec, boolean isNetwork) {
+    return isNetwork && !dataSpec.isFlagSet(DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED);
   }
 
   /*

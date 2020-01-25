@@ -172,7 +172,7 @@ public final class CacheUtil {
       @Nullable CacheKeyFactory cacheKeyFactory,
       CacheDataSource dataSource,
       byte[] buffer,
-      PriorityTaskManager priorityTaskManager,
+      @Nullable PriorityTaskManager priorityTaskManager,
       int priority,
       @Nullable ProgressListener progressListener,
       @Nullable AtomicBoolean isCanceled,
@@ -183,7 +183,7 @@ public final class CacheUtil {
 
     String key = buildCacheKey(dataSpec, cacheKeyFactory);
     long bytesLeft;
-    ProgressNotifier progressNotifier = null;
+    @Nullable ProgressNotifier progressNotifier = null;
     if (progressListener != null) {
       progressNotifier = new ProgressNotifier(progressListener);
       Pair<Long, Long> lengthAndBytesAlreadyCached = getCached(dataSpec, cache, cacheKeyFactory);
@@ -268,11 +268,11 @@ public final class CacheUtil {
       long length,
       DataSource dataSource,
       byte[] buffer,
-      PriorityTaskManager priorityTaskManager,
+      @Nullable PriorityTaskManager priorityTaskManager,
       int priority,
       @Nullable ProgressNotifier progressNotifier,
       boolean isLastBlock,
-      AtomicBoolean isCanceled)
+      @Nullable AtomicBoolean isCanceled)
       throws IOException, InterruptedException {
     long positionOffset = absoluteStreamPosition - dataSpec.absoluteStreamPosition;
     long initialPositionOffset = positionOffset;
@@ -373,7 +373,7 @@ public final class CacheUtil {
   }
 
   /* package */ static boolean isCausedByPositionOutOfRange(IOException e) {
-    Throwable cause = e;
+    @Nullable Throwable cause = e;
     while (cause != null) {
       if (cause instanceof DataSourceException) {
         int reason = ((DataSourceException) cause).reason;
@@ -392,7 +392,7 @@ public final class CacheUtil {
         .buildCacheKey(dataSpec);
   }
 
-  private static void throwExceptionIfInterruptedOrCancelled(AtomicBoolean isCanceled)
+  private static void throwExceptionIfInterruptedOrCancelled(@Nullable AtomicBoolean isCanceled)
       throws InterruptedException {
     if (Thread.interrupted() || (isCanceled != null && isCanceled.get())) {
       throw new InterruptedException();

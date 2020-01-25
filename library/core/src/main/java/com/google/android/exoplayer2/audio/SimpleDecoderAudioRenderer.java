@@ -28,6 +28,7 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.PlayerMessage.Target;
+import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener.EventDispatcher;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
@@ -100,10 +101,14 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
   private Format inputFormat;
   private int encoderDelay;
   private int encoderPadding;
-  private SimpleDecoder<DecoderInputBuffer, ? extends SimpleOutputBuffer,
-        ? extends AudioDecoderException> decoder;
-  private DecoderInputBuffer inputBuffer;
-  private SimpleOutputBuffer outputBuffer;
+
+  @Nullable
+  private SimpleDecoder<
+          DecoderInputBuffer, ? extends SimpleOutputBuffer, ? extends AudioDecoderException>
+      decoder;
+
+  @Nullable private DecoderInputBuffer inputBuffer;
+  @Nullable private SimpleOutputBuffer outputBuffer;
   @Nullable private DrmSession<ExoMediaCrypto> decoderDrmSession;
   @Nullable private DrmSession<ExoMediaCrypto> sourceDrmSession;
 
@@ -217,31 +222,34 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
   }
 
   @Override
+  @Nullable
   public MediaClock getMediaClock() {
     return this;
   }
 
   @Override
+  @Capabilities
   public final int supportsFormat(Format format) {
     if (!MimeTypes.isAudio(format.sampleMimeType)) {
-      return FORMAT_UNSUPPORTED_TYPE;
+      return RendererCapabilities.create(FORMAT_UNSUPPORTED_TYPE);
     }
-    int formatSupport = supportsFormatInternal(drmSessionManager, format);
+    @FormatSupport int formatSupport = supportsFormatInternal(drmSessionManager, format);
     if (formatSupport <= FORMAT_UNSUPPORTED_DRM) {
-      return formatSupport;
+      return RendererCapabilities.create(formatSupport);
     }
+    @TunnelingSupport
     int tunnelingSupport = Util.SDK_INT >= 21 ? TUNNELING_SUPPORTED : TUNNELING_NOT_SUPPORTED;
-    return ADAPTIVE_NOT_SEAMLESS | tunnelingSupport | formatSupport;
+    return RendererCapabilities.create(formatSupport, ADAPTIVE_NOT_SEAMLESS, tunnelingSupport);
   }
 
   /**
-   * Returns the {@link #FORMAT_SUPPORT_MASK} component of the return value for {@link
-   * #supportsFormat(Format)}.
+   * Returns the {@link FormatSupport} for the given {@link Format}.
    *
    * @param drmSessionManager The renderer's {@link DrmSessionManager}.
    * @param format The format, which has an audio {@link Format#sampleMimeType}.
-   * @return The extent to which the renderer supports the format itself.
+   * @return The {@link FormatSupport} for this {@link Format}.
    */
+  @FormatSupport
   protected abstract int supportsFormatInternal(
       @Nullable DrmSessionManager<ExoMediaCrypto> drmSessionManager, Format format);
 
@@ -260,7 +268,7 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
       try {
         audioSink.playToEndOfStream();
       } catch (AudioSink.WriteException e) {
-        throw ExoPlaybackException.createForRenderer(e, getIndex());
+        throw createRendererException(e, inputFormat);
       }
       return;
     }
@@ -297,7 +305,7 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
         TraceUtil.endSection();
       } catch (AudioDecoderException | AudioSink.ConfigurationException
           | AudioSink.InitializationException | AudioSink.WriteException e) {
-        throw ExoPlaybackException.createForRenderer(e, getIndex());
+        throw createRendererException(e, inputFormat);
       }
       decoderCounters.ensureUpdated();
     }
@@ -347,15 +355,8 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
   /**
    * Returns the format of audio buffers output by the decoder. Will not be called until the first
    * output buffer has been dequeued, so the decoder may use input data to determine the format.
-   * <p>
-   * The default implementation returns a 16-bit PCM format with the same channel count and sample
-   * rate as the input.
    */
-  protected Format getOutputFormat() {
-    return Format.createAudioSampleFormat(null, MimeTypes.AUDIO_RAW, null, Format.NO_VALUE,
-        Format.NO_VALUE, inputFormat.channelCount, inputFormat.sampleRate, C.ENCODING_PCM_16BIT,
-        null, null, 0, null);
-  }
+  protected abstract Format getOutputFormat();
 
   /**
    * Returns whether the existing decoder can be kept for a new format.
@@ -480,7 +481,7 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
     }
     @DrmSession.State int drmSessionState = decoderDrmSession.getState();
     if (drmSessionState == DrmSession.STATE_ERROR) {
-      throw ExoPlaybackException.createForRenderer(decoderDrmSession.getError(), getIndex());
+      throw createRendererException(decoderDrmSession.getError(), inputFormat);
     }
     return drmSessionState != DrmSession.STATE_OPENED_WITH_KEYS;
   }
@@ -490,7 +491,8 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
     try {
       audioSink.playToEndOfStream();
     } catch (AudioSink.WriteException e) {
-      throw ExoPlaybackException.createForRenderer(e, getIndex());
+      // TODO(internal: b/145658993) Use outputFormat for the call from drainOutputBuffer.
+      throw createRendererException(e, inputFormat);
     }
   }
 
@@ -641,7 +643,7 @@ public abstract class SimpleDecoderAudioRenderer extends BaseRenderer implements
           codecInitializedTimestamp - codecInitializingTimestamp);
       decoderCounters.decoderInitCount++;
     } catch (AudioDecoderException e) {
-      throw ExoPlaybackException.createForRenderer(e, getIndex());
+      throw createRendererException(e, inputFormat);
     }
   }
 

@@ -28,6 +28,7 @@ import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.drm.DrmSession;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.extractor.DummyTrackOutput;
+import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.extractor.ExtractorOutput;
 import com.google.android.exoplayer2.extractor.SeekMap;
@@ -116,7 +117,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final Loader loader;
   private final EventDispatcher eventDispatcher;
-  private final @HlsMetadataType int metadataType;
+  private final @HlsMediaSource.MetadataType int metadataType;
   private final HlsChunkSource.HlsChunkHolder nextChunkHolder;
   private final ArrayList<HlsMediaChunk> mediaChunks;
   private final List<HlsMediaChunk> readOnlyMediaChunks;
@@ -131,20 +132,20 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private int[] sampleQueueTrackIds;
   private Set<Integer> sampleQueueMappingDoneByType;
   private SparseIntArray sampleQueueIndicesByType;
-  @MonotonicNonNull private TrackOutput emsgUnwrappingTrackOutput;
+  private @MonotonicNonNull TrackOutput emsgUnwrappingTrackOutput;
   private int primarySampleQueueType;
   private int primarySampleQueueIndex;
   private boolean sampleQueuesBuilt;
   private boolean prepared;
   private int enabledTrackGroupCount;
-  @MonotonicNonNull private Format upstreamTrackFormat;
+  private @MonotonicNonNull Format upstreamTrackFormat;
   @Nullable private Format downstreamTrackFormat;
   private boolean released;
 
   // Tracks are complicated in HLS. See documentation of buildTracksFromSampleStreams for details.
   // Indexed by track (as exposed by this source).
-  @MonotonicNonNull private TrackGroupArray trackGroups;
-  @MonotonicNonNull private Set<TrackGroup> optionalTrackGroups;
+  private @MonotonicNonNull TrackGroupArray trackGroups;
+  private @MonotonicNonNull Set<TrackGroup> optionalTrackGroups;
   // Indexed by track group.
   private int @MonotonicNonNull [] trackGroupToSampleQueueIndex;
   private int primaryTrackGroupIndex;
@@ -190,7 +191,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       DrmSessionManager<?> drmSessionManager,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
       EventDispatcher eventDispatcher,
-      @HlsMetadataType int metadataType) {
+      @HlsMediaSource.MetadataType int metadataType) {
     this.trackType = trackType;
     this.callback = callback;
     this.chunkSource = chunkSource;
@@ -219,7 +220,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     @SuppressWarnings("nullness:methodref.receiver.bound.invalid")
     Runnable onTracksEndedRunnable = this::onTracksEnded;
     this.onTracksEndedRunnable = onTracksEndedRunnable;
-    handler = new Handler();
+    handler = Util.createHandler();
     lastSeekPositionUs = positionUs;
     pendingResetPositionUs = positionUs;
   }
@@ -360,13 +361,12 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
           // If there's still a chance of avoiding a seek, try and seek within the sample queue.
           if (!seekRequired) {
             SampleQueue sampleQueue = sampleQueues[trackGroupToSampleQueueIndex[trackGroupIndex]];
-            sampleQueue.rewind();
-            // A seek can be avoided if we're able to advance to the current playback position in
+            // A seek can be avoided if we're able to seek to the current playback position in
             // the sample queue, or if we haven't read anything from the queue since the previous
             // seek (this case is common for sparse tracks such as metadata tracks). In all other
             // cases a seek is required.
             seekRequired =
-                sampleQueue.advanceTo(positionUs, true, true) == SampleQueue.ADVANCE_FAILED
+                !sampleQueue.seekTo(positionUs, /* allowTimeBeyondBuffer= */ true)
                     && sampleQueue.getReadIndex() != 0;
           }
         }
@@ -583,8 +583,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     if (loadingFinished && positionUs > sampleQueue.getLargestQueuedTimestampUs()) {
       return sampleQueue.advanceToEnd();
     } else {
-      int skipCount = sampleQueue.advanceTo(positionUs, true, true);
-      return skipCount == SampleQueue.ADVANCE_FAILED ? 0 : skipCount;
+      return sampleQueue.advanceTo(positionUs);
     }
   }
 
@@ -823,13 +822,8 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
    * @param chunkUid The chunk's uid.
    * @param shouldSpliceIn Whether the samples parsed from the chunk should be spliced into any
    *     samples already queued to the wrapper.
-   * @param reusingExtractor Whether the extractor for the chunk has already been used for preceding
-   *     chunks.
    */
-  public void init(int chunkUid, boolean shouldSpliceIn, boolean reusingExtractor) {
-    if (!reusingExtractor) {
-      sampleQueueMappingDoneByType.clear();
-    }
+  public void init(int chunkUid, boolean shouldSpliceIn) {
     this.chunkUid = chunkUid;
     for (SampleQueue sampleQueue : sampleQueues) {
       sampleQueue.sourceId(chunkUid);
@@ -884,8 +878,8 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
    * different ID, then return a {@link DummyTrackOutput} that does nothing.
    *
    * <p>If a {@link SampleQueue} for {@code type} has been created but is not mapped, then map it to
-   * this {@code id} and return it. This situation can happen after a call to {@link #init} with
-   * {@code reusingExtractor=false}.
+   * this {@code id} and return it. This situation can happen after a call to {@link
+   * #onNewExtractor}.
    *
    * @param id The ID of the track.
    * @param type The type of the track, must be one of {@link #MAPPABLE_TYPES}.
@@ -951,6 +945,11 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   // Called by the loading thread.
+
+  /** Called when an {@link HlsMediaChunk} starts extracting media with a new {@link Extractor}. */
+  public void onNewExtractor() {
+    sampleQueueMappingDoneByType.clear();
+  }
 
   public void setSampleOffsetUs(long sampleOffsetUs) {
     this.sampleOffsetUs = sampleOffsetUs;
@@ -1169,9 +1168,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     int sampleQueueCount = sampleQueues.length;
     for (int i = 0; i < sampleQueueCount; i++) {
       SampleQueue sampleQueue = sampleQueues[i];
-      sampleQueue.rewind();
-      boolean seekInsideQueue = sampleQueue.advanceTo(positionUs, true, false)
-          != SampleQueue.ADVANCE_FAILED;
+      boolean seekInsideQueue = sampleQueue.seekTo(positionUs, /* allowTimeBeyondBuffer= */ false);
       // If we have AV tracks then an in-queue seek is successful if the seek into every AV queue
       // is successful. We ignore whether seeks within non-AV queues are successful in this case, as
       // they may be sparse or poorly interleaved. If we only have non-AV tracks then a seek is
@@ -1357,19 +1354,20 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     private final EventMessageDecoder emsgDecoder;
     private final TrackOutput delegate;
     private final Format delegateFormat;
-    @MonotonicNonNull private Format format;
+    private @MonotonicNonNull Format format;
 
     private byte[] buffer;
     private int bufferPosition;
 
-    public EmsgUnwrappingTrackOutput(TrackOutput delegate, @HlsMetadataType int metadataType) {
+    public EmsgUnwrappingTrackOutput(
+        TrackOutput delegate, @HlsMediaSource.MetadataType int metadataType) {
       this.emsgDecoder = new EventMessageDecoder();
       this.delegate = delegate;
       switch (metadataType) {
-        case HlsMetadataType.ID3:
+        case HlsMediaSource.METADATA_TYPE_ID3:
           delegateFormat = ID3_FORMAT;
           break;
-        case HlsMetadataType.EMSG:
+        case HlsMediaSource.METADATA_TYPE_EMSG:
           delegateFormat = EMSG_FORMAT;
           break;
         default:

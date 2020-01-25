@@ -212,9 +212,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private final boolean mediaSegmentEncrypted;
   private final boolean initSegmentEncrypted;
 
-  @MonotonicNonNull private Extractor extractor;
+  private @MonotonicNonNull Extractor extractor;
   private boolean isExtractorReusable;
-  @MonotonicNonNull private HlsSampleStreamWrapper output;
+  private @MonotonicNonNull HlsSampleStreamWrapper output;
   // nextLoadPosition refers to the init segment if initDataLoadRequired is true.
   // Otherwise, nextLoadPosition refers to the media segment.
   private int nextLoadPosition;
@@ -284,6 +284,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
    */
   public void init(HlsSampleStreamWrapper output) {
     this.output = output;
+    output.init(uid, shouldSpliceIn);
   }
 
   @Override
@@ -306,7 +307,6 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       extractor = previousExtractor;
       isExtractorReusable = true;
       initDataLoadRequired = false;
-      output.init(uid, shouldSpliceIn, /* reusingExtractor= */ true);
     }
     maybeLoadInitData();
     if (!loadCanceled) {
@@ -418,7 +418,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
         // the timestamp offset.
         output.setSampleOffsetUs(/* sampleOffsetUs= */ 0L);
       }
-      output.init(uid, shouldSpliceIn, /* reusingExtractor= */ false);
+      output.onNewExtractor();
       extractor.init(output);
     }
 

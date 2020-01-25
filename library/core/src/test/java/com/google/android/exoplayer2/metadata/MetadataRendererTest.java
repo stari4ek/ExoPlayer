@@ -12,7 +12,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 package com.google.android.exoplayer2.metadata;
 
@@ -28,10 +27,12 @@ import com.google.android.exoplayer2.metadata.emsg.EventMessageEncoder;
 import com.google.android.exoplayer2.metadata.id3.TextInformationFrame;
 import com.google.android.exoplayer2.metadata.scte35.TimeSignalCommand;
 import com.google.android.exoplayer2.testutil.FakeSampleStream;
+import com.google.android.exoplayer2.testutil.FakeSampleStream.FakeSampleStreamItem;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
@@ -142,7 +143,11 @@ public class MetadataRendererTest {
     MetadataRenderer renderer = new MetadataRenderer(metadata::add, /* outputLooper= */ null);
     renderer.replaceStream(
         new Format[] {EMSG_FORMAT},
-        new FakeSampleStream(EMSG_FORMAT, /* eventDispatcher= */ null, input),
+        new FakeSampleStream(
+            EMSG_FORMAT,
+            /* eventDispatcher= */ null,
+            Arrays.asList(new FakeSampleStreamItem(input)),
+            0),
         /* offsetUs= */ 0L);
     renderer.render(/* positionUs= */ 0, /* elapsedRealtimeUs= */ 0); // Read the format
     renderer.render(/* positionUs= */ 0, /* elapsedRealtimeUs= */ 0); // Read the data

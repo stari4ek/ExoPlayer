@@ -152,7 +152,6 @@ public final class ExtractorAsserts {
     assertOutput(factory.create(), file, data, context, false, false, false, false);
   }
 
-  // TODO: Assert format metadata [Internal ref: b/144771011].
   /**
    * Asserts that {@code extractor} consumes {@code sampleFile} successfully and its output equals
    * to a prerecorded output dump file with the name {@code sampleFile} + "{@value
@@ -172,7 +171,7 @@ public final class ExtractorAsserts {
    * @throws IOException If reading from the input fails.
    * @throws InterruptedException If interrupted while reading from the input.
    */
-  private static FakeExtractorOutput assertOutput(
+  public static FakeExtractorOutput assertOutput(
       Extractor extractor,
       String file,
       byte[] data,
@@ -209,18 +208,21 @@ public final class ExtractorAsserts {
       extractorOutput.assertOutput(context, file + ".0" + DUMP_EXTENSION);
     }
 
-    // If the SeekMap is seekable, test seeking to 4 positions in the stream.
+    // If the SeekMap is seekable, test seeking in the stream.
     SeekMap seekMap = extractorOutput.seekMap;
     if (seekMap.isSeekable()) {
       long durationUs = seekMap.getDurationUs();
       for (int j = 0; j < 4; j++) {
         extractorOutput.clearTrackOutputs();
-        long timeUs = (durationUs * j) / 3;
+        long timeUs = durationUs == C.TIME_UNSET ? 0 : (durationUs * j) / 3;
         long position = seekMap.getSeekPoints(timeUs).first.position;
         input.reset();
         input.setPosition((int) position);
         consumeTestData(extractor, input, timeUs, extractorOutput, false);
         extractorOutput.assertOutput(context, file + '.' + j + DUMP_EXTENSION);
+        if (durationUs == C.TIME_UNSET) {
+          break;
+        }
       }
     }
 

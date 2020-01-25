@@ -25,6 +25,7 @@ import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.PlayerMessage.Target;
+import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
@@ -68,11 +69,10 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
    */
   private static final int DEFAULT_INPUT_BUFFER_SIZE = 768 * 1024;
 
-  private final boolean enableRowMultiThreadMode;
   private final int threads;
 
-  private VpxDecoder decoder;
-  private VideoFrameMetadataListener frameMetadataListener;
+  @Nullable private VpxDecoder decoder;
+  @Nullable private VideoFrameMetadataListener frameMetadataListener;
 
   /**
    * @param allowedJoiningTimeMs The maximum duration in milliseconds for which this video renderer
@@ -121,8 +121,8 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
    *     permitted to play clear regions of encrypted media files before {@code drmSessionManager}
    *     has obtained the keys necessary to decrypt encrypted regions of the media.
    * @deprecated Use {@link #LibvpxVideoRenderer(long, Handler, VideoRendererEventListener, int,
-   *     boolean, int, int, int)}} instead, and pass DRM-related parameters to the {@link
-   *     MediaSource} factories.
+   *     int, int, int)}} instead, and pass DRM-related parameters to the {@link MediaSource}
+   *     factories.
    */
   @Deprecated
   @SuppressWarnings("deprecation")
@@ -140,7 +140,6 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
         maxDroppedFramesToNotify,
         drmSessionManager,
         playClearSamplesWithoutKeys,
-        /* enableRowMultiThreadMode= */ false,
         getRuntime().availableProcessors(),
         /* numInputBuffers= */ 4,
         /* numOutputBuffers= */ 4);
@@ -154,7 +153,6 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
    * @param eventListener A listener of events. May be null if delivery of events is not required.
    * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
    *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
-   * @param enableRowMultiThreadMode Whether row multi threading decoding is enabled.
    * @param threads Number of threads libvpx will use to decode.
    * @param numInputBuffers Number of input buffers.
    * @param numOutputBuffers Number of output buffers.
@@ -165,7 +163,6 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
       @Nullable Handler eventHandler,
       @Nullable VideoRendererEventListener eventListener,
       int maxDroppedFramesToNotify,
-      boolean enableRowMultiThreadMode,
       int threads,
       int numInputBuffers,
       int numOutputBuffers) {
@@ -176,7 +173,6 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
         maxDroppedFramesToNotify,
         /* drmSessionManager= */ null,
         /* playClearSamplesWithoutKeys= */ false,
-        enableRowMultiThreadMode,
         threads,
         numInputBuffers,
         numOutputBuffers);
@@ -197,13 +193,12 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
    *     begin in parallel with key acquisition. This parameter specifies whether the renderer is
    *     permitted to play clear regions of encrypted media files before {@code drmSessionManager}
    *     has obtained the keys necessary to decrypt encrypted regions of the media.
-   * @param enableRowMultiThreadMode Whether row multi threading decoding is enabled.
    * @param threads Number of threads libvpx will use to decode.
    * @param numInputBuffers Number of input buffers.
    * @param numOutputBuffers Number of output buffers.
    * @deprecated Use {@link #LibvpxVideoRenderer(long, Handler, VideoRendererEventListener, int,
-   *     boolean, int, int, int)}} instead, and pass DRM-related parameters to the {@link
-   *     MediaSource} factories.
+   *     int, int, int)}} instead, and pass DRM-related parameters to the {@link MediaSource}
+   *     factories.
    */
   @Deprecated
   public LibvpxVideoRenderer(
@@ -213,7 +208,6 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
       int maxDroppedFramesToNotify,
       @Nullable DrmSessionManager<ExoMediaCrypto> drmSessionManager,
       boolean playClearSamplesWithoutKeys,
-      boolean enableRowMultiThreadMode,
       int threads,
       int numInputBuffers,
       int numOutputBuffers) {
@@ -224,17 +218,17 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
         maxDroppedFramesToNotify,
         drmSessionManager,
         playClearSamplesWithoutKeys);
-    this.enableRowMultiThreadMode = enableRowMultiThreadMode;
     this.threads = threads;
     this.numInputBuffers = numInputBuffers;
     this.numOutputBuffers = numOutputBuffers;
   }
 
   @Override
+  @Capabilities
   protected int supportsFormatInternal(
       @Nullable DrmSessionManager<ExoMediaCrypto> drmSessionManager, Format format) {
     if (!VpxLibrary.isAvailable() || !MimeTypes.VIDEO_VP9.equalsIgnoreCase(format.sampleMimeType)) {
-      return FORMAT_UNSUPPORTED_TYPE;
+      return RendererCapabilities.create(FORMAT_UNSUPPORTED_TYPE);
     }
     boolean drmIsSupported =
         format.drmInitData == null
@@ -242,9 +236,9 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
             || (format.exoMediaCryptoType == null
                 && supportsFormatDrm(drmSessionManager, format.drmInitData));
     if (!drmIsSupported) {
-      return FORMAT_UNSUPPORTED_DRM;
+      return RendererCapabilities.create(FORMAT_UNSUPPORTED_DRM);
     }
-    return FORMAT_HANDLED | ADAPTIVE_SEAMLESS;
+    return RendererCapabilities.create(FORMAT_HANDLED, ADAPTIVE_SEAMLESS, TUNNELING_NOT_SUPPORTED);
   }
 
   @Override
@@ -257,14 +251,10 @@ public class LibvpxVideoRenderer extends SimpleDecoderVideoRenderer {
     TraceUtil.beginSection("createVpxDecoder");
     int initialInputBufferSize =
         format.maxInputSize != Format.NO_VALUE ? format.maxInputSize : DEFAULT_INPUT_BUFFER_SIZE;
-    decoder =
+    VpxDecoder decoder =
         new VpxDecoder(
-            numInputBuffers,
-            numOutputBuffers,
-            initialInputBufferSize,
-            mediaCrypto,
-            enableRowMultiThreadMode,
-            threads);
+            numInputBuffers, numOutputBuffers, initialInputBufferSize, mediaCrypto, threads);
+    this.decoder = decoder;
     TraceUtil.endSection();
     return decoder;
   }

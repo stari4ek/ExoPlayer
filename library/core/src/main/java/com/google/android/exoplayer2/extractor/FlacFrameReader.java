@@ -15,45 +15,52 @@
  */
 package com.google.android.exoplayer2.extractor;
 
+import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.util.FlacConstants;
 import com.google.android.exoplayer2.util.FlacStreamMetadata;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
+import java.io.IOException;
 
-/** Reads and peeks FLAC frame elements. */
+/**
+ * Reads and peeks FLAC frame elements according to the <a
+ * href="https://xiph.org/flac/format.html">FLAC format specification</a>.
+ */
 public final class FlacFrameReader {
 
-  /** Holds a frame block size. */
-  public static final class BlockSizeHolder {
-    /** The block size in samples. */
-    public int blockSizeSamples;
+  /** Holds a sample number. */
+  public static final class SampleNumberHolder {
+    /** The sample number. */
+    public long sampleNumber;
   }
 
   /**
    * Checks whether the given FLAC frame header is valid and, if so, reads it and writes the frame
-   * block size in {@code blockSizeHolder}.
+   * first sample number in {@code sampleNumberHolder}.
    *
-   * <p>If the header is valid, the position of {@code scratch} is moved to the byte following it.
+   * <p>If the header is valid, the position of {@code data} is moved to the byte following it.
    * Otherwise, there is no guarantee on the position.
    *
-   * @param scratch The array to read the data from, whose position must correspond to the frame
+   * @param data The array to read the data from, whose position must correspond to the frame
    *     header.
    * @param flacStreamMetadata The stream metadata.
    * @param frameStartMarker The frame start marker of the stream.
-   * @param blockSizeHolder The holder used to contain the block size.
+   * @param sampleNumberHolder The holder used to contain the sample number.
    * @return Whether the frame header is valid.
    */
   public static boolean checkAndReadFrameHeader(
-      ParsableByteArray scratch,
+      ParsableByteArray data,
       FlacStreamMetadata flacStreamMetadata,
       int frameStartMarker,
-      BlockSizeHolder blockSizeHolder) {
-    int frameStartPosition = scratch.getPosition();
+      SampleNumberHolder sampleNumberHolder) {
+    int frameStartPosition = data.getPosition();
 
-    long frameHeaderBytes = scratch.readUnsignedInt();
+    long frameHeaderBytes = data.readUnsignedInt();
     if (frameHeaderBytes >>> 16 != frameStartMarker) {
       return false;
     }
 
+    boolean isBlockSizeVariable = (frameHeaderBytes >>> 16 & 1) == 1;
     int blockSizeKey = (int) (frameHeaderBytes >> 12 & 0xF);
     int sampleRateKey = (int) (frameHeaderBytes >> 8 & 0xF);
     int channelAssignmentKey = (int) (frameHeaderBytes >> 4 & 0xF);
@@ -62,43 +69,107 @@ public final class FlacFrameReader {
     return checkChannelAssignment(channelAssignmentKey, flacStreamMetadata)
         && checkBitsPerSample(bitsPerSampleKey, flacStreamMetadata)
         && !reservedBit
-        && checkAndReadUtf8Data(scratch)
-        && checkAndReadBlockSizeSamples(scratch, flacStreamMetadata, blockSizeKey, blockSizeHolder)
-        && checkAndReadSampleRate(scratch, flacStreamMetadata, sampleRateKey)
-        && checkAndReadCrc(scratch, frameStartPosition);
+        && checkAndReadFirstSampleNumber(
+            data, flacStreamMetadata, isBlockSizeVariable, sampleNumberHolder)
+        && checkAndReadBlockSizeSamples(data, flacStreamMetadata, blockSizeKey)
+        && checkAndReadSampleRate(data, flacStreamMetadata, sampleRateKey)
+        && checkAndReadCrc(data, frameStartPosition);
   }
 
   /**
-   * Returns the block size of the given frame.
+   * Checks whether the given FLAC frame header is valid and, if so, writes the frame first sample
+   * number in {@code sampleNumberHolder}.
    *
-   * <p>If no exception is thrown, the position of {@code scratch} is left unchanged. Otherwise,
-   * there is no guarantee on the position.
+   * <p>The {@code input} peek position is left unchanged.
    *
-   * @param scratch The array to get the data from, whose position must correspond to the start of a
-   *     frame.
-   * @return The block size in samples, or -1 if the block size is invalid.
+   * @param input The input to get the data from, whose peek position must correspond to the frame
+   *     header.
+   * @param flacStreamMetadata The stream metadata.
+   * @param frameStartMarker The frame start marker of the stream.
+   * @param sampleNumberHolder The holder used to contain the sample number.
+   * @return Whether the frame header is valid.
    */
-  public static int getFrameBlockSizeSamples(ParsableByteArray scratch) {
-    int blockSizeKey = (scratch.data[2] & 0xFF) >> 4;
-    if (blockSizeKey < 6 || blockSizeKey > 7) {
-      return readFrameBlockSizeSamplesFromKey(scratch, blockSizeKey);
+  public static boolean checkFrameHeaderFromPeek(
+      ExtractorInput input,
+      FlacStreamMetadata flacStreamMetadata,
+      int frameStartMarker,
+      SampleNumberHolder sampleNumberHolder)
+      throws IOException, InterruptedException {
+    long originalPeekPosition = input.getPeekPosition();
+
+    byte[] frameStartBytes = new byte[2];
+    input.peekFully(frameStartBytes, 0, 2);
+    int frameStart = (frameStartBytes[0] & 0xFF) << 8 | (frameStartBytes[1] & 0xFF);
+    if (frameStart != frameStartMarker) {
+      input.resetPeekPosition();
+      input.advancePeekPosition((int) (originalPeekPosition - input.getPosition()));
+      return false;
     }
-    scratch.skipBytes(4);
-    scratch.readUtf8EncodedLong();
-    int blockSizeSamples = readFrameBlockSizeSamplesFromKey(scratch, blockSizeKey);
-    scratch.setPosition(0);
-    return blockSizeSamples;
+
+    ParsableByteArray scratch = new ParsableByteArray(FlacConstants.MAX_FRAME_HEADER_SIZE);
+    System.arraycopy(
+        frameStartBytes, /* srcPos= */ 0, scratch.data, /* destPos= */ 0, /* length= */ 2);
+
+    int totalBytesPeeked =
+        ExtractorUtil.peekToLength(input, scratch.data, 2, FlacConstants.MAX_FRAME_HEADER_SIZE - 2);
+    scratch.setLimit(totalBytesPeeked);
+
+    input.resetPeekPosition();
+    input.advancePeekPosition((int) (originalPeekPosition - input.getPosition()));
+
+    return checkAndReadFrameHeader(
+        scratch, flacStreamMetadata, frameStartMarker, sampleNumberHolder);
+  }
+
+  /**
+   * Returns the number of the first sample in the given frame.
+   *
+   * <p>The read position of {@code input} is left unchanged.
+   *
+   * <p>If no exception is thrown, the peek position is aligned with the read position. Otherwise,
+   * there is no guarantee on the peek position.
+   *
+   * @param input Input stream to get the sample number from (starting from the read position).
+   * @return The frame first sample number.
+   * @throws ParserException If an error occurs parsing the sample number.
+   * @throws IOException If peeking from the input fails.
+   * @throws InterruptedException If interrupted while peeking from input.
+   */
+  public static long getFirstSampleNumber(
+      ExtractorInput input, FlacStreamMetadata flacStreamMetadata)
+      throws IOException, InterruptedException {
+    input.resetPeekPosition();
+    input.advancePeekPosition(1);
+    byte[] blockingStrategyByte = new byte[1];
+    input.peekFully(blockingStrategyByte, 0, 1);
+    boolean isBlockSizeVariable = (blockingStrategyByte[0] & 1) == 1;
+    input.advancePeekPosition(2);
+
+    int maxUtf8SampleNumberSize = isBlockSizeVariable ? 7 : 6;
+    ParsableByteArray scratch = new ParsableByteArray(maxUtf8SampleNumberSize);
+    int totalBytesPeeked =
+        ExtractorUtil.peekToLength(input, scratch.data, 0, maxUtf8SampleNumberSize);
+    scratch.setLimit(totalBytesPeeked);
+    input.resetPeekPosition();
+
+    SampleNumberHolder sampleNumberHolder = new SampleNumberHolder();
+    if (!checkAndReadFirstSampleNumber(
+        scratch, flacStreamMetadata, isBlockSizeVariable, sampleNumberHolder)) {
+      throw new ParserException();
+    }
+
+    return sampleNumberHolder.sampleNumber;
   }
 
   /**
    * Reads the given block size.
    *
-   * @param scratch The array to read the data from, whose position must correspond to the block
-   *     size bits.
+   * @param data The array to read the data from, whose position must correspond to the block size
+   *     bits.
    * @param blockSizeKey The key in the block size lookup table.
-   * @return The block size in samples.
+   * @return The block size in samples, or -1 if the {@code blockSizeKey} is invalid.
    */
-  public static int readFrameBlockSizeSamplesFromKey(ParsableByteArray scratch, int blockSizeKey) {
+  public static int readFrameBlockSizeSamplesFromKey(ParsableByteArray data, int blockSizeKey) {
     switch (blockSizeKey) {
       case 1:
         return 192;
@@ -108,9 +179,9 @@ public final class FlacFrameReader {
       case 5:
         return 576 << (blockSizeKey - 2);
       case 6:
-        return scratch.readUnsignedByte() + 1;
+        return data.readUnsignedByte() + 1;
       case 7:
-        return scratch.readUnsignedShort() + 1;
+        return data.readUnsignedShort() + 1;
       case 8:
       case 9:
       case 10:
@@ -159,75 +230,79 @@ public final class FlacFrameReader {
   }
 
   /**
-   * Checks whether the given UTF-8 data is valid and, if so, reads it.
+   * Checks whether the given sample number is valid and, if so, reads it and writes it in {@code
+   * sampleNumberHolder}.
    *
-   * <p>If the UTF-8 data is valid, the position of {@code scratch} is moved to the byte following
+   * <p>If the sample number is valid, the position of {@code data} is moved to the byte following
    * it. Otherwise, there is no guarantee on the position.
    *
-   * @param scratch The array to read the data from, whose position must correspond to the UTF-8
-   *     data.
-   * @return Whether the UTF-8 data is valid.
+   * @param data The array to read the data from, whose position must correspond to the sample
+   *     number data.
+   * @param flacStreamMetadata The stream metadata.
+   * @param isBlockSizeVariable Whether the stream blocking strategy is variable block size or fixed
+   *     block size.
+   * @param sampleNumberHolder The holder used to contain the sample number.
+   * @return Whether the sample number is valid.
    */
-  private static boolean checkAndReadUtf8Data(ParsableByteArray scratch) {
+  private static boolean checkAndReadFirstSampleNumber(
+      ParsableByteArray data,
+      FlacStreamMetadata flacStreamMetadata,
+      boolean isBlockSizeVariable,
+      SampleNumberHolder sampleNumberHolder) {
+    long utf8Value;
     try {
-      scratch.readUtf8EncodedLong();
+      utf8Value = data.readUtf8EncodedLong();
     } catch (NumberFormatException e) {
       return false;
     }
+
+    sampleNumberHolder.sampleNumber =
+        isBlockSizeVariable ? utf8Value : utf8Value * flacStreamMetadata.maxBlockSizeSamples;
     return true;
   }
 
   /**
    * Checks whether the given frame block size key and block size bits are valid and, if so, reads
-   * the block size bits and writes the block size in {@code blockSizeHolder}.
+   * the block size bits.
    *
-   * <p>If the block size is valid, the position of {@code scratch} is moved to the byte following
-   * the block size bits. Otherwise, there is no guarantee on the position.
+   * <p>If the block size is valid, the position of {@code data} is moved to the byte following the
+   * block size bits. Otherwise, there is no guarantee on the position.
    *
-   * @param scratch The array to read the data from, whose position must correspond to the block
-   *     size bits.
+   * @param data The array to read the data from, whose position must correspond to the block size
+   *     bits.
    * @param flacStreamMetadata The stream metadata.
    * @param blockSizeKey The key in the block size lookup table.
-   * @param blockSizeHolder The holder used to contain the block size.
    * @return Whether the block size is valid.
    */
   private static boolean checkAndReadBlockSizeSamples(
-      ParsableByteArray scratch,
-      FlacStreamMetadata flacStreamMetadata,
-      int blockSizeKey,
-      BlockSizeHolder blockSizeHolder) {
-    int blockSizeSamples = readFrameBlockSizeSamplesFromKey(scratch, blockSizeKey);
-    if (blockSizeSamples == -1 || blockSizeSamples > flacStreamMetadata.maxBlockSizeSamples) {
-      return false;
-    }
-    blockSizeHolder.blockSizeSamples = blockSizeSamples;
-    return true;
+      ParsableByteArray data, FlacStreamMetadata flacStreamMetadata, int blockSizeKey) {
+    int blockSizeSamples = readFrameBlockSizeSamplesFromKey(data, blockSizeKey);
+    return blockSizeSamples != -1 && blockSizeSamples <= flacStreamMetadata.maxBlockSizeSamples;
   }
 
   /**
    * Checks whether the given sample rate key and sample rate bits are valid and, if so, reads the
    * sample rate bits.
    *
-   * <p>If the sample rate is valid, the position of {@code scratch} is moved to the byte following
-   * the sample rate bits. Otherwise, there is no guarantee on the position.
+   * <p>If the sample rate is valid, the position of {@code data} is moved to the byte following the
+   * sample rate bits. Otherwise, there is no guarantee on the position.
    *
-   * @param scratch The array to read the data from, whose position must indicate the sample rate
-   *     bits.
+   * @param data The array to read the data from, whose position must indicate the sample rate bits.
    * @param flacStreamMetadata The stream metadata.
    * @param sampleRateKey The key in the sample rate lookup table.
    * @return Whether the sample rate is valid.
    */
   private static boolean checkAndReadSampleRate(
-      ParsableByteArray scratch, FlacStreamMetadata flacStreamMetadata, int sampleRateKey) {
+      ParsableByteArray data, FlacStreamMetadata flacStreamMetadata, int sampleRateKey) {
     int expectedSampleRate = flacStreamMetadata.sampleRate;
     if (sampleRateKey == 0) {
       return true;
     } else if (sampleRateKey <= 11) {
       return sampleRateKey == flacStreamMetadata.sampleRateLookupKey;
     } else if (sampleRateKey == 12) {
-      return scratch.readUnsignedByte() * 1000 == expectedSampleRate;
+      return data.readUnsignedByte() * 1000 == expectedSampleRate;
     } else if (sampleRateKey <= 14) {
-      int sampleRate = scratch.readUnsignedShort();
+      int sampleRate = data.readUnsignedShort();
       if (sampleRateKey == 14) {
         sampleRate *= 10;
       }
@@ -240,20 +315,20 @@ public final class FlacFrameReader {
   /**
    * Checks whether the given CRC is valid and, if so, reads it.
    *
-   * <p>If the CRC is valid, the position of {@code scratch} is moved to the byte following it.
+   * <p>If the CRC is valid, the position of {@code data} is moved to the byte following it.
    * Otherwise, there is no guarantee on the position.
    *
-   * <p>The {@code scratch} array must contain the whole frame header.
+   * <p>The {@code data} array must contain the whole frame header.
    *
-   * @param scratch The array to read the data from, whose position must indicate the CRC.
-   * @param frameStartPosition The frame start offset in {@code scratch}.
+   * @param data The array to read the data from, whose position must indicate the CRC.
+   * @param frameStartPosition The frame start offset in {@code data}.
    * @return Whether the CRC is valid.
    */
-  private static boolean checkAndReadCrc(ParsableByteArray scratch, int frameStartPosition) {
-    int crc = scratch.readUnsignedByte();
-    int frameEndPosition = scratch.getPosition();
+  private static boolean checkAndReadCrc(ParsableByteArray data, int frameStartPosition) {
+    int crc = data.readUnsignedByte();
+    int frameEndPosition = data.getPosition();
     int expectedCrc =
-        Util.crc8(scratch.data, frameStartPosition, frameEndPosition - 1, /* initialValue= */ 0);
+        Util.crc8(data.data, frameStartPosition, frameEndPosition - 1, /* initialValue= */ 0);
     return crc == expectedCrc;
   }
 
