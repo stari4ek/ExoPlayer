@@ -1,5 +1,14 @@
 [
   {
+    "name": "TVirl",
+    "samples": [
+      {
+        "name": "Stream ended (TS Local)",
+        "uri": "asset:///raw.ts"
+      }
+    ]
+  },
+  {
     "name": "YouTube DASH",
     "samples": [
       {
