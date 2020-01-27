@@ -11,6 +11,9 @@
   * Rename `MediaCodecRenderer.onOutputFormatChanged` to
     `MediaCodecRenderer.onOutputMediaFormatChanged`, further
     clarifying the distinction between `Format` and `MediaFormat`.
+  * Move player message-related constants from `C` to `Renderer`, to avoid
+    having the constants class depend on player/renderer classes.
+  * Split out `common` and `extractor` submodules.
 * Text:
   * Parse `<ruby>` and `<rt>` tags in WebVTT subtitles (rendering is coming
     later).
@@ -75,6 +78,7 @@
   This issue caused FLAC streams with other bit depths to sound like white noise
   on earlier releases, but only when embedded in a non-FLAC container such as
   Matroska or MP4.
+* Add support for ID3 genres added in Wimamp 5.6 (2010).
 
 ### 2.11.1 (2019-12-20) ###
 

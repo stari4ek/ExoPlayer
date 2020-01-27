@@ -22,9 +22,11 @@ import android.os.Message;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.Pair;
+import androidx.annotation.CheckResult;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.DefaultMediaClock.PlaybackParameterListener;
 import com.google.android.exoplayer2.Player.DiscontinuityReason;
+import com.google.android.exoplayer2.Player.RepeatMode;
 import com.google.android.exoplayer2.analytics.AnalyticsCollector;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
@@ -158,8 +160,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
     retainBackBufferFromKeyframe = loadControl.retainBackBufferFromKeyframe();
 
     seekParameters = SeekParameters.DEFAULT;
-    playbackInfo =
-        PlaybackInfo.createDummy(/* startPositionUs= */ C.TIME_UNSET, emptyTrackSelectorResult);
+    playbackInfo = PlaybackInfo.createDummy(emptyTrackSelectorResult);
     playbackInfoUpdate = new PlaybackInfoUpdate();
     rendererCapabilities = new RendererCapabilities[renderers.length];
     for (int i = 0; i < renderers.length; i++) {
@@ -662,7 +663,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private void setRepeatModeInternal(@Player.RepeatMode int repeatMode)
       throws ExoPlaybackException {
     this.repeatMode = repeatMode;
-    if (!queue.updateRepeatMode(repeatMode)) {
+    if (!queue.updateRepeatMode(playbackInfo.timeline, repeatMode)) {
       seekToCurrentPosition(/* sendDiscontinuity= */ true);
     }
     handleLoadingMediaPeriodChanged(/* loadingTrackSelectionChanged= */ false);
@@ -671,7 +672,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private void setShuffleModeEnabledInternal(boolean shuffleModeEnabled)
       throws ExoPlaybackException {
     this.shuffleModeEnabled = shuffleModeEnabled;
-    if (!queue.updateShuffleModeEnabled(shuffleModeEnabled)) {
+    if (!queue.updateShuffleModeEnabled(playbackInfo.timeline, shuffleModeEnabled)) {
       seekToCurrentPosition(/* sendDiscontinuity= */ true);
     }
     handleLoadingMediaPeriodChanged(/* loadingTrackSelectionChanged= */ false);
@@ -866,21 +867,34 @@ import java.util.concurrent.atomic.AtomicBoolean;
     boolean seekPositionAdjusted;
     @Nullable
     Pair<Object, Long> resolvedSeekPosition =
-        resolveSeekPosition(seekPosition, /* trySubsequentPeriods= */ true);
+        resolveSeekPosition(
+            playbackInfo.timeline,
+            seekPosition,
+            /* trySubsequentPeriods= */ true,
+            repeatMode,
+            shuffleModeEnabled,
+            window,
+            period);
     if (resolvedSeekPosition == null) {
       // The seek position was valid for the timeline that it was performed into, but the
       // timeline has changed or is not ready and a suitable seek position could not be resolved.
-      periodId = getDummyFirstMediaPeriodForAds();
+      Pair<MediaPeriodId, Long> firstPeriodAndPosition = getDummyFirstMediaPeriodPosition();
+      periodId = firstPeriodAndPosition.first;
+      periodPositionUs = firstPeriodAndPosition.second;
       contentPositionUs = C.TIME_UNSET;
-      periodPositionUs = C.TIME_UNSET;
       seekPositionAdjusted = true;
     } else {
       // Update the resolved seek position to take ads into account.
       Object periodUid = resolvedSeekPosition.first;
       contentPositionUs = resolvedSeekPosition.second;
-      periodId = queue.resolveMediaPeriodIdForAds(periodUid, contentPositionUs);
+      periodId =
+          queue.resolveMediaPeriodIdForAds(playbackInfo.timeline, periodUid, contentPositionUs);
       if (periodId.isAd()) {
-        periodPositionUs = 0;
+        playbackInfo.timeline.getPeriodByUid(periodId.periodUid, period);
+        periodPositionUs =
+            period.getFirstAdIndexToPlay(periodId.adGroupIndex) == periodId.adIndexInAdGroup
+                ? period.getAdResumePositionUs()
+                : 0;
         seekPositionAdjusted = true;
       } else {
         periodPositionUs = resolvedSeekPosition.second;
@@ -892,7 +906,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
       if (playbackInfo.timeline.isEmpty() || !playlist.isPrepared()) {
         // Save seek position for later, as we are still waiting for a prepared source.
         pendingInitialSeekPosition = seekPosition;
-      } else if (periodPositionUs == C.TIME_UNSET) {
+      } else if (resolvedSeekPosition == null) {
         // End playback, as we didn't manage to find a valid seek position.
         setState(Player.STATE_ENDED);
         resetInternal(
@@ -999,10 +1013,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
       resetRendererPosition(periodPositionUs);
       maybeContinueLoading();
     } else {
-      queue.clear(/* keepFrontPeriodUid= */ true);
       // New period has not been prepared.
-      playbackInfo =
-          playbackInfo.copyWithTrackInfo(TrackGroupArray.EMPTY, emptyTrackSelectorResult);
+      queue.clear();
       resetRendererPosition(periodPositionUs);
     }
 
@@ -1113,26 +1125,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
     enabledRenderers = new Renderer[0];
 
-    if (resetPosition) {
-      pendingInitialSeekPosition = null;
-    } else if (clearPlaylist) {
-      // When clearing the playlist, also reset the period-based PlaybackInfo position and convert
-      // existing position to initial seek instead.
-      resetPosition = true;
-      if (pendingInitialSeekPosition == null && !playbackInfo.timeline.isEmpty()) {
-        playbackInfo.timeline.getPeriodByUid(playbackInfo.periodId.periodUid, period);
-        long windowPositionUs = playbackInfo.positionUs + period.getPositionInWindowUs();
-        pendingInitialSeekPosition =
-            new SeekPosition(Timeline.EMPTY, period.windowIndex, windowPositionUs);
-      }
-    }
-
-    queue.clear(/* keepFrontPeriodUid= */ !clearPlaylist);
+    queue.clear();
     shouldContinueLoading = false;
     Timeline timeline = playbackInfo.timeline;
     if (clearPlaylist) {
       timeline = playlist.clear(/* shuffleOrder= */ null);
-      queue.setTimeline(timeline);
       for (PendingMessageInfo pendingMessageInfo : pendingMessages) {
         pendingMessageInfo.message.markAsProcessed(/* isDelivered= */ false);
       }
@@ -1140,27 +1137,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
       nextPendingMessageIndex = 0;
     }
     MediaPeriodId mediaPeriodId = playbackInfo.periodId;
+    long startPositionUs = playbackInfo.positionUs;
     long contentPositionUs = playbackInfo.contentPositionUs;
+    boolean resetTrackInfo = clearPlaylist;
     if (resetPosition) {
-      mediaPeriodId =
-          timeline.isEmpty()
-              ? playbackInfo.getDummyPeriodForEmptyTimeline()
-              : getDummyFirstMediaPeriodForAds();
+      pendingInitialSeekPosition = null;
+      Pair<MediaPeriodId, Long> firstPeriodAndPosition = getDummyFirstMediaPeriodPosition();
+      mediaPeriodId = firstPeriodAndPosition.first;
+      startPositionUs = firstPeriodAndPosition.second;
       contentPositionUs = C.TIME_UNSET;
+      if (!mediaPeriodId.equals(playbackInfo.periodId)) {
+        resetTrackInfo = true;
+      }
     }
-    // Set the start position to TIME_UNSET so that a subsequent seek to 0 isn't ignored.
-    long startPositionUs = resetPosition ? C.TIME_UNSET : playbackInfo.positionUs;
     playbackInfo =
         new PlaybackInfo(
             timeline,
             mediaPeriodId,
-            startPositionUs,
             contentPositionUs,
             playbackInfo.playbackState,
             resetError ? null : playbackInfo.playbackError,
             /* isLoading= */ false,
-            clearPlaylist ? TrackGroupArray.EMPTY : playbackInfo.trackGroups,
-            clearPlaylist ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult,
+            resetTrackInfo ? TrackGroupArray.EMPTY : playbackInfo.trackGroups,
+            resetTrackInfo ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult,
             mediaPeriodId,
             startPositionUs,
             /* totalBufferedDurationUs= */ 0,
@@ -1170,15 +1169,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
   }
 
-  private MediaPeriodId getDummyFirstMediaPeriodForAds() {
-    MediaPeriodId dummyFirstMediaPeriodId =
-        playbackInfo.getDummyFirstMediaPeriodId(shuffleModeEnabled, window, period);
-    if (!playbackInfo.timeline.isEmpty()) {
-      // add ad metadata if any and propagate the window sequence number to new period id.
-      dummyFirstMediaPeriodId =
-          queue.resolveMediaPeriodIdForAds(dummyFirstMediaPeriodId.periodUid, /* positionUs= */ 0);
+  private Pair<MediaPeriodId, Long> getDummyFirstMediaPeriodPosition() {
+    if (playbackInfo.timeline.isEmpty()) {
+      return Pair.create(PlaybackInfo.getDummyPeriodForEmptyTimeline(), 0L);
     }
-    return dummyFirstMediaPeriodId;
+    int firstWindowIndex = playbackInfo.timeline.getFirstWindowIndex(shuffleModeEnabled);
+    Pair<Object, Long> firstPeriodAndPosition =
+        playbackInfo.timeline.getPeriodPosition(
+            window, period, firstWindowIndex, /* windowPositionUs= */ C.TIME_UNSET);
+    // Add ad metadata if any and propagate the window sequence number to new period id.
+    MediaPeriodId firstPeriodId =
+        queue.resolveMediaPeriodIdForAds(
+            playbackInfo.timeline, firstPeriodAndPosition.first, /* positionUs= */ 0);
+    long positionUs = firstPeriodAndPosition.second;
+    if (firstPeriodId.isAd()) {
+      playbackInfo.timeline.getPeriodByUid(firstPeriodId.periodUid, period);
+      positionUs =
+          firstPeriodId.adIndexInAdGroup == period.getFirstAdIndexToPlay(firstPeriodId.adGroupIndex)
+              ? period.getAdResumePositionUs()
+              : 0;
+    }
+    return Pair.create(firstPeriodId, positionUs);
   }
 
   private void sendMessageInternal(PlayerMessage message) throws ExoPlaybackException {
@@ -1257,13 +1268,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private boolean resolvePendingMessagePosition(PendingMessageInfo pendingMessageInfo) {
     if (pendingMessageInfo.resolvedPeriodUid == null) {
       // Position is still unresolved. Try to find window in current timeline.
+      @Nullable
       Pair<Object, Long> periodPosition =
           resolveSeekPosition(
+              playbackInfo.timeline,
               new SeekPosition(
                   pendingMessageInfo.message.getTimeline(),
                   pendingMessageInfo.message.getWindowIndex(),
                   C.msToUs(pendingMessageInfo.message.getPositionMs())),
-              /* trySubsequentPeriods= */ false);
+              /* trySubsequentPeriods= */ false,
+              repeatMode,
+              shuffleModeEnabled,
+              window,
+              period);
       if (periodPosition == null) {
         return false;
       }
@@ -1287,13 +1304,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
     if (pendingMessages.isEmpty() || playbackInfo.periodId.isAd()) {
       return;
     }
-    // If this is the first call from the start position, include oldPeriodPositionUs in potential
-    // trigger positions, but make sure we deliver it only once.
-    if (playbackInfo.startPositionUs == oldPeriodPositionUs
-        && deliverPendingMessageAtStartPositionRequired) {
+    // If this is the first call after resetting the renderer position, include oldPeriodPositionUs
+    // in potential trigger positions, but make sure we deliver it only once.
+    if (deliverPendingMessageAtStartPositionRequired) {
       oldPeriodPositionUs--;
+      deliverPendingMessageAtStartPositionRequired = false;
     }
-    deliverPendingMessageAtStartPositionRequired = false;
 
     // Correct next index if necessary (e.g. after seeking, timeline changes, or new messages)
     int currentPeriodIndex =
@@ -1390,11 +1406,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
       long periodPositionUs =
           playingPeriodHolder.applyTrackSelection(
               newTrackSelectorResult, playbackInfo.positionUs, recreateStreams, streamResetFlags);
+      playbackInfo =
+          copyWithNewPosition(
+              playbackInfo.periodId, periodPositionUs, playbackInfo.contentPositionUs);
       if (playbackInfo.playbackState != Player.STATE_ENDED
           && periodPositionUs != playbackInfo.positionUs) {
-        playbackInfo =
-            copyWithNewPosition(
-                playbackInfo.periodId, periodPositionUs, playbackInfo.contentPositionUs);
         playbackInfoUpdate.setPositionDiscontinuity(Player.DISCONTINUITY_REASON_INTERNAL);
         resetRendererPosition(periodPositionUs);
       }
@@ -1418,9 +1434,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
           }
         }
       }
-      playbackInfo =
-          playbackInfo.copyWithTrackInfo(
-              playingPeriodHolder.getTrackGroups(), playingPeriodHolder.getTrackSelectorResult());
       enableRenderers(rendererWasEnabledFlags, enabledRendererCount);
     } else {
       // Release and re-prepare/buffer periods after the one whose selection changed.
@@ -1509,127 +1522,67 @@ import java.util.concurrent.atomic.AtomicBoolean;
   }
 
   private void handlePlaylistInfoRefreshed(Timeline timeline) throws ExoPlaybackException {
-    Timeline oldTimeline = playbackInfo.timeline;
-    queue.setTimeline(timeline);
-    playbackInfo = playbackInfo.copyWithTimeline(timeline);
-    resolvePendingMessagePositions();
-    if (timeline.isEmpty()) {
-      @Nullable SeekPosition pendingInitialSeekPosition = this.pendingInitialSeekPosition;
-      handleEndOfPlaylist();
-      // Retain seek position if any.
-      this.pendingInitialSeekPosition = pendingInitialSeekPosition;
-      return;
-    }
-    MediaPeriodId oldPeriodId = playbackInfo.periodId;
-    Object newPeriodUid = oldPeriodId.periodUid;
-    long oldContentPositionUs =
-        oldPeriodId.isAd() ? playbackInfo.contentPositionUs : playbackInfo.positionUs;
-    long newContentPositionUs = oldContentPositionUs;
-    boolean forceBufferingState = false;
-    if (pendingInitialSeekPosition != null) {
-      // Resolve initial seek position.
-      @Nullable
-      Pair<Object, Long> periodPosition =
-          resolveSeekPosition(pendingInitialSeekPosition, /* trySubsequentPeriods= */ true);
-      if (periodPosition == null) {
-        // The initial seek in the empty old timeline is invalid in the new timeline.
-        handleEndOfPlaylist();
-        // Use the period resulting from the reset.
-        newPeriodUid = playbackInfo.periodId.periodUid;
-        newContentPositionUs = C.TIME_UNSET;
-      } else {
-        // The pending seek has been resolved successfully in the new timeline.
-        newPeriodUid = periodPosition.first;
-        newContentPositionUs =
-            pendingInitialSeekPosition.windowPositionUs == C.TIME_UNSET
-                ? C.TIME_UNSET
-                : periodPosition.second;
-        forceBufferingState = playbackInfo.playbackState == Player.STATE_ENDED;
-      }
-      pendingInitialSeekPosition = null;
-    } else if (oldTimeline.isEmpty()) {
-      // Resolve to default position if the old timeline is empty and no seek is requested above.
-      Pair<Object, Long> defaultPosition =
-          getPeriodPosition(
-              timeline,
-              timeline.getFirstWindowIndex(shuffleModeEnabled),
-              /* windowPositionUs= */ C.TIME_UNSET);
-      newPeriodUid = defaultPosition.first;
-      newContentPositionUs = C.TIME_UNSET;
-    } else if (timeline.getIndexOfPeriod(newPeriodUid) == C.INDEX_UNSET) {
-      // The current period isn't in the new timeline. Attempt to resolve a subsequent period whose
-      // window we can restart from.
-      @Nullable
-      Object subsequentPeriodUid =
-          resolveSubsequentPeriod(
-              window, period, repeatMode, shuffleModeEnabled, newPeriodUid, oldTimeline, timeline);
-      if (subsequentPeriodUid == null) {
-        // We failed to resolve a suitable restart position but the timeline is not empty.
-        handleEndOfPlaylist();
-        // Use period and position resulting from the reset.
-        newPeriodUid = playbackInfo.periodId.periodUid;
-        newContentPositionUs = C.TIME_UNSET;
-      } else {
-        // We resolved a subsequent period. Start at the default position in the corresponding
-        // window.
-        Pair<Object, Long> defaultPosition =
-            getPeriodPosition(
-                timeline,
-                timeline.getPeriodByUid(subsequentPeriodUid, period).windowIndex,
-                C.TIME_UNSET);
-        newPeriodUid = defaultPosition.first;
-        newContentPositionUs = C.TIME_UNSET;
-      }
-    }
+    PositionUpdateForPlaylistChange positionUpdate =
+        resolvePositionForPlaylistChange(
+            timeline,
+            playbackInfo,
+            pendingInitialSeekPosition,
+            queue,
+            repeatMode,
+            shuffleModeEnabled,
+            window,
+            period);
+    MediaPeriodId newPeriodId = positionUpdate.periodId;
+    long newContentPositionUs = positionUpdate.contentPositionUs;
+    boolean forceBufferingState = positionUpdate.forceBufferingState;
+    long newPositionUs = positionUpdate.periodPositionUs;
+    boolean isPlaybackPositionUnchanged =
+        playbackInfo.periodId.equals(newPeriodId) && newPositionUs == playbackInfo.positionUs;
 
-    // Ensure ad insertion metadata is up to date.
-    long contentPositionForAdResolution = newContentPositionUs;
-    if (contentPositionForAdResolution == C.TIME_UNSET) {
-      contentPositionForAdResolution =
-          timeline.getWindow(timeline.getPeriodByUid(newPeriodUid, period).windowIndex, window)
-              .defaultPositionUs;
-    }
-    MediaPeriodId periodIdWithAds =
-        queue.resolveMediaPeriodIdForAds(newPeriodUid, contentPositionForAdResolution);
-    boolean oldAndNewPeriodIdAreSame =
-        oldPeriodId.periodUid.equals(newPeriodUid)
-            && !oldPeriodId.isAd()
-            && !periodIdWithAds.isAd();
-    // Drop update if we keep playing the same content (MediaPeriod.periodUid are identical) and
-    // only MediaPeriodId.nextAdGroupIndex may have changed. This postpones a potential
-    // discontinuity until we reach the former next ad group position.
-    MediaPeriodId newPeriodId = oldAndNewPeriodIdAreSame ? oldPeriodId : periodIdWithAds;
-
-    if (oldPeriodId.equals(newPeriodId) && oldContentPositionUs == newContentPositionUs) {
-      // We can keep the current playing period. Update the rest of the queued periods.
-      if (!queue.updateQueuedPeriods(rendererPositionUs, getMaxRendererReadPositionUs())) {
-        seekToCurrentPosition(/* sendDiscontinuity= */ false);
+    try {
+      if (positionUpdate.endPlayback) {
+        if (playbackInfo.playbackState != Player.STATE_IDLE) {
+          setState(Player.STATE_ENDED);
+        }
+        resetInternal(
+            /* resetRenderers= */ false,
+            /* resetPosition= */ false,
+            /* releasePlaylist= */ false,
+            /* clearPlaylist= */ false,
+            /* resetError= */ true);
       }
-    } else {
-      // Something changed. Seek to new start position.
-      @Nullable MediaPeriodHolder periodHolder = queue.getPlayingPeriod();
-      if (periodHolder != null) {
-        // Update the new playing media period info if it already exists.
-        while (periodHolder.getNext() != null) {
-          periodHolder = periodHolder.getNext();
-          if (periodHolder.info.id.equals(newPeriodId)) {
-            periodHolder.info = queue.getUpdatedMediaPeriodInfo(periodHolder.info);
+      if (isPlaybackPositionUnchanged) {
+        // We can keep the current playing period. Update the rest of the queued periods.
+        if (!queue.updateQueuedPeriods(
+            timeline, rendererPositionUs, getMaxRendererReadPositionUs())) {
+          seekToCurrentPosition(/* sendDiscontinuity= */ false);
+        }
+      } else if (!timeline.isEmpty()) {
+        // Something changed. Seek to new start position.
+        @Nullable MediaPeriodHolder periodHolder = queue.getPlayingPeriod();
+        if (periodHolder != null) {
+          // Update the new playing media period info if it already exists.
+          while (periodHolder.getNext() != null) {
+            periodHolder = periodHolder.getNext();
+            if (periodHolder.info.id.equals(newPeriodId)) {
+              periodHolder.info = queue.getUpdatedMediaPeriodInfo(timeline, periodHolder.info);
+            }
           }
         }
+        newPositionUs = seekToPeriodPosition(newPeriodId, newPositionUs, forceBufferingState);
       }
-      long newPositionUs = newPeriodId.isAd() ? 0 : newContentPositionUs;
-      if (!newPeriodId.isAd() && newContentPositionUs == C.TIME_UNSET) {
-        // Get the default position for the first new period that is not an ad.
-        int windowIndex = timeline.getPeriodByUid(newPeriodId.periodUid, period).windowIndex;
-        newContentPositionUs = timeline.getWindow(windowIndex, window).getDefaultPositionUs();
-        newPositionUs = newContentPositionUs;
+    } finally {
+      if (!isPlaybackPositionUnchanged) {
+        playbackInfo = copyWithNewPosition(newPeriodId, newPositionUs, newContentPositionUs);
       }
-      // Actually do the seek.
-      long seekedToPositionUs =
-          seekToPeriodPosition(newPeriodId, newPositionUs, forceBufferingState);
-      playbackInfo = copyWithNewPosition(newPeriodId, seekedToPositionUs, newContentPositionUs);
+      playbackInfo = playbackInfo.copyWithTimeline(timeline);
+      resolvePendingMessagePositions();
+      if (!timeline.isEmpty()) {
+        // Retain pending seek position only while the timeline is still empty.
+        pendingInitialSeekPosition = null;
+      }
+      handleLoadingMediaPeriodChanged(/* loadingTrackSelectionChanged= */ false);
     }
-    handleLoadingMediaPeriodChanged(/* loadingTrackSelectionChanged= */ false);
   }
 
   private long getMaxRendererReadPositionUs() {
@@ -1655,95 +1608,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
       }
     }
     return maxReadPositionUs;
-  }
-
-  private void handleEndOfPlaylist() {
-    if (playbackInfo.playbackState != Player.STATE_IDLE) {
-      setState(Player.STATE_ENDED);
-    }
-    // Reset, but retain the playlist so that it can still resume after a seek or be modified.
-    resetInternal(
-        /* resetRenderers= */ false,
-        /* resetPosition= */ true,
-        /* releasePlaylist= */ false,
-        /* clearPlaylist= */ false,
-        /* resetError= */ true);
-  }
-
-  /**
-   * Converts a {@link SeekPosition} into the corresponding (periodUid, periodPositionUs) for the
-   * internal timeline.
-   *
-   * @param seekPosition The position to resolve.
-   * @param trySubsequentPeriods Whether the position can be resolved to a subsequent matching
-   *     period if the original period is no longer available.
-   * @return The resolved position, or null if resolution was not successful.
-   * @throws IllegalSeekPositionException If the window index of the seek position is outside the
-   *     bounds of the timeline.
-   */
-  @Nullable
-  private Pair<Object, Long> resolveSeekPosition(
-      SeekPosition seekPosition, boolean trySubsequentPeriods) {
-    Timeline timeline = playbackInfo.timeline;
-    Timeline seekTimeline = seekPosition.timeline;
-    if (timeline.isEmpty()) {
-      // We don't have a valid timeline yet, so we can't resolve the position.
-      return null;
-    }
-    if (seekTimeline.isEmpty()) {
-      // The application performed a blind seek with an empty timeline (most likely based on
-      // knowledge of what the future timeline will be). Use the internal timeline.
-      seekTimeline = timeline;
-    }
-    // Map the SeekPosition to a position in the corresponding timeline.
-    Pair<Object, Long> periodPosition;
-    try {
-      periodPosition =
-          seekTimeline.getPeriodPosition(
-              window, period, seekPosition.windowIndex, seekPosition.windowPositionUs);
-    } catch (IndexOutOfBoundsException e) {
-      // The window index of the seek position was outside the bounds of the timeline.
-      return null;
-    }
-    if (timeline.equals(seekTimeline)) {
-      // Our internal timeline is the seek timeline, so the mapped position is correct.
-      return periodPosition;
-    }
-    // Attempt to find the mapped period in the internal timeline.
-    int periodIndex = timeline.getIndexOfPeriod(periodPosition.first);
-    if (periodIndex != C.INDEX_UNSET) {
-      // We successfully located the period in the internal timeline.
-      return periodPosition;
-    }
-    if (trySubsequentPeriods) {
-      // Try and find a subsequent period from the seek timeline in the internal timeline.
-      @Nullable
-      Object periodUid =
-          resolveSubsequentPeriod(
-              window,
-              period,
-              repeatMode,
-              shuffleModeEnabled,
-              periodPosition.first,
-              seekTimeline,
-              timeline);
-      if (periodUid != null) {
-        // We found one. Use the default position of the corresponding window.
-        return getPeriodPosition(
-            timeline, timeline.getPeriodByUid(periodUid, period).windowIndex, C.TIME_UNSET);
-      }
-    }
-    // We didn't find one. Give up.
-    return null;
-  }
-
-  /**
-   * Calls {@link Timeline#getPeriodPosition(Timeline.Window, Timeline.Period, int, long)} using the
-   * current timeline.
-   */
-  private Pair<Object, Long> getPeriodPosition(
-      Timeline timeline, int windowIndex, long windowPositionUs) {
-    return timeline.getPeriodPosition(window, period, windowIndex, windowPositionUs);
   }
 
   private void updatePeriods() throws ExoPlaybackException, IOException {
@@ -1883,7 +1747,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
       boolean[] rendererWasEnabledFlags = new boolean[renderers.length];
       disablePlayingPeriodRenderersForTransition(rendererWasEnabledFlags);
       MediaPeriodHolder newPlayingPeriodHolder = queue.advancePlayingPeriod();
-      enablePlayingPeriodRenderers(rendererWasEnabledFlags);
       playbackInfo =
           copyWithNewPosition(
               newPlayingPeriodHolder.info.id,
@@ -1894,6 +1757,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
               ? Player.DISCONTINUITY_REASON_PERIOD_TRANSITION
               : Player.DISCONTINUITY_REASON_AD_INSERTION;
       playbackInfoUpdate.setPositionDiscontinuity(discontinuityReason);
+      enablePlayingPeriodRenderers(rendererWasEnabledFlags);
       updatePlaybackPositions();
       advancedPlayingPeriod = true;
     }
@@ -1957,6 +1821,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
       // This is the first prepared period, so update the position and the renderers.
       resetRendererPosition(loadingPeriodHolder.info.startPositionUs);
       enablePlayingPeriodRenderers();
+      playbackInfo =
+          copyWithNewPosition(
+              playbackInfo.periodId, playbackInfo.positionUs, playbackInfo.contentPositionUs);
     }
     maybeContinueLoading();
   }
@@ -2024,11 +1891,35 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
   }
 
+  @CheckResult
   private PlaybackInfo copyWithNewPosition(
       MediaPeriodId mediaPeriodId, long positionUs, long contentPositionUs) {
-    deliverPendingMessageAtStartPositionRequired = true;
+    deliverPendingMessageAtStartPositionRequired =
+        positionUs != playbackInfo.positionUs || !mediaPeriodId.equals(playbackInfo.periodId);
+    TrackGroupArray trackGroupArray = playbackInfo.trackGroups;
+    TrackSelectorResult trackSelectorResult = playbackInfo.trackSelectorResult;
+    if (playlist.isPrepared()) {
+      @Nullable MediaPeriodHolder playingPeriodHolder = queue.getPlayingPeriod();
+      trackGroupArray =
+          playingPeriodHolder == null
+              ? TrackGroupArray.EMPTY
+              : playingPeriodHolder.getTrackGroups();
+      trackSelectorResult =
+          playingPeriodHolder == null
+              ? emptyTrackSelectorResult
+              : playingPeriodHolder.getTrackSelectorResult();
+    } else if (!mediaPeriodId.equals(playbackInfo.periodId)) {
+      // Reset previously kept track info if unprepared and the period changes.
+      trackGroupArray = TrackGroupArray.EMPTY;
+      trackSelectorResult = emptyTrackSelectorResult;
+    }
     return playbackInfo.copyWithNewPosition(
-        mediaPeriodId, positionUs, contentPositionUs, getTotalBufferedDurationUs());
+        mediaPeriodId,
+        positionUs,
+        contentPositionUs,
+        getTotalBufferedDurationUs(),
+        trackGroupArray,
+        trackSelectorResult);
   }
 
   private void disablePlayingPeriodRenderersForTransition(boolean[] outRendererWasEnabledFlags)
@@ -2058,9 +1949,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private void enablePlayingPeriodRenderers(boolean[] rendererWasEnabledFlags)
       throws ExoPlaybackException {
     MediaPeriodHolder playingPeriodHolder = Assertions.checkNotNull(queue.getPlayingPeriod());
-    playbackInfo =
-        playbackInfo.copyWithTrackInfo(
-            playingPeriodHolder.getTrackGroups(), playingPeriodHolder.getTrackSelectorResult());
     int enabledRendererCount = 0;
     for (int i = 0; i < renderers.length; i++) {
       if (playingPeriodHolder.getTrackSelectorResult().isRendererEnabled(i)) {
@@ -2175,6 +2063,211 @@ import java.util.concurrent.atomic.AtomicBoolean;
         .sendToTarget();
   }
 
+  private static PositionUpdateForPlaylistChange resolvePositionForPlaylistChange(
+      Timeline timeline,
+      PlaybackInfo playbackInfo,
+      @Nullable SeekPosition pendingInitialSeekPosition,
+      MediaPeriodQueue queue,
+      @RepeatMode int repeatMode,
+      boolean shuffleModeEnabled,
+      Timeline.Window window,
+      Timeline.Period period) {
+    if (timeline.isEmpty()) {
+      return new PositionUpdateForPlaylistChange(
+          PlaybackInfo.getDummyPeriodForEmptyTimeline(),
+          /* periodPositionUs= */ 0,
+          /* contentPositionUs= */ C.TIME_UNSET,
+          /* forceBufferingState= */ false,
+          /* endPlayback= */ true);
+    }
+    MediaPeriodId oldPeriodId = playbackInfo.periodId;
+    Object newPeriodUid = oldPeriodId.periodUid;
+    long oldContentPositionUs =
+        oldPeriodId.isAd() ? playbackInfo.contentPositionUs : playbackInfo.positionUs;
+    long newContentPositionUs = oldContentPositionUs;
+    int startAtDefaultPositionWindowIndex = C.INDEX_UNSET;
+    boolean forceBufferingState = false;
+    boolean endPlayback = false;
+    if (pendingInitialSeekPosition != null) {
+      // Resolve initial seek position.
+      @Nullable
+      Pair<Object, Long> periodPosition =
+          resolveSeekPosition(
+              timeline,
+              pendingInitialSeekPosition,
+              /* trySubsequentPeriods= */ true,
+              repeatMode,
+              shuffleModeEnabled,
+              window,
+              period);
+      if (periodPosition == null) {
+        // The initial seek in the empty old timeline is invalid in the new timeline.
+        endPlayback = true;
+        startAtDefaultPositionWindowIndex = timeline.getFirstWindowIndex(shuffleModeEnabled);
+      } else {
+        // The pending seek has been resolved successfully in the new timeline.
+        if (pendingInitialSeekPosition.windowPositionUs == C.TIME_UNSET) {
+          startAtDefaultPositionWindowIndex =
+              timeline.getPeriodByUid(periodPosition.first, period).windowIndex;
+        } else {
+          newPeriodUid = periodPosition.first;
+          newContentPositionUs = periodPosition.second;
+        }
+        forceBufferingState = playbackInfo.playbackState == Player.STATE_ENDED;
+      }
+    } else if (playbackInfo.timeline.isEmpty()) {
+      // Resolve to default position if the old timeline is empty and no seek is requested above.
+      startAtDefaultPositionWindowIndex = timeline.getFirstWindowIndex(shuffleModeEnabled);
+    } else if (timeline.getIndexOfPeriod(newPeriodUid) == C.INDEX_UNSET) {
+      // The current period isn't in the new timeline. Attempt to resolve a subsequent period whose
+      // window we can restart from.
+      @Nullable
+      Object subsequentPeriodUid =
+          resolveSubsequentPeriod(
+              window,
+              period,
+              repeatMode,
+              shuffleModeEnabled,
+              newPeriodUid,
+              playbackInfo.timeline,
+              timeline);
+      if (subsequentPeriodUid == null) {
+        // We failed to resolve a suitable restart position but the timeline is not empty.
+        endPlayback = true;
+        startAtDefaultPositionWindowIndex = timeline.getFirstWindowIndex(shuffleModeEnabled);
+      } else {
+        // We resolved a subsequent period. Start at the default position in the corresponding
+        // window.
+        startAtDefaultPositionWindowIndex =
+            timeline.getPeriodByUid(subsequentPeriodUid, period).windowIndex;
+      }
+    } else if (oldContentPositionUs == C.TIME_UNSET) {
+      // We previously set the content position to be the default position of the current window.
+      // Re-resolve the period uid and position in case they changed since last time.
+      startAtDefaultPositionWindowIndex = timeline.getPeriodByUid(newPeriodUid, period).windowIndex;
+    }
+
+    // Set period uid for default positions and resolve position for ad resolution.
+    long contentPositionForAdResolutionUs = newContentPositionUs;
+    if (startAtDefaultPositionWindowIndex != C.INDEX_UNSET) {
+      Pair<Object, Long> defaultPosition =
+          timeline.getPeriodPosition(
+              window,
+              period,
+              startAtDefaultPositionWindowIndex,
+              /* windowPositionUs= */ C.TIME_UNSET);
+      newPeriodUid = defaultPosition.first;
+      contentPositionForAdResolutionUs = defaultPosition.second;
+    }
+
+    // Ensure ad insertion metadata is up to date.
+    MediaPeriodId periodIdWithAds =
+        queue.resolveMediaPeriodIdForAds(timeline, newPeriodUid, contentPositionForAdResolutionUs);
+    if (!periodIdWithAds.isAd() && newContentPositionUs == C.TIME_UNSET) {
+      // We are not going to play an ad, so use resolved content position.
+      newContentPositionUs = contentPositionForAdResolutionUs;
+    }
+    boolean oldAndNewPeriodIdAreSame =
+        oldPeriodId.periodUid.equals(newPeriodUid)
+            && !oldPeriodId.isAd()
+            && !periodIdWithAds.isAd();
+    // Drop update if we keep playing the same content (MediaPeriod.periodUid are identical) and
+    // only MediaPeriodId.nextAdGroupIndex may have changed. This postpones a potential
+    // discontinuity until we reach the former next ad group position.
+    MediaPeriodId newPeriodId = oldAndNewPeriodIdAreSame ? oldPeriodId : periodIdWithAds;
+
+    long periodPositionUs = contentPositionForAdResolutionUs;
+    if (newPeriodId.isAd()) {
+      if (newPeriodId.equals(oldPeriodId)) {
+        periodPositionUs = playbackInfo.positionUs;
+      } else {
+        timeline.getPeriodByUid(newPeriodId.periodUid, period);
+        periodPositionUs =
+            newPeriodId.adIndexInAdGroup == period.getFirstAdIndexToPlay(newPeriodId.adGroupIndex)
+                ? period.getAdResumePositionUs()
+                : 0;
+      }
+    }
+
+    return new PositionUpdateForPlaylistChange(
+        newPeriodId, periodPositionUs, newContentPositionUs, forceBufferingState, endPlayback);
+  }
+
+  /**
+   * Converts a {@link SeekPosition} into the corresponding (periodUid, periodPositionUs) for the
+   * internal timeline.
+   *
+   * @param seekPosition The position to resolve.
+   * @param trySubsequentPeriods Whether the position can be resolved to a subsequent matching
+   *     period if the original period is no longer available.
+   * @return The resolved position, or null if resolution was not successful.
+   * @throws IllegalSeekPositionException If the window index of the seek position is outside the
+   *     bounds of the timeline.
+   */
+  @Nullable
+  private static Pair<Object, Long> resolveSeekPosition(
+      Timeline timeline,
+      SeekPosition seekPosition,
+      boolean trySubsequentPeriods,
+      @RepeatMode int repeatMode,
+      boolean shuffleModeEnabled,
+      Timeline.Window window,
+      Timeline.Period period) {
+    Timeline seekTimeline = seekPosition.timeline;
+    if (timeline.isEmpty()) {
+      // We don't have a valid timeline yet, so we can't resolve the position.
+      return null;
+    }
+    if (seekTimeline.isEmpty()) {
+      // The application performed a blind seek with an empty timeline (most likely based on
+      // knowledge of what the future timeline will be). Use the internal timeline.
+      seekTimeline = timeline;
+    }
+    // Map the SeekPosition to a position in the corresponding timeline.
+    Pair<Object, Long> periodPosition;
+    try {
+      periodPosition =
+          seekTimeline.getPeriodPosition(
+              window, period, seekPosition.windowIndex, seekPosition.windowPositionUs);
+    } catch (IndexOutOfBoundsException e) {
+      // The window index of the seek position was outside the bounds of the timeline.
+      return null;
+    }
+    if (timeline.equals(seekTimeline)) {
+      // Our internal timeline is the seek timeline, so the mapped position is correct.
+      return periodPosition;
+    }
+    // Attempt to find the mapped period in the internal timeline.
+    int periodIndex = timeline.getIndexOfPeriod(periodPosition.first);
+    if (periodIndex != C.INDEX_UNSET) {
+      // We successfully located the period in the internal timeline.
+      return periodPosition;
+    }
+    if (trySubsequentPeriods) {
+      // Try and find a subsequent period from the seek timeline in the internal timeline.
+      @Nullable
+      Object periodUid =
+          resolveSubsequentPeriod(
+              window,
+              period,
+              repeatMode,
+              shuffleModeEnabled,
+              periodPosition.first,
+              seekTimeline,
+              timeline);
+      if (periodUid != null) {
+        // We found one. Use the default position of the corresponding window.
+        return timeline.getPeriodPosition(
+            window,
+            period,
+            timeline.getPeriodByUid(periodUid, period).windowIndex,
+            /* windowPositionUs= */ C.TIME_UNSET);
+      }
+    }
+    // We didn't find one. Give up.
+    return null;
+  }
+
   /**
    * Given a period index into an old timeline, finds the first subsequent period that also exists
    * in a new timeline. The uid of this period in the new timeline is returned.
@@ -2233,6 +2326,27 @@ import java.util.concurrent.atomic.AtomicBoolean;
       this.timeline = timeline;
       this.windowIndex = windowIndex;
       this.windowPositionUs = windowPositionUs;
+    }
+  }
+
+  private static final class PositionUpdateForPlaylistChange {
+    public final MediaPeriodId periodId;
+    public final long periodPositionUs;
+    public final long contentPositionUs;
+    public final boolean forceBufferingState;
+    public final boolean endPlayback;
+
+    public PositionUpdateForPlaylistChange(
+        MediaPeriodId periodId,
+        long periodPositionUs,
+        long contentPositionUs,
+        boolean forceBufferingState,
+        boolean endPlayback) {
+      this.periodId = periodId;
+      this.periodPositionUs = periodPositionUs;
+      this.contentPositionUs = contentPositionUs;
+      this.forceBufferingState = forceBufferingState;
+      this.endPlayback = endPlayback;
     }
   }
 
