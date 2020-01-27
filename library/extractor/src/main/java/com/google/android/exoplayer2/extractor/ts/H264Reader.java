@@ -560,12 +560,6 @@ public final class H264Reader implements ElementaryStreamReader {
       }
 
       private boolean isFirstVclNalUnitOfPicture(SliceHeaderData other) {
-        // TVirl: workaround
-        // https://github.com/google/ExoPlayer/issues/6910
-        if (this.spsData == null || other.spsData == null) {
-          return false;
-        }
-
         // See ISO 14496-10 subsection 7.4.1.2.4.
         SpsData spsData = Assertions.checkStateNotNull(this.spsData);
         SpsData otherSpsData = Assertions.checkStateNotNull(other.spsData);
