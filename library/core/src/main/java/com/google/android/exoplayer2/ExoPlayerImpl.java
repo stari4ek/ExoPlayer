@@ -144,7 +144,7 @@ import java.util.concurrent.TimeoutException;
             ExoPlayerImpl.this.handleEvent(msg);
           }
         };
-    playbackInfo = PlaybackInfo.createDummy(/* startPositionUs= */ 0, emptyTrackSelectorResult);
+    playbackInfo = PlaybackInfo.createDummy(emptyTrackSelectorResult);
     pendingListenerNotifications = new ArrayDeque<>();
     if (analyticsCollector != null) {
       analyticsCollector.setPlayer(this);
@@ -795,15 +795,6 @@ import java.util.concurrent.TimeoutException;
       @DiscontinuityReason int positionDiscontinuityReason) {
     pendingOperationAcks -= operationAcks;
     if (pendingOperationAcks == 0) {
-      if (playbackInfo.startPositionUs == C.TIME_UNSET) {
-        // Replace internal unset start position with externally visible start position of zero.
-        playbackInfo =
-            playbackInfo.copyWithNewPosition(
-                playbackInfo.periodId,
-                /* positionUs= */ 0,
-                playbackInfo.contentPositionUs,
-                playbackInfo.totalBufferedDurationUs);
-      }
       if (!this.playbackInfo.timeline.isEmpty() && playbackInfo.timeline.isEmpty()) {
         // Update the masking variables, which are used when the timeline becomes empty.
         resetMaskingPosition();
@@ -834,17 +825,16 @@ import java.util.concurrent.TimeoutException;
     Timeline timeline = playbackInfo.timeline;
     MediaPeriodId mediaPeriodId = playbackInfo.periodId;
     long contentPositionUs = playbackInfo.contentPositionUs;
-    long startPositionUs = playbackInfo.positionUs;
+    long positionUs = playbackInfo.positionUs;
     if (clearPlaylist) {
       timeline = Timeline.EMPTY;
-      mediaPeriodId = playbackInfo.getDummyPeriodForEmptyTimeline();
+      mediaPeriodId = PlaybackInfo.getDummyPeriodForEmptyTimeline();
       contentPositionUs = C.TIME_UNSET;
-      startPositionUs = C.TIME_UNSET;
+      positionUs = 0;
     }
     return new PlaybackInfo(
         timeline,
         mediaPeriodId,
-        startPositionUs,
         contentPositionUs,
         playbackState,
         resetError ? null : playbackInfo.playbackError,
@@ -852,9 +842,9 @@ import java.util.concurrent.TimeoutException;
         clearPlaylist ? TrackGroupArray.EMPTY : playbackInfo.trackGroups,
         clearPlaylist ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult,
         mediaPeriodId,
-        startPositionUs,
+        positionUs,
         /* totalBufferedDurationUs= */ 0,
-        startPositionUs);
+        positionUs);
   }
 
   private void updatePlaybackInfo(

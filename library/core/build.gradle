@@ -16,7 +16,7 @@ apply from: '../../constants.gradle'
 
 android {
     compileSdkVersion project.ext.compileSdkVersion
-    
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
@@ -45,11 +45,11 @@ android {
 }
 
 dependencies {
+    api project(modulePrefix + 'library-common')
+    api project(modulePrefix + 'library-extractor')
     implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
-    compileOnly 'com.google.code.findbugs:jsr305:' + jsr305Version
     compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
     compileOnly 'org.checkerframework:checker-compat-qual:' + checkerframeworkVersion
-    compileOnly 'org.jetbrains.kotlin:kotlin-annotations-jvm:' + kotlinAnnotationsVersion
     androidTestImplementation 'androidx.test:runner:' + androidxTestRunnerVersion
     androidTestImplementation 'com.google.guava:guava:' + guavaVersion
     androidTestImplementation 'com.linkedin.dexmaker:dexmaker:' + dexmakerVersion
