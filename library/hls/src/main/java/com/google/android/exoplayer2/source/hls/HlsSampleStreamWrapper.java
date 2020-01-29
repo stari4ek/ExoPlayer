@@ -74,7 +74,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
  * Loads {@link HlsMediaChunk}s obtained from a {@link HlsChunkSource}, and provides
  * {@link SampleStream}s from which the loaded media can be consumed.
  */
-/* package */ final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
+// TVirl
+///* package */ final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
+public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
     Loader.ReleaseCallback, SequenceableLoader, ExtractorOutput, UpstreamFormatChangedListener {
 
   /**
@@ -103,10 +105,17 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   public static final int SAMPLE_QUEUE_INDEX_NO_MAPPING_FATAL = -2;
   public static final int SAMPLE_QUEUE_INDEX_NO_MAPPING_NON_FATAL = -3;
 
-  private static final Set<Integer> MAPPABLE_TYPES =
+  // TVirl: https://github.com/google/ExoPlayer/issues/2014
+  // private static final Set<Integer> MAPPABLE_TYPES =
+  private static Set<Integer> MAPPABLE_TYPES =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_METADATA)));
+
+  public static void disableMapping() {
+    MAPPABLE_TYPES = Collections.emptySet();
+  }
+  // !TVirl
 
   private final int trackType;
   private final Callback callback;

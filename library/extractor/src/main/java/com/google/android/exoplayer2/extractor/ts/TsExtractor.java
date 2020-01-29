@@ -110,6 +110,10 @@ public final class TsExtractor implements Extractor {
   private static final int BUFFER_SIZE = TS_PACKET_SIZE * 50;
   private static final int SNIFF_TS_PACKET_COUNT = 5;
 
+  // TVirl: https://github.com/google/ExoPlayer/issues/2014
+  public static boolean HLS_MULTIPLE_TRACKS_ALLOWED = false;
+  // !TVirl
+
   private final @Mode int mode;
   private final List<TimestampAdjuster> timestampAdjusters;
   private final ParsableByteArray tsPacketBuffer;
@@ -583,7 +587,10 @@ public final class TsExtractor implements Extractor {
         }
         remainingEntriesLength -= esInfoLength + 5;
 
-        int trackId = mode == MODE_HLS ? streamType : elementaryPid;
+        // TVirl
+        //int trackId = mode == MODE_HLS ? streamType : elementaryPid;
+        int trackId = mode == MODE_HLS && !HLS_MULTIPLE_TRACKS_ALLOWED ? streamType : elementaryPid;
+        // !TVirl
         if (trackIds.get(trackId)) {
           continue;
         }
