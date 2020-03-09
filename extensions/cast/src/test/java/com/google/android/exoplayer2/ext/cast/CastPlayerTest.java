@@ -80,6 +80,7 @@ public class CastPlayerTest {
     remoteMediaClientListener = listenerArgumentCaptor.getValue();
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSetPlayWhenReady_masksRemoteState() {
     when(mockRemoteMediaClient.play()).thenReturn(mockPendingResult);
@@ -89,6 +90,8 @@ public class CastPlayerTest {
     verify(mockPendingResult).setResultCallback(setResultCallbackArgumentCaptor.capture());
     assertThat(castPlayer.getPlayWhenReady()).isTrue();
     verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
 
     // There is a status update in the middle, which should be hidden by masking.
     remoteMediaClientListener.onStatusUpdated();
@@ -102,6 +105,7 @@ public class CastPlayerTest {
     verifyNoMoreInteractions(mockListener);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
   public void testSetPlayWhenReadyMasking_updatesUponResultChange() {
     when(mockRemoteMediaClient.play()).thenReturn(mockPendingResult);
@@ -111,21 +115,44 @@ public class CastPlayerTest {
     verify(mockPendingResult).setResultCallback(setResultCallbackArgumentCaptor.capture());
     assertThat(castPlayer.getPlayWhenReady()).isTrue();
     verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
 
     // Upon result, the remote media client is still paused. The state should reflect that.
     setResultCallbackArgumentCaptor
         .getValue()
         .onResult(Mockito.mock(RemoteMediaClient.MediaChannelResult.class));
     verify(mockListener).onPlayerStateChanged(false, Player.STATE_IDLE);
+    verify(mockListener).onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE);
     assertThat(castPlayer.getPlayWhenReady()).isFalse();
   }
 
+  @SuppressWarnings("deprecation")
+  @Test
+  public void testSetPlayWhenReady_correctChangeReasonOnPause() {
+    when(mockRemoteMediaClient.play()).thenReturn(mockPendingResult);
+    when(mockRemoteMediaClient.pause()).thenReturn(mockPendingResult);
+    castPlayer.play();
+    assertThat(castPlayer.getPlayWhenReady()).isTrue();
+    verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
+
+    castPlayer.pause();
+    assertThat(castPlayer.getPlayWhenReady()).isFalse();
+    verify(mockListener).onPlayerStateChanged(false, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
+  }
+
+  @SuppressWarnings("deprecation")
   @Test
   public void testPlayWhenReady_changesOnStatusUpdates() {
     assertThat(castPlayer.getPlayWhenReady()).isFalse();
     when(mockRemoteMediaClient.isPaused()).thenReturn(false);
     remoteMediaClientListener.onStatusUpdated();
     verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener).onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE);
     assertThat(castPlayer.getPlayWhenReady()).isTrue();
   }
 

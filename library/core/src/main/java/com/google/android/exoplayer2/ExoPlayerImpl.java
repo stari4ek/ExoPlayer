@@ -240,9 +240,16 @@ import java.util.concurrent.TimeoutException;
     return playbackSuppressionReason;
   }
 
+  @Deprecated
   @Override
   @Nullable
   public ExoPlaybackException getPlaybackError() {
+    return getPlayerError();
+  }
+
+  @Override
+  @Nullable
+  public ExoPlaybackException getPlayerError() {
     return playbackInfo.playbackError;
   }
 
@@ -424,11 +431,17 @@ import java.util.concurrent.TimeoutException;
 
   @Override
   public void setPlayWhenReady(boolean playWhenReady) {
-    setPlayWhenReady(playWhenReady, PLAYBACK_SUPPRESSION_REASON_NONE);
+    setPlayWhenReady(
+        playWhenReady,
+        PLAYBACK_SUPPRESSION_REASON_NONE,
+        PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
   }
 
+  @SuppressWarnings("deprecation")
   public void setPlayWhenReady(
-      boolean playWhenReady, @PlaybackSuppressionReason int playbackSuppressionReason) {
+      boolean playWhenReady,
+      @PlaybackSuppressionReason int playbackSuppressionReason,
+      @PlayWhenReadyChangeReason int playWhenReadyChangeReason) {
     boolean oldIsPlaying = isPlaying();
     boolean oldInternalPlayWhenReady =
         this.playWhenReady && this.playbackSuppressionReason == PLAYBACK_SUPPRESSION_REASON_NONE;
@@ -449,6 +462,7 @@ import java.util.concurrent.TimeoutException;
           listener -> {
             if (playWhenReadyChanged) {
               listener.onPlayerStateChanged(playWhenReady, playbackState);
+              listener.onPlayWhenReadyChanged(playWhenReady, playWhenReadyChangeReason);
             }
             if (suppressionReasonChanged) {
               listener.onPlaybackSuppressionReasonChanged(playbackSuppressionReason);
@@ -872,6 +886,7 @@ import java.util.concurrent.TimeoutException;
             /* isPlayingChanged= */ previousIsPlaying != isPlaying));
   }
 
+  @SuppressWarnings("deprecation")
   private void setMediaItemsInternal(
       List<MediaSource> mediaItems,
       int startWindowIndex,
@@ -925,6 +940,7 @@ import java.util.concurrent.TimeoutException;
           listener.onTimelineChanged(timeline, TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED);
           if (playbackStateChanged) {
             listener.onPlayerStateChanged(currentPlayWhenReady, finalMaskingPlaybackState);
+            listener.onPlaybackStateChanged(finalMaskingPlaybackState);
           }
         });
   }
@@ -944,6 +960,7 @@ import java.util.concurrent.TimeoutException;
     return holders;
   }
 
+  @SuppressWarnings("deprecation")
   private void removeMediaItemsInternal(int fromIndex, int toIndex) {
     Assertions.checkArgument(
         fromIndex >= 0 && toIndex >= fromIndex && toIndex <= mediaSourceHolders.size());
@@ -972,6 +989,7 @@ import java.util.concurrent.TimeoutException;
           listener.onTimelineChanged(timeline, TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED);
           if (transitionsToEnded) {
             listener.onPlayerStateChanged(currentPlayWhenReady, STATE_ENDED);
+            listener.onPlaybackStateChanged(STATE_ENDED);
           }
         });
   }
@@ -1159,6 +1177,7 @@ import java.util.concurrent.TimeoutException;
           previousPlaybackInfo.trackSelectorResult != playbackInfo.trackSelectorResult;
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void run() {
       if (timelineChanged) {
@@ -1183,12 +1202,19 @@ import java.util.concurrent.TimeoutException;
                     playbackInfo.trackGroups, playbackInfo.trackSelectorResult.selections));
       }
       if (isLoadingChanged) {
-        invokeAll(listenerSnapshot, listener -> listener.onLoadingChanged(playbackInfo.isLoading));
+        invokeAll(
+            listenerSnapshot,
+            listener -> {
+              listener.onIsLoadingChanged(playbackInfo.isLoading);
+            });
       }
       if (playbackStateChanged) {
         invokeAll(
             listenerSnapshot,
-            listener -> listener.onPlayerStateChanged(playWhenReady, playbackInfo.playbackState));
+            listener -> {
+              listener.onPlayerStateChanged(playWhenReady, playbackInfo.playbackState);
+              listener.onPlaybackStateChanged(playbackInfo.playbackState);
+            });
       }
       if (isPlayingChanged) {
         invokeAll(

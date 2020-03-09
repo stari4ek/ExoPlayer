@@ -21,10 +21,10 @@ import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.Cue.VerticalType;
+import com.google.android.exoplayer2.text.span.RubySpan;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /**
  * Style object of a <code>TtmlNode</code>
@@ -62,7 +62,17 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   private static final int OFF = 0;
   private static final int ON = 1;
 
-  private @MonotonicNonNull String fontFamily;
+  @Documented
+  @Retention(RetentionPolicy.SOURCE)
+  @IntDef({UNSPECIFIED, RUBY_TYPE_CONTAINER, RUBY_TYPE_BASE, RUBY_TYPE_TEXT, RUBY_TYPE_DELIMITER})
+  public @interface RubyType {}
+
+  public static final int RUBY_TYPE_CONTAINER = 1;
+  public static final int RUBY_TYPE_BASE = 2;
+  public static final int RUBY_TYPE_TEXT = 3;
+  public static final int RUBY_TYPE_DELIMITER = 4;
+
+  @Nullable private String fontFamily;
   private int fontColor;
   private boolean hasFontColor;
   private int backgroundColor;
@@ -73,8 +83,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   @OptionalBoolean private int italic;
   @FontSizeUnit private int fontSizeUnit;
   private float fontSize;
-  private @MonotonicNonNull String id;
-  private Layout.@MonotonicNonNull Alignment textAlign;
+  @Nullable private String id;
+  @RubyType private int rubyType;
+  @RubySpan.Position private int rubyPosition;
+  @Nullable private Layout.Alignment textAlign;
+  @OptionalBoolean private int textCombine;
   @Cue.VerticalType private int verticalType;
 
   public TtmlStyle() {
@@ -83,6 +96,9 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     bold = UNSPECIFIED;
     italic = UNSPECIFIED;
     fontSizeUnit = UNSPECIFIED;
+    rubyType = UNSPECIFIED;
+    rubyPosition = RubySpan.POSITION_UNKNOWN;
+    textCombine = UNSPECIFIED;
     verticalType = Cue.TYPE_UNSET;
   }
 
@@ -133,7 +149,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     return fontFamily;
   }
 
-  public TtmlStyle setFontFamily(String fontFamily) {
+  public TtmlStyle setFontFamily(@Nullable String fontFamily) {
     this.fontFamily = fontFamily;
     return this;
   }
@@ -213,8 +229,14 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       if (underline == UNSPECIFIED) {
         underline = ancestor.underline;
       }
+      if (rubyPosition == RubySpan.POSITION_UNKNOWN) {
+        rubyPosition = ancestor.rubyPosition;
+      }
       if (textAlign == null && ancestor.textAlign != null) {
         textAlign = ancestor.textAlign;
+      }
+      if (textCombine == UNSPECIFIED) {
+        textCombine = ancestor.textCombine;
       }
       if (fontSizeUnit == UNSPECIFIED) {
         fontSizeUnit = ancestor.fontSizeUnit;
@@ -224,14 +246,17 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       if (chaining && !hasBackgroundColor && ancestor.hasBackgroundColor) {
         setBackgroundColor(ancestor.backgroundColor);
       }
-      if (chaining && verticalType != Cue.TYPE_UNSET && ancestor.verticalType == Cue.TYPE_UNSET) {
+      if (chaining && rubyType == UNSPECIFIED && ancestor.rubyType != UNSPECIFIED) {
+        rubyType = ancestor.rubyType;
+      }
+      if (chaining && verticalType == Cue.TYPE_UNSET && ancestor.verticalType != Cue.TYPE_UNSET) {
         setVerticalType(ancestor.verticalType);
       }
     }
     return this;
   }
 
-  public TtmlStyle setId(String id) {
+  public TtmlStyle setId(@Nullable String id) {
     this.id = id;
     return this;
   }
@@ -241,13 +266,43 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     return id;
   }
 
+  public TtmlStyle setRubyType(@RubyType int rubyType) {
+    this.rubyType = rubyType;
+    return this;
+  }
+
+  @RubyType
+  public int getRubyType() {
+    return rubyType;
+  }
+
+  public TtmlStyle setRubyPosition(@RubySpan.Position int position) {
+    this.rubyPosition = position;
+    return this;
+  }
+
+  @RubySpan.Position
+  public int getRubyPosition() {
+    return rubyPosition;
+  }
+
   @Nullable
   public Layout.Alignment getTextAlign() {
     return textAlign;
   }
 
-  public TtmlStyle setTextAlign(Layout.Alignment textAlign) {
+  public TtmlStyle setTextAlign(@Nullable Layout.Alignment textAlign) {
     this.textAlign = textAlign;
+    return this;
+  }
+
+  /** Returns true if the source entity has {@code tts:textCombine=all}. */
+  public boolean getTextCombine() {
+    return textCombine == ON;
+  }
+
+  public TtmlStyle setTextCombine(boolean combine) {
+    this.textCombine = combine ? ON : OFF;
     return this;
   }
 

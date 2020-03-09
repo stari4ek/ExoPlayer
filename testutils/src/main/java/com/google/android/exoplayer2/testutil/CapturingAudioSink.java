@@ -21,6 +21,7 @@ import android.content.Context;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.audio.AudioSink;
 import com.google.android.exoplayer2.audio.ForwardingAudioSink;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import java.io.File;
 import java.io.IOException;
@@ -80,7 +81,8 @@ public final class CapturingAudioSink extends ForwardingAudioSink implements Dum
 
   @Override
   @SuppressWarnings("ReferenceEquality")
-  public boolean handleBuffer(ByteBuffer buffer, long presentationTimeUs)
+  public boolean handleBuffer(
+      ByteBuffer buffer, long presentationTimeUs, int encodedAccessUnitCount)
       throws InitializationException, WriteException {
     // handleBuffer is called repeatedly with the same buffer until it's been fully consumed by the
     // sink. We only want to dump each buffer once, and we need to do so before the sink being
@@ -89,7 +91,7 @@ public final class CapturingAudioSink extends ForwardingAudioSink implements Dum
       interceptedData.add(new DumpableBuffer(buffer, presentationTimeUs));
       currentBuffer = buffer;
     }
-    boolean fullyConsumed = super.handleBuffer(buffer, presentationTimeUs);
+    boolean fullyConsumed = super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount);
     if (fullyConsumed) {
       currentBuffer = null;
     }
@@ -122,7 +124,7 @@ public final class CapturingAudioSink extends ForwardingAudioSink implements Dum
     if (WRITE_DUMP) {
       File directory = context.getExternalFilesDir(null);
       File file = new File(directory, dumpFile);
-      file.getParentFile().mkdirs();
+      Assertions.checkStateNotNull(file.getParentFile()).mkdirs();
       PrintWriter out = new PrintWriter(file);
       out.print(actual);
       out.close();

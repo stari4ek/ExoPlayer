@@ -21,6 +21,7 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.audio.MpegAudioUtil;
+import com.google.android.exoplayer2.extractor.DummyTrackOutput;
 import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.extractor.ExtractorOutput;
@@ -56,24 +57,44 @@ public final class Mp3Extractor implements Extractor {
 
   /**
    * Flags controlling the behavior of the extractor. Possible flag values are {@link
-   * #FLAG_ENABLE_CONSTANT_BITRATE_SEEKING} and {@link #FLAG_DISABLE_ID3_METADATA}.
+   * #FLAG_ENABLE_CONSTANT_BITRATE_SEEKING}, {@link #FLAG_ENABLE_INDEX_SEEKING} and {@link
+   * #FLAG_DISABLE_ID3_METADATA}.
    */
   @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef(
       flag = true,
-      value = {FLAG_ENABLE_CONSTANT_BITRATE_SEEKING, FLAG_DISABLE_ID3_METADATA})
+      value = {
+        FLAG_ENABLE_CONSTANT_BITRATE_SEEKING,
+        FLAG_ENABLE_INDEX_SEEKING,
+        FLAG_DISABLE_ID3_METADATA
+      })
   public @interface Flags {}
   /**
    * Flag to force enable seeking using a constant bitrate assumption in cases where seeking would
    * otherwise not be possible.
+   *
+   * <p>This flag is ignored if {@link #FLAG_ENABLE_INDEX_SEEKING} is set.
    */
   public static final int FLAG_ENABLE_CONSTANT_BITRATE_SEEKING = 1;
+  /**
+   * Flag to force index seeking, consisting in building a time-to-byte mapping as the file is read.
+   *
+   * <p>This seeker may require to scan a significant portion of the file to compute a seek point.
+   * Therefore, it should only be used if:
+   *
+   * <ul>
+   *   <li>the file is small, or
+   *   <li>the bitrate is variable (or the type of bitrate is unknown) and the seeking metadata
+   *       provided in the file is not precise enough (or is not present).
+   * </ul>
+   */
+  public static final int FLAG_ENABLE_INDEX_SEEKING = 1 << 1;
   /**
    * Flag to disable parsing of ID3 metadata. Can be set to save memory if ID3 metadata is not
    * required.
    */
-  public static final int FLAG_DISABLE_ID3_METADATA = 2;
+  public static final int FLAG_DISABLE_ID3_METADATA = 1 << 2;
 
   /** Predicate that matches ID3 frames containing only required gapless/seeking metadata. */
   private static final FramePredicate REQUIRED_ID3_FRAME_PREDICATE =
@@ -110,20 +131,26 @@ public final class Mp3Extractor implements Extractor {
   private final MpegAudioUtil.Header synchronizedHeader;
   private final GaplessInfoHolder gaplessInfoHolder;
   private final Id3Peeker id3Peeker;
+  private final TrackOutput skippingTrackOutput;
 
-  // Extractor outputs.
   private @MonotonicNonNull ExtractorOutput extractorOutput;
-  private @MonotonicNonNull TrackOutput trackOutput;
+  private @MonotonicNonNull TrackOutput realTrackOutput;
+  // currentTrackOutput is set to skippingTrackOutput or to realTrackOutput, depending if the data
+  // read must be sent to the output.
+  private @MonotonicNonNull TrackOutput currentTrackOutput;
 
   private int synchronizedHeaderData;
 
   @Nullable private Metadata metadata;
-  private @MonotonicNonNull Seeker seeker;
-  private boolean disableSeeking;
   private long basisTimeUs;
   private long samplesRead;
   private long firstSamplePosition;
   private int sampleBytesRemaining;
+
+  private @MonotonicNonNull Seeker seeker;
+  private boolean disableSeeking;
+  private boolean isSeekInProgress;
+  private long seekTimeUs;
 
   public Mp3Extractor() {
     this(0);
@@ -149,6 +176,7 @@ public final class Mp3Extractor implements Extractor {
     gaplessInfoHolder = new GaplessInfoHolder();
     basisTimeUs = C.TIME_UNSET;
     id3Peeker = new Id3Peeker();
+    skippingTrackOutput = new DummyTrackOutput();
   }
 
   // Extractor implementation.
@@ -161,7 +189,8 @@ public final class Mp3Extractor implements Extractor {
   @Override
   public void init(ExtractorOutput output) {
     extractorOutput = output;
-    trackOutput = extractorOutput.track(0, C.TRACK_TYPE_AUDIO);
+    realTrackOutput = extractorOutput.track(0, C.TRACK_TYPE_AUDIO);
+    currentTrackOutput = realTrackOutput;
     extractorOutput.endTracks();
   }
 
@@ -171,6 +200,11 @@ public final class Mp3Extractor implements Extractor {
     basisTimeUs = C.TIME_UNSET;
     samplesRead = 0;
     sampleBytesRemaining = 0;
+    seekTimeUs = timeUs;
+    if (seeker instanceof IndexSeeker && !((IndexSeeker) seeker).isTimeUsInIndex(timeUs)) {
+      isSeekInProgress = true;
+      currentTrackOutput = skippingTrackOutput;
+    }
   }
 
   @Override
@@ -182,42 +216,16 @@ public final class Mp3Extractor implements Extractor {
   public int read(ExtractorInput input, PositionHolder seekPosition)
       throws IOException, InterruptedException {
     assertInitialized();
-    if (synchronizedHeaderData == 0) {
-      try {
-        synchronize(input, false);
-      } catch (EOFException e) {
-        return RESULT_END_OF_INPUT;
+    int readResult = readInternal(input);
+    if (readResult == RESULT_END_OF_INPUT && seeker instanceof IndexSeeker) {
+      // Duration is exact when index seeker is used.
+      long durationUs = computeTimeUs(samplesRead);
+      if (seeker.getDurationUs() != durationUs) {
+        ((IndexSeeker) seeker).setDurationUs(durationUs);
+        extractorOutput.seekMap(seeker);
       }
     }
-    if (seeker == null) {
-      seeker = computeSeeker(input);
-      extractorOutput.seekMap(seeker);
-      trackOutput.format(
-          Format.createAudioSampleFormat(
-              /* id= */ null,
-              synchronizedHeader.mimeType,
-              /* codecs= */ null,
-              /* bitrate= */ Format.NO_VALUE,
-              MpegAudioUtil.MAX_FRAME_SIZE_BYTES,
-              synchronizedHeader.channels,
-              synchronizedHeader.sampleRate,
-              /* pcmEncoding= */ Format.NO_VALUE,
-              gaplessInfoHolder.encoderDelay,
-              gaplessInfoHolder.encoderPadding,
-              /* initializationData= */ null,
-              /* drmInitData= */ null,
-              /* selectionFlags= */ 0,
-              /* language= */ null,
-              (flags & FLAG_DISABLE_ID3_METADATA) != 0 ? null : metadata));
-      firstSamplePosition = input.getPosition();
-    } else if (firstSamplePosition != 0) {
-      long inputPosition = input.getPosition();
-      if (inputPosition < firstSamplePosition) {
-        // Skip past the seek frame.
-        input.skipFully((int) (firstSamplePosition - inputPosition));
-      }
-    }
-    return readSample(input);
+    return readResult;
   }
 
   /**
@@ -231,7 +239,40 @@ public final class Mp3Extractor implements Extractor {
 
   // Internal methods.
 
-  @RequiresNonNull({"trackOutput", "seeker"})
+  @RequiresNonNull({"extractorOutput", "currentTrackOutput", "realTrackOutput"})
+  private int readInternal(ExtractorInput input) throws IOException, InterruptedException {
+    if (synchronizedHeaderData == 0) {
+      try {
+        synchronize(input, false);
+      } catch (EOFException e) {
+        return RESULT_END_OF_INPUT;
+      }
+    }
+    if (seeker == null) {
+      seeker = computeSeeker(input);
+      extractorOutput.seekMap(seeker);
+      currentTrackOutput.format(
+          new Format.Builder()
+              .setSampleMimeType(synchronizedHeader.mimeType)
+              .setMaxInputSize(MpegAudioUtil.MAX_FRAME_SIZE_BYTES)
+              .setChannelCount(synchronizedHeader.channels)
+              .setSampleRate(synchronizedHeader.sampleRate)
+              .setEncoderDelay(gaplessInfoHolder.encoderDelay)
+              .setEncoderPadding(gaplessInfoHolder.encoderPadding)
+              .setMetadata((flags & FLAG_DISABLE_ID3_METADATA) != 0 ? null : metadata)
+              .build());
+      firstSamplePosition = input.getPosition();
+    } else if (firstSamplePosition != 0) {
+      long inputPosition = input.getPosition();
+      if (inputPosition < firstSamplePosition) {
+        // Skip past the seek frame.
+        input.skipFully((int) (firstSamplePosition - inputPosition));
+      }
+    }
+    return readSample(input);
+  }
+
+  @RequiresNonNull({"currentTrackOutput", "realTrackOutput", "seeker"})
   private int readSample(ExtractorInput extractorInput) throws IOException, InterruptedException {
     if (sampleBytesRemaining == 0) {
       extractorInput.resetPeekPosition();
@@ -256,8 +297,20 @@ public final class Mp3Extractor implements Extractor {
         }
       }
       sampleBytesRemaining = synchronizedHeader.frameSize;
+      if (seeker instanceof IndexSeeker) {
+        IndexSeeker indexSeeker = (IndexSeeker) seeker;
+        // Add seek point corresponding to the next frame instead of the current one to be able to
+        // start writing to the realTrackOutput on time when a seek is in progress.
+        indexSeeker.maybeAddSeekPoint(
+            computeTimeUs(samplesRead + synchronizedHeader.samplesPerFrame),
+            extractorInput.getPosition() + synchronizedHeader.frameSize);
+        if (isSeekInProgress && indexSeeker.isTimeUsInIndex(seekTimeUs)) {
+          isSeekInProgress = false;
+          currentTrackOutput = realTrackOutput;
+        }
+      }
     }
-    int bytesAppended = trackOutput.sampleData(extractorInput, sampleBytesRemaining, true);
+    int bytesAppended = currentTrackOutput.sampleData(extractorInput, sampleBytesRemaining, true);
     if (bytesAppended == C.RESULT_END_OF_INPUT) {
       return RESULT_END_OF_INPUT;
     }
@@ -265,12 +318,15 @@ public final class Mp3Extractor implements Extractor {
     if (sampleBytesRemaining > 0) {
       return RESULT_CONTINUE;
     }
-    long timeUs = basisTimeUs + (samplesRead * C.MICROS_PER_SECOND / synchronizedHeader.sampleRate);
-    trackOutput.sampleMetadata(timeUs, C.BUFFER_FLAG_KEY_FRAME, synchronizedHeader.frameSize, 0,
-        null);
+    currentTrackOutput.sampleMetadata(
+        computeTimeUs(samplesRead), C.BUFFER_FLAG_KEY_FRAME, synchronizedHeader.frameSize, 0, null);
     samplesRead += synchronizedHeader.samplesPerFrame;
     sampleBytesRemaining = 0;
     return RESULT_CONTINUE;
+  }
+
+  private long computeTimeUs(long samplesRead) {
+    return basisTimeUs + samplesRead * C.MICROS_PER_SECOND / synchronizedHeader.sampleRate;
   }
 
   private boolean synchronize(ExtractorInput input, boolean sniffing)
@@ -379,7 +435,20 @@ public final class Mp3Extractor implements Extractor {
     }
 
     @Nullable Seeker resultSeeker = null;
-    if (metadataSeeker != null) {
+    if ((flags & FLAG_ENABLE_INDEX_SEEKING) != 0) {
+      long durationUs = C.TIME_UNSET;
+      long dataEndPosition = C.POSITION_UNSET;
+      if (metadataSeeker != null) {
+        durationUs = metadataSeeker.getDurationUs();
+        dataEndPosition = metadataSeeker.getDataEndPosition();
+      } else if (seekFrameSeeker != null) {
+        durationUs = seekFrameSeeker.getDurationUs();
+        dataEndPosition = seekFrameSeeker.getDataEndPosition();
+      }
+      resultSeeker =
+          new IndexSeeker(
+              durationUs, /* dataStartPosition= */ input.getPosition(), dataEndPosition);
+    } else if (metadataSeeker != null) {
       resultSeeker = metadataSeeker;
     } else if (seekFrameSeeker != null) {
       resultSeeker = seekFrameSeeker;
@@ -451,9 +520,10 @@ public final class Mp3Extractor implements Extractor {
     return new ConstantBitrateSeeker(input.getLength(), input.getPosition(), synchronizedHeader);
   }
 
-  @EnsuresNonNull({"extractorOutput", "trackOutput"})
+  @EnsuresNonNull({"extractorOutput", "currentTrackOutput", "realTrackOutput"})
   private void assertInitialized() {
-    Assertions.checkStateNotNull(trackOutput);
+    Assertions.checkStateNotNull(realTrackOutput);
+    Util.castNonNull(currentTrackOutput);
     Util.castNonNull(extractorOutput);
   }
 

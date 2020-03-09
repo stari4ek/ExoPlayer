@@ -215,130 +215,94 @@ public class UtilTest {
   @Test
   public void
       longArrayBinarySearchFloor_targetSmallerThanValuesAndStayInBoundsFalse_returnsMinus1() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 0, /* inclusive= */ false, /* stayInBounds= */ false))
+                newLongArray(1, 3, 5),
+                /* value= */ 0,
+                /* inclusive= */ false,
+                /* stayInBounds= */ false))
         .isEqualTo(-1);
   }
 
   @Test
   public void longArrayBinarySearchFloor_targetSmallerThanValuesAndStayInBoundsTrue_returns0() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 0, /* inclusive= */ false, /* stayInBounds= */ true))
+                newLongArray(1, 3, 5),
+                /* value= */ 0,
+                /* inclusive= */ false,
+                /* stayInBounds= */ true))
         .isEqualTo(0);
   }
 
   @Test
   public void longArrayBinarySearchFloor_targetBiggerThanValues_returnsLastIndex() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 6, /* inclusive= */ false, /* stayInBounds= */ false))
+                newLongArray(1, 3, 5),
+                /* value= */ 6,
+                /* inclusive= */ false,
+                /* stayInBounds= */ false))
         .isEqualTo(2);
   }
 
   @Test
   public void
       longArrayBinarySearchFloor_targetEqualToFirstValueAndInclusiveFalseAndStayInBoundsFalse_returnsMinus1() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 1, /* inclusive= */ false, /* stayInBounds= */ false))
+                newLongArray(1, 1, 1, 1, 1, 3, 5),
+                /* value= */ 1,
+                /* inclusive= */ false,
+                /* stayInBounds= */ false))
         .isEqualTo(-1);
   }
 
   @Test
   public void
       longArrayBinarySearchFloor_targetEqualToFirstValueAndInclusiveFalseAndStayInBoundsTrue_returns0() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 1, /* inclusive= */ false, /* stayInBounds= */ true))
+                newLongArray(1, 1, 1, 1, 1, 3, 5),
+                /* value= */ 1,
+                /* inclusive= */ false,
+                /* stayInBounds= */ true))
         .isEqualTo(0);
   }
 
   @Test
   public void
       longArrayBinarySearchFloor_targetInArrayAndInclusiveTrue_returnsFirstIndexWithValueEqualToTarget() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 1, /* inclusive= */ true, /* stayInBounds= */ false))
+                newLongArray(1, 1, 1, 1, 1, 3, 5),
+                /* value= */ 1,
+                /* inclusive= */ true,
+                /* stayInBounds= */ false))
         .isEqualTo(0);
   }
 
   @Test
   public void
       longArrayBinarySearchFloor_targetBetweenValuesAndInclusiveFalse_returnsIndexWhereTargetShouldBeInserted() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 2, /* inclusive= */ false, /* stayInBounds= */ false))
+                newLongArray(1, 1, 1, 1, 1, 3, 5),
+                /* value= */ 2,
+                /* inclusive= */ false,
+                /* stayInBounds= */ false))
         .isEqualTo(4);
   }
 
   @Test
   public void
       longArrayBinarySearchFloor_targetBetweenValuesAndInclusiveTrue_returnsIndexWhereTargetShouldBeInserted() {
-    LongArray longArray = new LongArray();
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(1);
-    longArray.add(3);
-    longArray.add(5);
-
     assertThat(
             binarySearchFloor(
-                longArray, /* value= */ 2, /* inclusive= */ true, /* stayInBounds= */ false))
+                newLongArray(1, 1, 1, 1, 1, 3, 5),
+                /* value= */ 2,
+                /* inclusive= */ true,
+                /* stayInBounds= */ false))
         .isEqualTo(4);
   }
 
@@ -742,6 +706,13 @@ public class UtilTest {
   }
 
   @Test
+  public void testToHexString() {
+    byte[] bytes = TestUtil.createByteArray(0x12, 0xFC, 0x06);
+
+    assertThat(Util.toHexString(bytes)).isEqualTo("12fc06");
+  }
+
+  @Test
   public void testGetCodecsOfType() {
     assertThat(getCodecsOfType(null, C.TRACK_TYPE_VIDEO)).isNull();
     assertThat(getCodecsOfType("avc1.64001e,vp9.63.1", C.TRACK_TYPE_AUDIO)).isNull();
@@ -813,8 +784,9 @@ public class UtilTest {
     assertThat(Arrays.copyOf(output.data, output.limit())).isEqualTo(testData);
   }
 
+  // TODO: Revert to @Config(sdk = Config.ALL_SDKS) once b/143232359 is resolved
   @Test
-  @Config(sdk = Config.ALL_SDKS)
+  @Config(minSdk = Config.OLDEST_SDK, maxSdk = Config.TARGET_SDK)
   public void normalizeLanguageCode_keepsUndefinedTagsUnchanged() {
     assertThat(Util.normalizeLanguageCode(null)).isNull();
     assertThat(Util.normalizeLanguageCode("")).isEmpty();
@@ -822,8 +794,9 @@ public class UtilTest {
     assertThat(Util.normalizeLanguageCode("DoesNotExist")).isEqualTo("doesnotexist");
   }
 
+  // TODO: Revert to @Config(sdk = Config.ALL_SDKS) once b/143232359 is resolved
   @Test
-  @Config(sdk = Config.ALL_SDKS)
+  @Config(minSdk = Config.OLDEST_SDK, maxSdk = Config.TARGET_SDK)
   public void normalizeLanguageCode_normalizesCodeToTwoLetterISOAndLowerCase_keepingAllSubtags() {
     assertThat(Util.normalizeLanguageCode("es")).isEqualTo("es");
     assertThat(Util.normalizeLanguageCode("spa")).isEqualTo("es");
@@ -841,8 +814,9 @@ public class UtilTest {
     assertThat(Util.normalizeLanguageCode("sv-illegalSubtag")).isEqualTo("sv-illegalsubtag");
   }
 
+  // TODO: Revert to @Config(sdk = Config.ALL_SDKS) once b/143232359 is resolved
   @Test
-  @Config(sdk = Config.ALL_SDKS)
+  @Config(minSdk = Config.OLDEST_SDK, maxSdk = Config.TARGET_SDK)
   public void normalizeLanguageCode_iso6392BibliographicalAndTextualCodes_areNormalizedToSameTag() {
     // See https://en.wikipedia.org/wiki/List_of_ISO_639-2_codes.
     assertThat(Util.normalizeLanguageCode("alb")).isEqualTo(Util.normalizeLanguageCode("sqi"));
@@ -868,8 +842,9 @@ public class UtilTest {
     assertThat(Util.normalizeLanguageCode("wel")).isEqualTo(Util.normalizeLanguageCode("cym"));
   }
 
+  // TODO: Revert to @Config(sdk = Config.ALL_SDKS) once b/143232359 is resolved
   @Test
-  @Config(sdk = Config.ALL_SDKS)
+  @Config(minSdk = Config.OLDEST_SDK, maxSdk = Config.TARGET_SDK)
   public void
       normalizeLanguageCode_deprecatedLanguageTagsAndModernReplacement_areNormalizedToSameTag() {
     // See https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes, "ISO 639:1988"
@@ -906,8 +881,9 @@ public class UtilTest {
         .isEqualTo(Util.normalizeLanguageCode("zh-hsn"));
   }
 
+  // TODO: Revert to @Config(sdk = Config.ALL_SDKS) once b/143232359 is resolved
   @Test
-  @Config(sdk = Config.ALL_SDKS)
+  @Config(minSdk = Config.OLDEST_SDK, maxSdk = Config.TARGET_SDK)
   public void normalizeLanguageCode_macrolanguageTags_areFullyMaintained() {
     // See https://en.wikipedia.org/wiki/ISO_639_macrolanguage
     assertThat(Util.normalizeLanguageCode("zh-cmn")).isEqualTo("zh-cmn");
@@ -944,5 +920,13 @@ public class UtilTest {
   private static void assertEscapeUnescapeFileName(String fileName) {
     String escapedFileName = Util.escapeFileName(fileName);
     assertThat(unescapeFileName(escapedFileName)).isEqualTo(fileName);
+  }
+
+  private static LongArray newLongArray(long... values) {
+    LongArray longArray = new LongArray();
+    for (long value : values) {
+      longArray.add(value);
+    }
+    return longArray;
   }
 }

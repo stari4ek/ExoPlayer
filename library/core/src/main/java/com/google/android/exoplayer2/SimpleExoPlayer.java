@@ -15,7 +15,6 @@
  */
 package com.google.android.exoplayer2;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
@@ -28,6 +27,7 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.exoplayer2.analytics.AnalyticsCollector;
 import com.google.android.exoplayer2.analytics.AnalyticsListener;
@@ -36,9 +36,6 @@ import com.google.android.exoplayer2.audio.AudioListener;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.audio.AuxEffectInfo;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
-import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.MetadataOutput;
 import com.google.android.exoplayer2.source.MediaSource;
@@ -296,16 +293,7 @@ public class SimpleExoPlayer extends BasePlayer
     public SimpleExoPlayer build() {
       Assertions.checkState(!buildCalled);
       buildCalled = true;
-      return new SimpleExoPlayer(
-          context,
-          renderersFactory,
-          trackSelector,
-          loadControl,
-          bandwidthMeter,
-          analyticsCollector,
-          useLazyPreparation,
-          clock,
-          looper);
+      return new SimpleExoPlayer(/* builder= */ this);
     }
   }
 
@@ -329,6 +317,7 @@ public class SimpleExoPlayer extends BasePlayer
   private final AudioBecomingNoisyManager audioBecomingNoisyManager;
   private final AudioFocusManager audioFocusManager;
   private final WakeLockManager wakeLockManager;
+  private final WifiLockManager wifiLockManager;
 
   @Nullable private Format videoFormat;
   @Nullable private Format audioFormat;
@@ -346,6 +335,7 @@ public class SimpleExoPlayer extends BasePlayer
   private int audioSessionId;
   private AudioAttributes audioAttributes;
   private float audioVolume;
+  private boolean skipSilenceEnabled;
   private List<Cue> currentCues;
   @Nullable private VideoFrameMetadataListener videoFrameMetadataListener;
   @Nullable private CameraMotionListener cameraMotionListener;
@@ -353,6 +343,20 @@ public class SimpleExoPlayer extends BasePlayer
   @Nullable private PriorityTaskManager priorityTaskManager;
   private boolean isPriorityTaskManagerRegistered;
   private boolean playerReleased;
+
+  /** @param builder The {@link Builder} to obtain all construction parameters. */
+  protected SimpleExoPlayer(Builder builder) {
+    this(
+        builder.context,
+        builder.renderersFactory,
+        builder.trackSelector,
+        builder.loadControl,
+        builder.bandwidthMeter,
+        builder.analyticsCollector,
+        builder.useLazyPreparation,
+        builder.clock,
+        builder.looper);
+  }
 
   /**
    * @param context A {@link Context}.
@@ -370,42 +374,11 @@ public class SimpleExoPlayer extends BasePlayer
    * @param looper The {@link Looper} which must be used for all calls to the player and which is
    *     used to call listeners on.
    */
-  @SuppressWarnings("deprecation")
   protected SimpleExoPlayer(
       Context context,
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      BandwidthMeter bandwidthMeter,
-      AnalyticsCollector analyticsCollector,
-      boolean useLazyPreparation,
-      Clock clock,
-      Looper looper) {
-    this(
-        context,
-        renderersFactory,
-        trackSelector,
-        loadControl,
-        DrmSessionManager.getDummyDrmSessionManager(),
-        bandwidthMeter,
-        analyticsCollector,
-        useLazyPreparation,
-        clock,
-        looper);
-  }
-
-  /**
-   * @deprecated Use {@link #SimpleExoPlayer(Context, RenderersFactory, TrackSelector, LoadControl,
-   *     BandwidthMeter, AnalyticsCollector, boolean, Clock, Looper)} instead, and pass the {@link
-   *     DrmSessionManager} to the {@link MediaSource} factories.
-   */
-  @Deprecated
-  protected SimpleExoPlayer(
-      Context context,
-      RenderersFactory renderersFactory,
-      TrackSelector trackSelector,
-      LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       BandwidthMeter bandwidthMeter,
       AnalyticsCollector analyticsCollector,
       boolean useLazyPreparation,
@@ -427,8 +400,7 @@ public class SimpleExoPlayer extends BasePlayer
             componentListener,
             componentListener,
             componentListener,
-            componentListener,
-            drmSessionManager);
+            componentListener);
 
     // Set initial values.
     audioVolume = 1;
@@ -457,13 +429,11 @@ public class SimpleExoPlayer extends BasePlayer
     audioListeners.add(analyticsCollector);
     addMetadataOutput(analyticsCollector);
     bandwidthMeter.addEventListener(eventHandler, analyticsCollector);
-    if (drmSessionManager instanceof DefaultDrmSessionManager) {
-      ((DefaultDrmSessionManager) drmSessionManager).addListener(eventHandler, analyticsCollector);
-    }
     audioBecomingNoisyManager =
         new AudioBecomingNoisyManager(context, eventHandler, componentListener);
     audioFocusManager = new AudioFocusManager(context, eventHandler, componentListener);
     wakeLockManager = new WakeLockManager(context);
+    wifiLockManager = new WifiLockManager(context);
   }
 
   @Override
@@ -688,11 +658,13 @@ public class SimpleExoPlayer extends BasePlayer
       }
     }
 
+    boolean playWhenReady = getPlayWhenReady();
     @AudioFocusManager.PlayerCommand
     int playerCommand =
         audioFocusManager.setAudioAttributes(
-            handleAudioFocus ? audioAttributes : null, getPlayWhenReady(), getPlaybackState());
-    updatePlayWhenReady(getPlayWhenReady(), playerCommand);
+            handleAudioFocus ? audioAttributes : null, playWhenReady, getPlaybackState());
+    updatePlayWhenReady(
+        playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
   }
 
   @Override
@@ -850,12 +822,12 @@ public class SimpleExoPlayer extends BasePlayer
    * @param params The {@link PlaybackParams}, or null to clear any previously set parameters.
    */
   @Deprecated
-  @TargetApi(23)
+  @RequiresApi(23)
   public void setPlaybackParams(@Nullable PlaybackParams params) {
     PlaybackParameters playbackParameters;
     if (params != null) {
       params.allowDefaults();
-      playbackParameters = new PlaybackParameters(params.getSpeed(), params.getPitch());
+      playbackParameters = new PlaybackParameters(params.getSpeed());
     } else {
       playbackParameters = null;
     }
@@ -958,6 +930,11 @@ public class SimpleExoPlayer extends BasePlayer
             .send();
       }
     }
+  }
+
+  /** Returns whether skipping silences in the audio stream is enabled. */
+  public boolean isSkipSilenceEnabled() {
+    return skipSilenceEnabled;
   }
 
   /**
@@ -1161,11 +1138,19 @@ public class SimpleExoPlayer extends BasePlayer
     return player.getPlaybackSuppressionReason();
   }
 
+  /** @deprecated Use {@link #getPlayerError()} instead. */
+  @Deprecated
   @Override
   @Nullable
   public ExoPlaybackException getPlaybackError() {
+    return getPlayerError();
+  }
+
+  @Override
+  @Nullable
+  public ExoPlaybackException getPlayerError() {
     verifyApplicationThread();
-    return player.getPlaybackError();
+    return player.getPlayerError();
   }
 
   /** @deprecated Use {@link #prepare()} instead. */
@@ -1179,9 +1164,11 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void prepare() {
     verifyApplicationThread();
+    boolean playWhenReady = getPlayWhenReady();
     @AudioFocusManager.PlayerCommand
-    int playerCommand = audioFocusManager.handlePrepare(getPlayWhenReady());
-    updatePlayWhenReady(getPlayWhenReady(), playerCommand);
+    int playerCommand = audioFocusManager.handlePrepare(playWhenReady);
+    updatePlayWhenReady(
+        playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
     player.prepare();
   }
 
@@ -1318,7 +1305,8 @@ public class SimpleExoPlayer extends BasePlayer
     verifyApplicationThread();
     @AudioFocusManager.PlayerCommand
     int playerCommand = audioFocusManager.handleSetPlayWhenReady(playWhenReady, getPlaybackState());
-    updatePlayWhenReady(playWhenReady, playerCommand);
+    updatePlayWhenReady(
+        playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
   }
 
   @Override
@@ -1367,6 +1355,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void setPlaybackParameters(@Nullable PlaybackParameters playbackParameters) {
     verifyApplicationThread();
+    setSkipSilenceEnabled(playbackParameters != null && playbackParameters.skipSilence);
     player.setPlaybackParameters(playbackParameters);
   }
 
@@ -1408,6 +1397,7 @@ public class SimpleExoPlayer extends BasePlayer
     audioBecomingNoisyManager.setEnabled(false);
     audioFocusManager.handleStop();
     wakeLockManager.setStayAwake(false);
+    wifiLockManager.setStayAwake(false);
     player.release();
     removeSurfaceCallbacks();
     if (surface != null) {
@@ -1542,9 +1532,45 @@ public class SimpleExoPlayer extends BasePlayer
    *
    * @param handleWakeLock Whether the player should use a {@link android.os.PowerManager.WakeLock}
    *     to ensure the device stays awake for playback, even when the screen is off.
+   * @deprecated Use {@link #setWakeMode(int)} instead.
    */
+  @Deprecated
   public void setHandleWakeLock(boolean handleWakeLock) {
-    wakeLockManager.setEnabled(handleWakeLock);
+    setWakeMode(handleWakeLock ? C.WAKE_MODE_LOCAL : C.WAKE_MODE_NONE);
+  }
+
+  /**
+   * Sets how the player should keep the device awake for playback when the screen is off.
+   *
+   * <p>Enabling this feature requires the {@link android.Manifest.permission#WAKE_LOCK} permission.
+   * It should be used together with a foreground {@link android.app.Service} for use cases where
+   * playback occurs and the screen is off (e.g. background audio playback). It is not useful when
+   * the screen will be kept on during playback (e.g. foreground video playback).
+   *
+   * <p>When enabled, the locks ({@link android.os.PowerManager.WakeLock} / {@link
+   * android.net.wifi.WifiManager.WifiLock}) will be held whenever the player is in the {@link
+   * #STATE_READY} or {@link #STATE_BUFFERING} states with {@code playWhenReady = true}. The locks
+   * held depends on the specified {@link C.WakeMode}.
+   *
+   * @param wakeMode The {@link C.WakeMode} option to keep the device awake during playback.
+   */
+  public void setWakeMode(@C.WakeMode int wakeMode) {
+    switch (wakeMode) {
+      case C.WAKE_MODE_NONE:
+        wakeLockManager.setEnabled(false);
+        wifiLockManager.setEnabled(false);
+        break;
+      case C.WAKE_MODE_LOCAL:
+        wakeLockManager.setEnabled(true);
+        wifiLockManager.setEnabled(false);
+        break;
+      case C.WAKE_MODE_NETWORK:
+        wakeLockManager.setEnabled(true);
+        wifiLockManager.setEnabled(true);
+        break;
+      default:
+        break;
+    }
   }
 
   // Internal methods.
@@ -1634,14 +1660,16 @@ public class SimpleExoPlayer extends BasePlayer
   }
 
   private void updatePlayWhenReady(
-      boolean playWhenReady, @AudioFocusManager.PlayerCommand int playerCommand) {
+      boolean playWhenReady,
+      @AudioFocusManager.PlayerCommand int playerCommand,
+      @Player.PlayWhenReadyChangeReason int playWhenReadyChangeReason) {
     playWhenReady = playWhenReady && playerCommand != AudioFocusManager.PLAYER_COMMAND_DO_NOT_PLAY;
     @PlaybackSuppressionReason
     int playbackSuppressionReason =
         playWhenReady && playerCommand != AudioFocusManager.PLAYER_COMMAND_PLAY_WHEN_READY
             ? Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
             : Player.PLAYBACK_SUPPRESSION_REASON_NONE;
-    player.setPlayWhenReady(playWhenReady, playbackSuppressionReason);
+    player.setPlayWhenReady(playWhenReady, playbackSuppressionReason, playWhenReadyChangeReason);
   }
 
   private void verifyApplicationThread() {
@@ -1652,6 +1680,48 @@ public class SimpleExoPlayer extends BasePlayer
               + "https://exoplayer.dev/issues/player-accessed-on-wrong-thread",
           hasNotifiedFullWrongThreadWarning ? null : new IllegalStateException());
       hasNotifiedFullWrongThreadWarning = true;
+    }
+  }
+
+  private void updateWakeAndWifiLock() {
+    @State int playbackState = getPlaybackState();
+    switch (playbackState) {
+      case Player.STATE_READY:
+      case Player.STATE_BUFFERING:
+        wakeLockManager.setStayAwake(getPlayWhenReady());
+        wifiLockManager.setStayAwake(getPlayWhenReady());
+        break;
+      case Player.STATE_ENDED:
+      case Player.STATE_IDLE:
+        wakeLockManager.setStayAwake(false);
+        wifiLockManager.setStayAwake(false);
+        break;
+      default:
+        throw new IllegalStateException();
+    }
+  }
+
+  private static int getPlayWhenReadyChangeReason(boolean playWhenReady, int playerCommand) {
+    return playWhenReady && playerCommand != AudioFocusManager.PLAYER_COMMAND_PLAY_WHEN_READY
+        ? PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+        : PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST;
+  }
+
+  @SuppressWarnings("SuspiciousMethodCalls")
+  private void setSkipSilenceEnabled(boolean skipSilenceEnabled) {
+    if (this.skipSilenceEnabled == skipSilenceEnabled) {
+      return;
+    }
+    this.skipSilenceEnabled = skipSilenceEnabled;
+    for (AudioListener listener : audioListeners) {
+      // Prevent duplicate notification if a listener is both a AudioRendererEventListener and
+      // a AudioListener, as they have the same method signature.
+      if (!audioDebugListeners.contains(listener)) {
+        listener.onSkipSilenceEnabledChanged(skipSilenceEnabled);
+      }
+    }
+    for (AudioRendererEventListener listener : audioDebugListeners) {
+      listener.onSkipSilenceEnabledChanged(skipSilenceEnabled);
     }
   }
 
@@ -1738,6 +1808,15 @@ public class SimpleExoPlayer extends BasePlayer
       videoDecoderCounters = null;
     }
 
+    @Override
+    public void onVideoFrameProcessingOffset(
+        long totalProcessingOffsetUs, int frameCount, Format format) {
+      for (VideoRendererEventListener videoDebugListener : videoDebugListeners) {
+        videoDebugListener.onVideoFrameProcessingOffset(
+            totalProcessingOffsetUs, frameCount, format);
+      }
+    }
+
     // AudioRendererEventListener implementation
 
     @Override
@@ -1799,6 +1878,11 @@ public class SimpleExoPlayer extends BasePlayer
       audioFormat = null;
       audioDecoderCounters = null;
       audioSessionId = C.AUDIO_SESSION_ID_UNSET;
+    }
+
+    @Override
+    public void onSkipSilenceEnabledChanged(boolean skipSilenceEnabled) {
+      setSkipSilenceEnabled(skipSilenceEnabled);
     }
 
     // TextOutput implementation
@@ -1872,20 +1956,29 @@ public class SimpleExoPlayer extends BasePlayer
 
     @Override
     public void executePlayerCommand(@AudioFocusManager.PlayerCommand int playerCommand) {
-      updatePlayWhenReady(getPlayWhenReady(), playerCommand);
+      boolean playWhenReady = getPlayWhenReady();
+      updatePlayWhenReady(
+          playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
     }
 
     // AudioBecomingNoisyManager.EventListener implementation.
 
     @Override
     public void onAudioBecomingNoisy() {
-      pause();
+      // Command is always PLAYER_COMMAND_DO_NOT_PLAY but the call is needed to abandon the
+      // audio focus if the focus is currently held.
+      int playerCommand =
+          audioFocusManager.handleSetPlayWhenReady(/* playWhenReady= */ false, getPlaybackState());
+      updatePlayWhenReady(
+          /* playWhenReady= */ false,
+          playerCommand,
+          Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY);
     }
 
     // Player.EventListener implementation.
 
     @Override
-    public void onLoadingChanged(boolean isLoading) {
+    public void onIsLoadingChanged(boolean isLoading) {
       if (priorityTaskManager != null) {
         if (isLoading && !isPriorityTaskManagerRegistered) {
           priorityTaskManager.add(C.PRIORITY_PLAYBACK);
@@ -1898,17 +1991,14 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     @Override
-    public void onPlayerStateChanged(boolean playWhenReady, @State int playbackState) {
-      switch (playbackState) {
-        case Player.STATE_READY:
-        case Player.STATE_BUFFERING:
-          wakeLockManager.setStayAwake(playWhenReady);
-          break;
-        case Player.STATE_ENDED:
-        case Player.STATE_IDLE:
-          wakeLockManager.setStayAwake(false);
-          break;
-      }
+    public void onPlaybackStateChanged(@State int playbackState) {
+      updateWakeAndWifiLock();
+    }
+
+    @Override
+    public void onPlayWhenReadyChanged(
+        boolean playWhenReady, @PlayWhenReadyChangeReason int reason) {
+      updateWakeAndWifiLock();
     }
   }
 }

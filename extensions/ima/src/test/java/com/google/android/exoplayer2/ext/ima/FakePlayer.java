@@ -92,13 +92,22 @@ import java.util.ArrayList;
   }
 
   /** Sets the {@link Player.State} of this player. */
+  @SuppressWarnings("deprecation")
   public void setState(@Player.State int state, boolean playWhenReady) {
-    boolean notify = this.state != state || this.playWhenReady != playWhenReady;
+    boolean playWhenReadyChanged = this.playWhenReady != playWhenReady;
+    boolean playbackStateChanged = this.state != state;
     this.state = state;
     this.playWhenReady = playWhenReady;
-    if (notify) {
+    if (playbackStateChanged || playWhenReadyChanged) {
       for (Player.EventListener listener : listeners) {
         listener.onPlayerStateChanged(playWhenReady, state);
+        if (playbackStateChanged) {
+          listener.onPlaybackStateChanged(state);
+        }
+        if (playWhenReadyChanged) {
+          listener.onPlayWhenReadyChanged(
+              playWhenReady, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
+        }
       }
     }
   }

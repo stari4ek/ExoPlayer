@@ -88,8 +88,8 @@ import java.nio.ByteBuffer;
     return new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
   }
 
-  @Nullable
   @Override
+  @Nullable
   protected Gav1DecoderException decode(
       VideoDecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset) {
     ByteBuffer inputData = Util.castNonNull(inputBuffer.data);
@@ -203,7 +203,7 @@ import java.nio.ByteBuffer;
    * @param context Decoder context.
    * @param surface Output surface.
    * @param outputBuffer Output buffer with the decoded frame.
-   * @return {@link #GAV1_OK} if successful, {@link #GAV1_ERROR} if an error occured.
+   * @return {@link #GAV1_OK} if successful, {@link #GAV1_ERROR} if an error occurred.
    */
   private native int gav1RenderFrame(
       long context, Surface surface, VideoDecoderOutputBuffer outputBuffer);
@@ -225,10 +225,10 @@ import java.nio.ByteBuffer;
   private native String gav1GetErrorMessage(long context);
 
   /**
-   * Returns whether an error occured.
+   * Returns whether an error occurred.
    *
    * @param context Decoder context.
-   * @return {@link #GAV1_OK} if there was no error, {@link #GAV1_ERROR} if an error occured.
+   * @return {@link #GAV1_OK} if there was no error, {@link #GAV1_ERROR} if an error occurred.
    */
   private native int gav1CheckError(long context);
 }
