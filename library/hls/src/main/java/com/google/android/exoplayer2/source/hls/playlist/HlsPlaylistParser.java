@@ -129,6 +129,11 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       + ":([\\d\\.]+)\\b");
   private static final Pattern REGEX_MEDIA_TITLE =
       Pattern.compile(TAG_MEDIA_DURATION + ":[\\d\\.]+\\b,(.+)");
+  // TVirl
+  private static final String SPACES = "(\\s)*"; // any spaces
+  private static final Pattern REGEX_MEDIA_DURATION_RELAXED = Pattern.compile(TAG_MEDIA_DURATION +
+      ":" + SPACES + "([\\d\\.]+)\\b");
+  // !TVirl
   private static final Pattern REGEX_TIME_OFFSET = Pattern.compile("TIME-OFFSET=(-?[\\d\\.]+)\\b");
   private static final Pattern REGEX_BYTERANGE = Pattern.compile(TAG_BYTERANGE
       + ":(\\d+(?:@\\d+)?)\\b");
@@ -189,6 +194,13 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     this.masterPlaylist = masterPlaylist;
   }
 
+  // TVirl
+  // some crappy services can have wrong width/height in manifest and
+  // video stream will be discarded cause it has to be aligned
+  // alignment equal to 1 means no alignment
+  private final static int WORKAROUND_VIDEO_SIZE_ALIGNMENT = 2;   // require at least 2px
+
+
   @Override
   public HlsPlaylist parse(Uri uri, InputStream inputStream) throws IOException {
     BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
@@ -224,7 +236,10 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     } finally {
       Util.closeQuietly(reader);
     }
-    throw new ParserException("Failed to parse the playlist, could not identify any tags.");
+    // TVirl
+    // throw new ParserException("Failed to parse the playlist, could not identify any tags.");
+    throw new ParserException("Failed to parse the playlist, could not identify any tags." +
+        " Lines: >>>\n" + TextUtils.join("\n", extraLines) + "\n<<<");
   }
 
   private static boolean checkPlaylistHeader(BufferedReader reader) throws IOException {
@@ -303,8 +318,23 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         }
       } else if (line.startsWith(TAG_STREAM_INF)) {
         noClosedCaptions |= line.contains(ATTR_CLOSED_CAPTIONS_NONE);
-        int bitrate = parseIntAttr(line, REGEX_BANDWIDTH);
-        // TODO: Plumb this into Format.
+        // TVirl
+        //int peakBitrate = parseIntAttr(line, REGEX_BANDWIDTH);
+        int peakBitrate;
+        try {
+          peakBitrate = parseIntAttr(line, REGEX_BANDWIDTH);
+        } catch (ParserException e) {
+          // grab the rest of tags
+          while (iterator.hasNext()) {
+            line = iterator.next();
+            if (line.startsWith(TAG_PREFIX)) {
+              tags.add(line);
+            }
+          }
+          throw new ParserException("Failed to parse required bandwidth. Tags: >>>\n" +
+              TextUtils.join("\n", tags) + "\n<<<", e);
+        }
+        // !TVirl
         int averageBitrate = parseOptionalIntAttr(line, REGEX_AVERAGE_BANDWIDTH, -1);
         String codecs = parseOptionalStringAttr(line, REGEX_CODECS, variableDefinitions);
         String resolutionString =
@@ -319,6 +349,14 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
             // Resolution string is invalid.
             width = Format.NO_VALUE;
             height = Format.NO_VALUE;
+          }
+          // TVirl: reject non-aligned dimensions
+          else if (width % WORKAROUND_VIDEO_SIZE_ALIGNMENT != 0 ||
+                   height % WORKAROUND_VIDEO_SIZE_ALIGNMENT != 0) {
+
+            width = Format.NO_VALUE;
+            height = Format.NO_VALUE;
+            // !TVirl
           }
         } else {
           width = Format.NO_VALUE;
@@ -344,32 +382,33 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
                 iterator.next(), variableDefinitions); // #EXT-X-STREAM-INF's URI.
         Uri uri = UriUtil.resolveToUri(baseUri, line);
         Format format =
-            Format.createVideoContainerFormat(
-                /* id= */ Integer.toString(variants.size()),
-                /* label= */ null,
-                /* containerMimeType= */ MimeTypes.APPLICATION_M3U8,
-                /* sampleMimeType= */ null,
-                codecs,
-                /* metadata= */ null,
-                bitrate,
-                width,
-                height,
-                frameRate,
-                /* initializationData= */ null,
-                /* selectionFlags= */ 0,
-                /* roleFlags= */ 0);
+            new Format.Builder()
+                .setId(variants.size())
+                .setContainerMimeType(MimeTypes.APPLICATION_M3U8)
+                .setCodecs(codecs)
+                .setAverageBitrate(averageBitrate)
+                .setPeakBitrate(peakBitrate)
+                .setWidth(width)
+                .setHeight(height)
+                .setFrameRate(frameRate)
+                .build();
         Variant variant =
             new Variant(
                 uri, format, videoGroupId, audioGroupId, subtitlesGroupId, closedCaptionsGroupId);
         variants.add(variant);
-        ArrayList<VariantInfo> variantInfosForUrl = urlToVariantInfos.get(uri);
+        @Nullable ArrayList<VariantInfo> variantInfosForUrl = urlToVariantInfos.get(uri);
         if (variantInfosForUrl == null) {
           variantInfosForUrl = new ArrayList<>();
           urlToVariantInfos.put(uri, variantInfosForUrl);
         }
         variantInfosForUrl.add(
             new VariantInfo(
-                bitrate, videoGroupId, audioGroupId, subtitlesGroupId, closedCaptionsGroupId));
+                averageBitrate,
+                peakBitrate,
+                videoGroupId,
+                audioGroupId,
+                subtitlesGroupId,
+                closedCaptionsGroupId));
       }
     }
 
@@ -385,9 +424,9 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
                 /* groupId= */ null,
                 /* name= */ null,
                 Assertions.checkNotNull(urlToVariantInfos.get(variant.url)));
-        deduplicatedVariants.add(
-            variant.copyWithFormat(
-                variant.format.copyWithMetadata(new Metadata(hlsMetadataEntry))));
+        Metadata metadata = new Metadata(hlsMetadataEntry);
+        Format format = variant.format.buildUpon().setMetadata(metadata).build();
+        deduplicatedVariants.add(variant.copyWithFormat(format));
       }
     }
 
@@ -395,131 +434,89 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       line = mediaTags.get(i);
       String groupId = parseStringAttr(line, REGEX_GROUP_ID, variableDefinitions);
       String name = parseStringAttr(line, REGEX_NAME, variableDefinitions);
-      String referenceUri = parseOptionalStringAttr(line, REGEX_URI, variableDefinitions);
-      Uri uri = referenceUri == null ? null : UriUtil.resolveToUri(baseUri, referenceUri);
-      String language = parseOptionalStringAttr(line, REGEX_LANGUAGE, variableDefinitions);
-      @C.SelectionFlags int selectionFlags = parseSelectionFlags(line);
-      @C.RoleFlags int roleFlags = parseRoleFlags(line, variableDefinitions);
-      String formatId = groupId + ":" + name;
-      Format format;
+      Format.Builder formatBuilder =
+          new Format.Builder()
+              .setId(groupId + ":" + name)
+              .setLabel(name)
+              .setContainerMimeType(MimeTypes.APPLICATION_M3U8)
+              .setSelectionFlags(parseSelectionFlags(line))
+              .setRoleFlags(parseRoleFlags(line, variableDefinitions))
+              .setLanguage(parseOptionalStringAttr(line, REGEX_LANGUAGE, variableDefinitions));
+
+      @Nullable String referenceUri = parseOptionalStringAttr(line, REGEX_URI, variableDefinitions);
+      @Nullable Uri uri = referenceUri == null ? null : UriUtil.resolveToUri(baseUri, referenceUri);
       Metadata metadata =
           new Metadata(new HlsTrackMetadataEntry(groupId, name, Collections.emptyList()));
       switch (parseStringAttr(line, REGEX_TYPE, variableDefinitions)) {
         case TYPE_VIDEO:
-          Variant variant = getVariantWithVideoGroup(variants, groupId);
-          String codecs = null;
-          int width = Format.NO_VALUE;
-          int height = Format.NO_VALUE;
-          float frameRate = Format.NO_VALUE;
+          @Nullable Variant variant = getVariantWithVideoGroup(variants, groupId);
           if (variant != null) {
             Format variantFormat = variant.format;
-            codecs = Util.getCodecsOfType(variantFormat.codecs, C.TRACK_TYPE_VIDEO);
-            width = variantFormat.width;
-            height = variantFormat.height;
-            frameRate = variantFormat.frameRate;
+            @Nullable
+            String codecs = Util.getCodecsOfType(variantFormat.codecs, C.TRACK_TYPE_VIDEO);
+            formatBuilder
+                .setCodecs(codecs)
+                .setSampleMimeType(MimeTypes.getMediaMimeType(codecs))
+                .setWidth(variantFormat.width)
+                .setHeight(variantFormat.height)
+                .setFrameRate(variantFormat.frameRate);
           }
-          String sampleMimeType = codecs != null ? MimeTypes.getMediaMimeType(codecs) : null;
-          format =
-              Format.createVideoContainerFormat(
-                      /* id= */ formatId,
-                      /* label= */ name,
-                      /* containerMimeType= */ MimeTypes.APPLICATION_M3U8,
-                      sampleMimeType,
-                      codecs,
-                      /* metadata= */ null,
-                      /* bitrate= */ Format.NO_VALUE,
-                      width,
-                      height,
-                      frameRate,
-                      /* initializationData= */ null,
-                      selectionFlags,
-                      roleFlags)
-                  .copyWithMetadata(metadata);
           if (uri == null) {
             // TODO: Remove this case and add a Rendition with a null uri to videos.
           } else {
-            videos.add(new Rendition(uri, format, groupId, name));
+            formatBuilder.setMetadata(metadata);
+            videos.add(new Rendition(uri, formatBuilder.build(), groupId, name));
           }
           break;
         case TYPE_AUDIO:
+          @Nullable String sampleMimeType = null;
           variant = getVariantWithAudioGroup(variants, groupId);
-          codecs =
-              variant != null
-                  ? Util.getCodecsOfType(variant.format.codecs, C.TRACK_TYPE_AUDIO)
-                  : null;
-          sampleMimeType = codecs != null ? MimeTypes.getMediaMimeType(codecs) : null;
+          if (variant != null) {
+            @Nullable
+            String codecs = Util.getCodecsOfType(variant.format.codecs, C.TRACK_TYPE_AUDIO);
+            formatBuilder.setCodecs(codecs);
+            sampleMimeType = MimeTypes.getMediaMimeType(codecs);
+          }
+          @Nullable
           String channelsString =
               parseOptionalStringAttr(line, REGEX_CHANNELS, variableDefinitions);
-          int channelCount = Format.NO_VALUE;
           if (channelsString != null) {
-            channelCount = Integer.parseInt(Util.splitAtFirst(channelsString, "/")[0]);
+            int channelCount = Integer.parseInt(Util.splitAtFirst(channelsString, "/")[0]);
+            formatBuilder.setChannelCount(channelCount);
             if (MimeTypes.AUDIO_E_AC3.equals(sampleMimeType) && channelsString.endsWith("/JOC")) {
               sampleMimeType = MimeTypes.AUDIO_E_AC3_JOC;
             }
           }
-          format =
-              Format.createAudioContainerFormat(
-                  /* id= */ formatId,
-                  /* label= */ name,
-                  /* containerMimeType= */ MimeTypes.APPLICATION_M3U8,
-                  sampleMimeType,
-                  codecs,
-                  /* metadata= */ null,
-                  /* bitrate= */ Format.NO_VALUE,
-                  channelCount,
-                  /* sampleRate= */ Format.NO_VALUE,
-                  /* initializationData= */ null,
-                  selectionFlags,
-                  roleFlags,
-                  language);
+          formatBuilder.setSampleMimeType(sampleMimeType);
           if (uri == null) {
             // TODO: Remove muxedAudioFormat and add a Rendition with a null uri to audios.
-            muxedAudioFormat = format;
+            muxedAudioFormat = formatBuilder.build();
           } else {
-            audios.add(new Rendition(uri, format.copyWithMetadata(metadata), groupId, name));
+            formatBuilder.setMetadata(metadata);
+            audios.add(new Rendition(uri, formatBuilder.build(), groupId, name));
           }
           break;
         case TYPE_SUBTITLES:
-          format =
-              Format.createTextContainerFormat(
-                      /* id= */ formatId,
-                      /* label= */ name,
-                      /* containerMimeType= */ MimeTypes.APPLICATION_M3U8,
-                      /* sampleMimeType= */ MimeTypes.TEXT_VTT,
-                      /* codecs= */ null,
-                      /* bitrate= */ Format.NO_VALUE,
-                      selectionFlags,
-                      roleFlags,
-                      language)
-                  .copyWithMetadata(metadata);
-          subtitles.add(new Rendition(uri, format, groupId, name));
+          formatBuilder.setSampleMimeType(MimeTypes.TEXT_VTT).setMetadata(metadata);
+          subtitles.add(new Rendition(uri, formatBuilder.build(), groupId, name));
           break;
         case TYPE_CLOSED_CAPTIONS:
           String instreamId = parseStringAttr(line, REGEX_INSTREAM_ID, variableDefinitions);
-          String mimeType;
           int accessibilityChannel;
           if (instreamId.startsWith("CC")) {
-            mimeType = MimeTypes.APPLICATION_CEA608;
+            sampleMimeType = MimeTypes.APPLICATION_CEA608;
             accessibilityChannel = Integer.parseInt(instreamId.substring(2));
           } else /* starts with SERVICE */ {
-            mimeType = MimeTypes.APPLICATION_CEA708;
+            sampleMimeType = MimeTypes.APPLICATION_CEA708;
             accessibilityChannel = Integer.parseInt(instreamId.substring(7));
           }
           if (muxedCaptionFormats == null) {
             muxedCaptionFormats = new ArrayList<>();
           }
-          muxedCaptionFormats.add(
-              Format.createTextContainerFormat(
-                  /* id= */ formatId,
-                  /* label= */ name,
-                  /* containerMimeType= */ null,
-                  /* sampleMimeType= */ mimeType,
-                  /* codecs= */ null,
-                  /* bitrate= */ Format.NO_VALUE,
-                  selectionFlags,
-                  roleFlags,
-                  language,
-                  accessibilityChannel));
+          formatBuilder
+              .setSampleMimeType(sampleMimeType)
+              .setAccessibilityChannel(accessibilityChannel);
+          muxedCaptionFormats.add(formatBuilder.build());
           // TODO: Remove muxedCaptionFormats and add a Rendition with a null uri to closedCaptions.
           break;
         default:
@@ -648,7 +645,20 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       } else if (line.startsWith(TAG_TARGET_DURATION)) {
         targetDurationUs = parseIntAttr(line, REGEX_TARGET_DURATION) * C.MICROS_PER_SECOND;
       } else if (line.startsWith(TAG_MEDIA_SEQUENCE)) {
-        mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
+        // TVirl: be nice with "#EXT-X-MEDIA-SEQUENCE0"
+        //mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
+        try {
+          mediaSequence = parseLongAttr(line, REGEX_MEDIA_SEQUENCE);
+        } catch (ParserException e) {
+          // since we know that it's TAG_MEDIA_SEQUENCE already - try to be more patient
+          try {
+            mediaSequence = Long.parseLong(line.substring(TAG_MEDIA_SEQUENCE.length()).trim());
+          } catch (NumberFormatException ignored) {
+            // throw original one
+            throw e;
+          }
+        }
+        // !TVirl
         segmentMediaSequence = mediaSequence;
       } else if (line.startsWith(TAG_VERSION)) {
         version = parseIntAttr(line, REGEX_VERSION);
@@ -667,8 +677,23 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
               parseStringAttr(line, REGEX_VALUE, variableDefinitions));
         }
       } else if (line.startsWith(TAG_MEDIA_DURATION)) {
-        segmentDurationUs =
-            (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION) * C.MICROS_PER_SECOND);
+        // TVirl: be nice with "#EXTINF: 4.32,"
+        //segmentDurationUs =
+        //    (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION) * C.MICROS_PER_SECOND);
+        try {
+          segmentDurationUs =
+              (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION) * C.MICROS_PER_SECOND);
+        } catch (ParserException e) {
+          // since we know that it's TAG_MEDIA_DURATION already - try to be more patient
+          try {
+            segmentDurationUs =
+                (long) (parseDoubleAttr(line, REGEX_MEDIA_DURATION_RELAXED) * C.MICROS_PER_SECOND);
+          } catch (Exception ignored) {
+            // throw original one
+            throw e;
+          }
+        }
+        // !TVirl
         segmentTitle = parseOptionalStringAttr(line, REGEX_MEDIA_TITLE, "", variableDefinitions);
       } else if (line.startsWith(TAG_KEY)) {
         String method = parseStringAttr(line, REGEX_METHOD, variableDefinitions);

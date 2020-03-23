@@ -36,8 +36,6 @@ import com.google.android.exoplayer2.testutil.FakeTrackOutput;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.TimestampAdjuster;
-import java.io.ByteArrayOutputStream;
-import java.util.Random;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -45,42 +43,49 @@ import org.junit.runner.RunWith;
 @RunWith(AndroidJUnit4.class)
 public final class TsExtractorTest {
 
-  private static final int TS_PACKET_SIZE = 188;
-  private static final int TS_SYNC_BYTE = 0x47; // First byte of each TS packet.
-
   @Test
-  public void testSample() throws Exception {
+  public void sample() throws Exception {
     ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample.ts");
   }
 
   @Test
-  public void testStreamWithJunkData() throws Exception {
-    Random random = new Random(0);
-    byte[] fileData =
-        TestUtil.getByteArray(ApplicationProvider.getApplicationContext(), "ts/sample.ts");
-    ByteArrayOutputStream out = new ByteArrayOutputStream(fileData.length * 2);
-    int bytesLeft = fileData.length;
-
-    writeJunkData(out, random.nextInt(TS_PACKET_SIZE - 1) + 1);
-    out.write(fileData, 0, TS_PACKET_SIZE * 5);
-    bytesLeft -= TS_PACKET_SIZE * 5;
-
-    for (int i = TS_PACKET_SIZE * 5; i < fileData.length; i += 5 * TS_PACKET_SIZE) {
-      writeJunkData(out, random.nextInt(TS_PACKET_SIZE));
-      int length = Math.min(5 * TS_PACKET_SIZE, bytesLeft);
-      out.write(fileData, i, length);
-      bytesLeft -= length;
-    }
-    out.write(TS_SYNC_BYTE);
-    writeJunkData(out, random.nextInt(TS_PACKET_SIZE - 1) + 1);
-    fileData = out.toByteArray();
-
-    ExtractorAsserts.assertOutput(
-        TsExtractor::new, "ts/sample.ts", fileData, ApplicationProvider.getApplicationContext());
+  public void sampleScte35() throws Exception {
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample_scte35.ts");
   }
 
   @Test
-  public void testCustomPesReader() throws Exception {
+  public void withAit() throws Exception {
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample_ait.ts");
+  }
+
+  @Test
+  public void sampleWithAc3() throws Exception {
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample_ac3.ts");
+  }
+
+  @Test
+  public void sampleWithAc4() throws Exception {
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample_ac4.ts");
+  }
+
+  @Test
+  public void sampleWithEac3() throws Exception {
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample_eac3.ts");
+  }
+
+  @Test
+  public void sampleWithEac3joc() throws Exception {
+    ExtractorAsserts.assertBehavior(TsExtractor::new, "ts/sample_eac3joc.ts");
+  }
+
+  @Test
+  public void streamWithJunkData() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        TsExtractor::new, "ts/sample_with_junk", ApplicationProvider.getApplicationContext());
+  }
+
+  @Test
+  public void customPesReader() throws Exception {
     CustomTsPayloadReaderFactory factory = new CustomTsPayloadReaderFactory(true, false);
     TsExtractor tsExtractor =
         new TsExtractor(TsExtractor.MODE_MULTI_PMT, new TimestampAdjuster(0), factory);
@@ -106,12 +111,17 @@ public final class TsExtractorTest {
     assertThat(reader.packetsRead).isEqualTo(2);
     TrackOutput trackOutput = reader.getTrackOutput();
     assertThat(trackOutput == output.trackOutputs.get(257 /* PID of audio track. */)).isTrue();
-    assertThat(((FakeTrackOutput) trackOutput).format)
-        .isEqualTo(Format.createTextSampleFormat("1/257", "mime", null, 0, 0, "und", null, 0));
+    assertThat(((FakeTrackOutput) trackOutput).lastFormat)
+        .isEqualTo(
+            new Format.Builder()
+                .setId("1/257")
+                .setSampleMimeType("mime")
+                .setLanguage("und")
+                .build());
   }
 
   @Test
-  public void testCustomInitialSectionReader() throws Exception {
+  public void customInitialSectionReader() throws Exception {
     CustomTsPayloadReaderFactory factory = new CustomTsPayloadReaderFactory(false, true);
     TsExtractor tsExtractor =
         new TsExtractor(TsExtractor.MODE_MULTI_PMT, new TimestampAdjuster(0), factory);
@@ -134,16 +144,6 @@ public final class TsExtractorTest {
       }
     }
     assertThat(factory.sdtReader.consumedSdts).isEqualTo(2);
-  }
-
-  private static void writeJunkData(ByteArrayOutputStream out, int length) {
-    for (int i = 0; i < length; i++) {
-      if (((byte) i) == TS_SYNC_BYTE) {
-        out.write(0);
-      } else {
-        out.write(i);
-      }
-    }
   }
 
   private static final class CustomTsPayloadReaderFactory implements TsPayloadReader.Factory {
@@ -173,8 +173,8 @@ public final class TsExtractorTest {
       }
     }
 
-    @Nullable
     @Override
+    @Nullable
     public TsPayloadReader createPayloadReader(int streamType, EsInfo esInfo) {
       if (provideCustomEsReader && streamType == 3) {
         esReader = new CustomEsReader(esInfo.language);
@@ -203,8 +203,11 @@ public final class TsExtractorTest {
       idGenerator.generateNewId();
       output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_UNKNOWN);
       output.format(
-          Format.createTextSampleFormat(
-              idGenerator.getFormatId(), "mime", null, 0, 0, language, null, 0));
+          new Format.Builder()
+              .setId(idGenerator.getFormatId())
+              .setSampleMimeType("mime")
+              .setLanguage(language)
+              .build());
     }
 
     @Override

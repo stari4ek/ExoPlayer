@@ -60,7 +60,7 @@ public final class PsExtractorSeekTest {
   private long totalInputLength;
 
   @Before
-  public void setUp() throws IOException, InterruptedException {
+  public void setUp() throws IOException {
     expectedOutput = new FakeExtractorOutput();
     positionHolder = new PositionHolder();
     extractAllSamplesFromFileToExpectedOutput(
@@ -74,8 +74,7 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testPsExtractorReads_nonSeekTableFile_returnSeekableSeekMap()
-      throws IOException, InterruptedException {
+  public void psExtractorReads_nonSeekTableFile_returnSeekableSeekMap() throws IOException {
     PsExtractor extractor = new PsExtractor();
 
     SeekMap seekMap = extractSeekMapAndTracks(extractor, new FakeExtractorOutput());
@@ -86,8 +85,8 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testHandlePendingSeek_handlesSeekingToPositionInFile_extractsCorrectFrame()
-      throws IOException, InterruptedException {
+  public void handlePendingSeek_handlesSeekingToPositionInFile_extractsCorrectFrame()
+      throws IOException {
     PsExtractor extractor = new PsExtractor();
 
     FakeExtractorOutput extractorOutput = new FakeExtractorOutput();
@@ -103,7 +102,7 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testHandlePendingSeek_handlesSeekToEoF() throws IOException, InterruptedException {
+  public void handlePendingSeek_handlesSeekToEoF() throws IOException, InterruptedException {
     PsExtractor extractor = new PsExtractor();
 
     FakeExtractorOutput extractorOutput = new FakeExtractorOutput();
@@ -118,8 +117,7 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testHandlePendingSeek_handlesSeekingBackward_extractsCorrectFrame()
-      throws IOException, InterruptedException {
+  public void handlePendingSeek_handlesSeekingBackward_extractsCorrectFrame() throws IOException {
     PsExtractor extractor = new PsExtractor();
 
     FakeExtractorOutput extractorOutput = new FakeExtractorOutput();
@@ -138,8 +136,7 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testHandlePendingSeek_handlesSeekingForward_extractsCorrectFrame()
-      throws IOException, InterruptedException {
+  public void handlePendingSeek_handlesSeekingForward_extractsCorrectFrame() throws IOException {
     PsExtractor extractor = new PsExtractor();
 
     FakeExtractorOutput extractorOutput = new FakeExtractorOutput();
@@ -158,8 +155,7 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testHandlePendingSeek_handlesRandomSeeks_extractsCorrectFrame()
-      throws IOException, InterruptedException {
+  public void handlePendingSeek_handlesRandomSeeks_extractsCorrectFrame() throws IOException {
     PsExtractor extractor = new PsExtractor();
 
     FakeExtractorOutput extractorOutput = new FakeExtractorOutput();
@@ -178,8 +174,8 @@ public final class PsExtractorSeekTest {
   }
 
   @Test
-  public void testHandlePendingSeek_handlesRandomSeeksAfterReadingFileOnce_extractsCorrectFrame()
-      throws IOException, InterruptedException {
+  public void handlePendingSeek_handlesRandomSeeksAfterReadingFileOnce_extractsCorrectFrame()
+      throws IOException {
     PsExtractor extractor = new PsExtractor();
 
     FakeExtractorOutput extractorOutput = new FakeExtractorOutput();
@@ -201,8 +197,7 @@ public final class PsExtractorSeekTest {
   // Internal methods
 
   private long readInputLength() throws IOException {
-    DataSpec dataSpec =
-        new DataSpec(Uri.parse("asset:///" + PS_FILE_PATH), 0, C.LENGTH_UNSET, null);
+    DataSpec dataSpec = new DataSpec(Uri.parse("asset:///" + PS_FILE_PATH));
     long totalInputLength = dataSource.open(dataSpec);
     Util.closeQuietly(dataSource);
     return totalInputLength;
@@ -217,7 +212,7 @@ public final class PsExtractorSeekTest {
    */
   private int seekToTimeUs(
       PsExtractor psExtractor, SeekMap seekMap, long seekTimeUs, FakeTrackOutput trackOutput)
-      throws IOException, InterruptedException {
+      throws IOException {
     int numSampleBeforeSeek = trackOutput.getSampleCount();
     SeekMap.SeekPoints seekPoints = seekMap.getSeekPoints(seekTimeUs);
 
@@ -251,7 +246,7 @@ public final class PsExtractorSeekTest {
   }
 
   private SeekMap extractSeekMapAndTracks(PsExtractor extractor, FakeExtractorOutput output)
-      throws IOException, InterruptedException {
+      throws IOException {
     ExtractorInput input = getExtractorInputFromPosition(0);
     extractor.init(output);
     int readResult = Extractor.RESULT_CONTINUE;
@@ -279,7 +274,7 @@ public final class PsExtractorSeekTest {
   }
 
   private void readInputFileOnce(PsExtractor extractor, FakeExtractorOutput extractorOutput)
-      throws IOException, InterruptedException {
+      throws IOException {
     extractor.init(extractorOutput);
     int readResult = Extractor.RESULT_CONTINUE;
     ExtractorInput input = getExtractorInputFromPosition(0);
@@ -343,14 +338,13 @@ public final class PsExtractorSeekTest {
 
   private ExtractorInput getExtractorInputFromPosition(long position) throws IOException {
     DataSpec dataSpec =
-        new DataSpec(
-            Uri.parse("asset:///" + PS_FILE_PATH), position, C.LENGTH_UNSET, /* key= */ null);
+        new DataSpec(Uri.parse("asset:///" + PS_FILE_PATH), position, C.LENGTH_UNSET);
     dataSource.open(dataSpec);
     return new DefaultExtractorInput(dataSource, position, totalInputLength);
   }
 
   private void extractAllSamplesFromFileToExpectedOutput(Context context, String fileName)
-      throws IOException, InterruptedException {
+      throws IOException {
     byte[] data = TestUtil.getByteArray(context, fileName);
 
     PsExtractor extractor = new PsExtractor();

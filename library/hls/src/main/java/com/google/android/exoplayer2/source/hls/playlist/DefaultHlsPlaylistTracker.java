@@ -627,6 +627,11 @@ public final class DefaultHlsPlaylistTracker
         lastSnapshotChangeMs = currentTimeMs;
         onPlaylistUpdated(playlistUrl, playlistSnapshot);
       } else if (!playlistSnapshot.hasEndTag) {
+        // TVirl: some crappy services return empty manifest
+        if (loadedPlaylist.segments.size() == 0) {
+          playlistError = new PlaylistEmptyManifestException(playlistUrl);
+          notifyPlaylistError(playlistUrl, C.TIME_UNSET);
+        } else // !TVirl
         if (loadedPlaylist.mediaSequence + loadedPlaylist.segments.size()
             < playlistSnapshot.mediaSequence) {
           // TODO: Allow customization of playlist resets handling.

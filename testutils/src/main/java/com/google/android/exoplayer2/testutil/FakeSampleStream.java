@@ -25,14 +25,12 @@ import com.google.android.exoplayer2.source.SampleStream;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 
 /**
  * Fake {@link SampleStream} that outputs a given {@link Format}, any amount of {@link
  * FakeSampleStreamItem items}, then end of stream.
  */
-public final class FakeSampleStream implements SampleStream {
+public class FakeSampleStream implements SampleStream {
 
   /** Item to customize a return value of {@link FakeSampleStream#readData}. */
   public static final class FakeSampleStreamItem {
@@ -81,10 +79,11 @@ public final class FakeSampleStream implements SampleStream {
     }
   }
 
-  /** List for use when a single sample is to be output, followed by the end of stream. */
-  public static final List<FakeSampleStreamItem> SINGLE_SAMPLE_THEN_END_OF_STREAM =
-      Arrays.asList(
-          new FakeSampleStreamItem(new byte[] {0}), FakeSampleStreamItem.END_OF_STREAM_ITEM);
+  /** Constant array for use when a single sample is to be output, followed by the end of stream. */
+  public static final FakeSampleStreamItem[] SINGLE_SAMPLE_THEN_END_OF_STREAM =
+      new FakeSampleStreamItem[] {
+        new FakeSampleStreamItem(new byte[] {0}), FakeSampleStreamItem.END_OF_STREAM_ITEM
+      };
 
   private final ArrayDeque<FakeSampleStreamItem> fakeSampleStreamItems;
   private final int timeUsIncrement;
@@ -92,7 +91,7 @@ public final class FakeSampleStream implements SampleStream {
   @Nullable private final EventDispatcher eventDispatcher;
 
   private Format format;
-  private int timeUs;
+  private long timeUs;
   private boolean readFormat;
   private boolean readEOSBuffer;
 
@@ -109,10 +108,11 @@ public final class FakeSampleStream implements SampleStream {
     this(
         format,
         eventDispatcher,
+        /* firstSampleTimeUs= */ 0,
+        /* timeUsIncrement= */ 0,
         shouldOutputSample
             ? SINGLE_SAMPLE_THEN_END_OF_STREAM
-            : Collections.singletonList(FakeSampleStreamItem.END_OF_STREAM_ITEM),
-        /* timeUsIncrement= */ 0);
+            : new FakeSampleStreamItem[] {FakeSampleStreamItem.END_OF_STREAM_ITEM});
   }
 
   /**
@@ -121,31 +121,34 @@ public final class FakeSampleStream implements SampleStream {
    *
    * @param format The {@link Format} to output.
    * @param eventDispatcher An {@link EventDispatcher} to notify of read events.
-   * @param fakeSampleStreamItems The list of {@link FakeSampleStreamItem items} to customize the
-   *     return values of {@link #readData(FormatHolder, DecoderInputBuffer, boolean)}. Note that
-   *     once an EOS buffer has been read, that will return every time readData is called.
+   * @param firstSampleTimeUs The time at which samples will start being output, in microseconds.
    * @param timeUsIncrement The time each sample should increase by, in microseconds.
+   * @param fakeSampleStreamItems The {@link FakeSampleStreamItem items} to customize the return
+   *     values of {@link #readData(FormatHolder, DecoderInputBuffer, boolean)}. Note that once an
+   *     EOS buffer has been read, that will return every time readData is called.
    */
   public FakeSampleStream(
       Format format,
       @Nullable EventDispatcher eventDispatcher,
-      List<FakeSampleStreamItem> fakeSampleStreamItems,
-      int timeUsIncrement) {
+      long firstSampleTimeUs,
+      int timeUsIncrement,
+      FakeSampleStreamItem... fakeSampleStreamItems) {
     this.format = format;
     this.eventDispatcher = eventDispatcher;
-    this.fakeSampleStreamItems = new ArrayDeque<>(fakeSampleStreamItems);
+    this.fakeSampleStreamItems = new ArrayDeque<>(Arrays.asList(fakeSampleStreamItems));
+    this.timeUs = firstSampleTimeUs;
     this.timeUsIncrement = timeUsIncrement;
   }
 
   /**
-   * Resets the samples provided by this sample stream to the provided list.
+   * Clears and assigns new samples provided by this sample stream.
    *
-   * @param fakeSampleStreamItems The list of {@link FakeSampleStreamItem items} to provide.
    * @param timeUs The time at which samples will start being output, in microseconds.
+   * @param fakeSampleStreamItems The {@link FakeSampleStreamItem items} to provide.
    */
-  public void resetSampleStreamItems(List<FakeSampleStreamItem> fakeSampleStreamItems, int timeUs) {
+  public void resetSampleStreamItems(long timeUs, FakeSampleStreamItem... fakeSampleStreamItems) {
     this.fakeSampleStreamItems.clear();
-    this.fakeSampleStreamItems.addAll(fakeSampleStreamItems);
+    this.fakeSampleStreamItems.addAll(Arrays.asList(fakeSampleStreamItems));
     this.timeUs = timeUs;
     readEOSBuffer = false;
   }
@@ -161,7 +164,7 @@ public final class FakeSampleStream implements SampleStream {
 
   @Override
   public boolean isReady() {
-    return true;
+    return !readFormat || readEOSBuffer || !fakeSampleStreamItems.isEmpty();
   }
 
   @Override

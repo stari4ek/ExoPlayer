@@ -17,11 +17,8 @@ package com.google.android.exoplayer2;
 
 import android.content.Context;
 import android.os.Looper;
-import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.analytics.AnalyticsCollector;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
-import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
 import com.google.android.exoplayer2.upstream.BandwidthMeter;
@@ -35,45 +32,33 @@ public final class ExoPlayerFactory {
 
   private ExoPlayerFactory() {}
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
   public static SimpleExoPlayer newSimpleInstance(
       Context context,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       @DefaultRenderersFactory.ExtensionRendererMode int extensionRendererMode) {
     RenderersFactory renderersFactory =
         new DefaultRenderersFactory(context).setExtensionRendererMode(extensionRendererMode);
-    return newSimpleInstance(
-        context, renderersFactory, trackSelector, loadControl, drmSessionManager);
+    return newSimpleInstance(context, renderersFactory, trackSelector, loadControl);
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
   public static SimpleExoPlayer newSimpleInstance(
       Context context,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       @DefaultRenderersFactory.ExtensionRendererMode int extensionRendererMode,
       long allowedVideoJoiningTimeMs) {
     RenderersFactory renderersFactory =
         new DefaultRenderersFactory(context)
             .setExtensionRendererMode(extensionRendererMode)
             .setAllowedVideoJoiningTimeMs(allowedVideoJoiningTimeMs);
-    return newSimpleInstance(
-        context, renderersFactory, trackSelector, loadControl, drmSessionManager);
+    return newSimpleInstance(context, renderersFactory, trackSelector, loadControl);
   }
 
   /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
@@ -107,39 +92,6 @@ public final class ExoPlayerFactory {
     return newSimpleInstance(context, renderersFactory, trackSelector, loadControl);
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public static SimpleExoPlayer newSimpleInstance(
-      Context context,
-      TrackSelector trackSelector,
-      LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
-    RenderersFactory renderersFactory = new DefaultRenderersFactory(context);
-    return newSimpleInstance(
-        context, renderersFactory, trackSelector, loadControl, drmSessionManager);
-  }
-
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public static SimpleExoPlayer newSimpleInstance(
-      Context context,
-      RenderersFactory renderersFactory,
-      TrackSelector trackSelector,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
-    return newSimpleInstance(
-        context, renderersFactory, trackSelector, new DefaultLoadControl(), drmSessionManager);
-  }
-
   /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
@@ -153,15 +105,10 @@ public final class ExoPlayerFactory {
         renderersFactory,
         trackSelector,
         loadControl,
-        /* drmSessionManager= */ null,
         Util.getLooper());
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
   public static SimpleExoPlayer newSimpleInstance(
@@ -169,41 +116,18 @@ public final class ExoPlayerFactory {
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager) {
-    return newSimpleInstance(
-        context, renderersFactory, trackSelector, loadControl, drmSessionManager, Util.getLooper());
-  }
-
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
-  @Deprecated
-  @SuppressWarnings("deprecation")
-  public static SimpleExoPlayer newSimpleInstance(
-      Context context,
-      RenderersFactory renderersFactory,
-      TrackSelector trackSelector,
-      LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       BandwidthMeter bandwidthMeter) {
     return newSimpleInstance(
         context,
         renderersFactory,
         trackSelector,
         loadControl,
-        drmSessionManager,
         bandwidthMeter,
         new AnalyticsCollector(Clock.DEFAULT),
         Util.getLooper());
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
   public static SimpleExoPlayer newSimpleInstance(
@@ -211,23 +135,17 @@ public final class ExoPlayerFactory {
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       AnalyticsCollector analyticsCollector) {
     return newSimpleInstance(
         context,
         renderersFactory,
         trackSelector,
         loadControl,
-        drmSessionManager,
         analyticsCollector,
         Util.getLooper());
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
   public static SimpleExoPlayer newSimpleInstance(
@@ -235,23 +153,17 @@ public final class ExoPlayerFactory {
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       Looper looper) {
     return newSimpleInstance(
         context,
         renderersFactory,
         trackSelector,
         loadControl,
-        drmSessionManager,
         new AnalyticsCollector(Clock.DEFAULT),
         looper);
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @Deprecated
   @SuppressWarnings("deprecation")
   public static SimpleExoPlayer newSimpleInstance(
@@ -259,7 +171,6 @@ public final class ExoPlayerFactory {
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       AnalyticsCollector analyticsCollector,
       Looper looper) {
     return newSimpleInstance(
@@ -267,17 +178,12 @@ public final class ExoPlayerFactory {
         renderersFactory,
         trackSelector,
         loadControl,
-        drmSessionManager,
         DefaultBandwidthMeter.getSingletonInstance(context),
         analyticsCollector,
         looper);
   }
 
-  /**
-   * @deprecated Use {@link SimpleExoPlayer.Builder} instead. The {@link DrmSessionManager} cannot
-   *     be passed to {@link SimpleExoPlayer.Builder} and should instead be injected into the {@link
-   *     MediaSource} factories.
-   */
+  /** @deprecated Use {@link SimpleExoPlayer.Builder} instead. */
   @SuppressWarnings("deprecation")
   @Deprecated
   public static SimpleExoPlayer newSimpleInstance(
@@ -285,7 +191,6 @@ public final class ExoPlayerFactory {
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
       LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       BandwidthMeter bandwidthMeter,
       AnalyticsCollector analyticsCollector,
       Looper looper) {
@@ -293,8 +198,8 @@ public final class ExoPlayerFactory {
         context,
         renderersFactory,
         trackSelector,
+        DefaultMediaSourceFactory.newInstance(context),
         loadControl,
-        drmSessionManager,
         bandwidthMeter,
         analyticsCollector,
         /* useLazyPreparation= */ true,
@@ -348,6 +253,7 @@ public final class ExoPlayerFactory {
     return new ExoPlayerImpl(
         renderers,
         trackSelector,
+        DefaultMediaSourceFactory.newInstance(context),
         loadControl,
         bandwidthMeter,
         /* analyticsCollector= */ null,

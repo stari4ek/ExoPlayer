@@ -27,7 +27,6 @@ import androidx.test.rule.ActivityTestRule;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.drm.DrmSession.DrmSessionException;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.drm.OfflineLicenseHelper;
 import com.google.android.exoplayer2.source.dash.DashUtil;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifest;
@@ -35,6 +34,7 @@ import com.google.android.exoplayer2.testutil.ActionSchedule;
 import com.google.android.exoplayer2.testutil.HostActivity;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSourceFactory;
+import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
@@ -53,7 +53,7 @@ public final class DashWidevineOfflineTest {
 
   private DashTestRunner testRunner;
   private DefaultHttpDataSourceFactory httpDataSourceFactory;
-  private OfflineLicenseHelper<FrameworkMediaCrypto> offlineLicenseHelper;
+  private OfflineLicenseHelper offlineLicenseHelper;
   private byte[] offlineLicenseKeySetId;
 
   @Rule public ActivityTestRule<HostActivity> testRule = new ActivityTestRule<>(HostActivity.class);
@@ -68,6 +68,7 @@ public final class DashWidevineOfflineTest {
             .setFullPlaybackNoSeeking(true)
             .setCanIncludeAdditionalVideoFormats(false)
             .setAudioVideoFormats(
+
                 DashTestData.WIDEVINE_AAC_AUDIO_REPRESENTATION_ID,
                 DashTestData.WIDEVINE_H264_CDD_FIXED);
 
@@ -75,8 +76,9 @@ public final class DashWidevineOfflineTest {
     String widevineLicenseUrl = DashTestData.getWidevineLicenseUrl(true, useL1Widevine);
     httpDataSourceFactory = new DefaultHttpDataSourceFactory(USER_AGENT);
     if (Util.SDK_INT >= 18) {
-      offlineLicenseHelper = OfflineLicenseHelper.newWidevineInstance(widevineLicenseUrl,
-          httpDataSourceFactory);
+      offlineLicenseHelper =
+          OfflineLicenseHelper.newWidevineInstance(
+              widevineLicenseUrl, httpDataSourceFactory, new MediaSourceEventDispatcher());
     }
   }
 
@@ -96,7 +98,7 @@ public final class DashWidevineOfflineTest {
   // Offline license tests
 
   @Test
-  public void testWidevineOfflineLicenseV22() throws Exception {
+  public void widevineOfflineLicenseV22() throws Exception {
     if (Util.SDK_INT < 22) {
       return; // Pass.
     }
@@ -109,7 +111,7 @@ public final class DashWidevineOfflineTest {
   }
 
   @Test
-  public void testWidevineOfflineReleasedLicenseV22() throws Throwable {
+  public void widevineOfflineReleasedLicenseV22() throws Throwable {
     if (Util.SDK_INT < 22) {
       return; // Pass.
     }
@@ -136,7 +138,7 @@ public final class DashWidevineOfflineTest {
   }
 
   @Test
-  public void testWidevineOfflineExpiredLicenseV22() throws Exception {
+  public void widevineOfflineExpiredLicenseV22() throws Exception {
     if (Util.SDK_INT < 22) {
       return; // Pass.
     }
@@ -166,7 +168,7 @@ public final class DashWidevineOfflineTest {
   }
 
   @Test
-  public void testWidevineOfflineLicenseExpiresOnPauseV22() throws Exception {
+  public void widevineOfflineLicenseExpiresOnPauseV22() throws Exception {
     if (Util.SDK_INT < 22) {
       return; // Pass.
     }
@@ -188,7 +190,7 @@ public final class DashWidevineOfflineTest {
     testRunner.setActionSchedule(schedule).run();
   }
 
-  private void downloadLicense() throws InterruptedException, DrmSessionException, IOException {
+  private void downloadLicense() throws IOException {
     DataSource dataSource = httpDataSourceFactory.createDataSource();
     DashManifest dashManifest = DashUtil.loadManifest(dataSource,
         Uri.parse(DashTestData.WIDEVINE_H264_MANIFEST));

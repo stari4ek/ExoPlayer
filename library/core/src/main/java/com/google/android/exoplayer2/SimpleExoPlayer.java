@@ -15,7 +15,6 @@
  */
 package com.google.android.exoplayer2;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
@@ -28,6 +27,7 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.exoplayer2.analytics.AnalyticsCollector;
 import com.google.android.exoplayer2.analytics.AnalyticsListener;
@@ -36,12 +36,11 @@ import com.google.android.exoplayer2.audio.AudioListener;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.audio.AuxEffectInfo;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
-import com.google.android.exoplayer2.drm.DefaultDrmSessionManager;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.MetadataOutput;
+import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.source.MediaSource;
+import com.google.android.exoplayer2.source.MediaSourceFactory;
 import com.google.android.exoplayer2.source.ShuffleOrder;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.text.Cue;
@@ -92,6 +91,7 @@ public class SimpleExoPlayer extends BasePlayer
 
     private Clock clock;
     private TrackSelector trackSelector;
+    private MediaSourceFactory mediaSourceFactory;
     private LoadControl loadControl;
     private BandwidthMeter bandwidthMeter;
     private AnalyticsCollector analyticsCollector;
@@ -111,6 +111,7 @@ public class SimpleExoPlayer extends BasePlayer
      * <ul>
      *   <li>{@link RenderersFactory}: {@link DefaultRenderersFactory}
      *   <li>{@link TrackSelector}: {@link DefaultTrackSelector}
+     *   <li>{@link MediaSourceFactory}: {@link DefaultMediaSourceFactory}
      *   <li>{@link LoadControl}: {@link DefaultLoadControl}
      *   <li>{@link BandwidthMeter}: {@link DefaultBandwidthMeter#getSingletonInstance(Context)}
      *   <li>{@link Looper}: The {@link Looper} associated with the current thread, or the {@link
@@ -141,6 +142,7 @@ public class SimpleExoPlayer extends BasePlayer
           context,
           renderersFactory,
           new DefaultTrackSelector(context),
+          DefaultMediaSourceFactory.newInstance(context),
           new DefaultLoadControl(),
           DefaultBandwidthMeter.getSingletonInstance(context),
           Util.getLooper(),
@@ -160,6 +162,7 @@ public class SimpleExoPlayer extends BasePlayer
      * @param renderersFactory A factory for creating {@link Renderer Renderers} to be used by the
      *     player.
      * @param trackSelector A {@link TrackSelector}.
+     * @param mediaSourceFactory A {@link MediaSourceFactory}.
      * @param loadControl A {@link LoadControl}.
      * @param bandwidthMeter A {@link BandwidthMeter}.
      * @param looper A {@link Looper} that must be used for all calls to the player.
@@ -173,6 +176,7 @@ public class SimpleExoPlayer extends BasePlayer
         Context context,
         RenderersFactory renderersFactory,
         TrackSelector trackSelector,
+        MediaSourceFactory mediaSourceFactory,
         LoadControl loadControl,
         BandwidthMeter bandwidthMeter,
         Looper looper,
@@ -182,6 +186,7 @@ public class SimpleExoPlayer extends BasePlayer
       this.context = context;
       this.renderersFactory = renderersFactory;
       this.trackSelector = trackSelector;
+      this.mediaSourceFactory = mediaSourceFactory;
       this.loadControl = loadControl;
       this.bandwidthMeter = bandwidthMeter;
       this.looper = looper;
@@ -200,6 +205,19 @@ public class SimpleExoPlayer extends BasePlayer
     public Builder setTrackSelector(TrackSelector trackSelector) {
       Assertions.checkState(!buildCalled);
       this.trackSelector = trackSelector;
+      return this;
+    }
+
+    /**
+     * Sets the {@link MediaSourceFactory} that will be used by the player.
+     *
+     * @param mediaSourceFactory A {@link MediaSourceFactory}.
+     * @return This builder.
+     * @throws IllegalStateException If {@link #build()} has already been called.
+     */
+    public Builder setMediaSourceFactory(MediaSourceFactory mediaSourceFactory) {
+      Assertions.checkState(!buildCalled);
+      this.mediaSourceFactory = mediaSourceFactory;
       return this;
     }
 
@@ -296,16 +314,7 @@ public class SimpleExoPlayer extends BasePlayer
     public SimpleExoPlayer build() {
       Assertions.checkState(!buildCalled);
       buildCalled = true;
-      return new SimpleExoPlayer(
-          context,
-          renderersFactory,
-          trackSelector,
-          loadControl,
-          bandwidthMeter,
-          analyticsCollector,
-          useLazyPreparation,
-          clock,
-          looper);
+      return new SimpleExoPlayer(/* builder= */ this);
     }
   }
 
@@ -329,6 +338,7 @@ public class SimpleExoPlayer extends BasePlayer
   private final AudioBecomingNoisyManager audioBecomingNoisyManager;
   private final AudioFocusManager audioFocusManager;
   private final WakeLockManager wakeLockManager;
+  private final WifiLockManager wifiLockManager;
 
   @Nullable private Format videoFormat;
   @Nullable private Format audioFormat;
@@ -346,6 +356,7 @@ public class SimpleExoPlayer extends BasePlayer
   private int audioSessionId;
   private AudioAttributes audioAttributes;
   private float audioVolume;
+  private boolean skipSilenceEnabled;
   private List<Cue> currentCues;
   @Nullable private VideoFrameMetadataListener videoFrameMetadataListener;
   @Nullable private CameraMotionListener cameraMotionListener;
@@ -353,6 +364,21 @@ public class SimpleExoPlayer extends BasePlayer
   @Nullable private PriorityTaskManager priorityTaskManager;
   private boolean isPriorityTaskManagerRegistered;
   private boolean playerReleased;
+
+  /** @param builder The {@link Builder} to obtain all construction parameters. */
+  protected SimpleExoPlayer(Builder builder) {
+    this(
+        builder.context,
+        builder.renderersFactory,
+        builder.trackSelector,
+        builder.mediaSourceFactory,
+        builder.loadControl,
+        builder.bandwidthMeter,
+        builder.analyticsCollector,
+        builder.useLazyPreparation,
+        builder.clock,
+        builder.looper);
+  }
 
   /**
    * @param context A {@link Context}.
@@ -370,42 +396,12 @@ public class SimpleExoPlayer extends BasePlayer
    * @param looper The {@link Looper} which must be used for all calls to the player and which is
    *     used to call listeners on.
    */
-  @SuppressWarnings("deprecation")
   protected SimpleExoPlayer(
       Context context,
       RenderersFactory renderersFactory,
       TrackSelector trackSelector,
+      MediaSourceFactory mediaSourceFactory,
       LoadControl loadControl,
-      BandwidthMeter bandwidthMeter,
-      AnalyticsCollector analyticsCollector,
-      boolean useLazyPreparation,
-      Clock clock,
-      Looper looper) {
-    this(
-        context,
-        renderersFactory,
-        trackSelector,
-        loadControl,
-        DrmSessionManager.getDummyDrmSessionManager(),
-        bandwidthMeter,
-        analyticsCollector,
-        useLazyPreparation,
-        clock,
-        looper);
-  }
-
-  /**
-   * @deprecated Use {@link #SimpleExoPlayer(Context, RenderersFactory, TrackSelector, LoadControl,
-   *     BandwidthMeter, AnalyticsCollector, boolean, Clock, Looper)} instead, and pass the {@link
-   *     DrmSessionManager} to the {@link MediaSource} factories.
-   */
-  @Deprecated
-  protected SimpleExoPlayer(
-      Context context,
-      RenderersFactory renderersFactory,
-      TrackSelector trackSelector,
-      LoadControl loadControl,
-      @Nullable DrmSessionManager<FrameworkMediaCrypto> drmSessionManager,
       BandwidthMeter bandwidthMeter,
       AnalyticsCollector analyticsCollector,
       boolean useLazyPreparation,
@@ -427,8 +423,7 @@ public class SimpleExoPlayer extends BasePlayer
             componentListener,
             componentListener,
             componentListener,
-            componentListener,
-            drmSessionManager);
+            componentListener);
 
     // Set initial values.
     audioVolume = 1;
@@ -442,6 +437,7 @@ public class SimpleExoPlayer extends BasePlayer
         new ExoPlayerImpl(
             renderers,
             trackSelector,
+            mediaSourceFactory,
             loadControl,
             bandwidthMeter,
             analyticsCollector,
@@ -457,13 +453,11 @@ public class SimpleExoPlayer extends BasePlayer
     audioListeners.add(analyticsCollector);
     addMetadataOutput(analyticsCollector);
     bandwidthMeter.addEventListener(eventHandler, analyticsCollector);
-    if (drmSessionManager instanceof DefaultDrmSessionManager) {
-      ((DefaultDrmSessionManager) drmSessionManager).addListener(eventHandler, analyticsCollector);
-    }
     audioBecomingNoisyManager =
         new AudioBecomingNoisyManager(context, eventHandler, componentListener);
     audioFocusManager = new AudioFocusManager(context, eventHandler, componentListener);
     wakeLockManager = new WakeLockManager(context);
+    wifiLockManager = new WifiLockManager(context);
   }
 
   @Override
@@ -688,16 +682,38 @@ public class SimpleExoPlayer extends BasePlayer
       }
     }
 
+    audioFocusManager.setAudioAttributes(handleAudioFocus ? audioAttributes : null);
+    boolean playWhenReady = getPlayWhenReady();
     @AudioFocusManager.PlayerCommand
-    int playerCommand =
-        audioFocusManager.setAudioAttributes(
-            handleAudioFocus ? audioAttributes : null, getPlayWhenReady(), getPlaybackState());
-    updatePlayWhenReady(getPlayWhenReady(), playerCommand);
+    int playerCommand = audioFocusManager.updateAudioFocus(playWhenReady, getPlaybackState());
+    updatePlayWhenReady(
+        playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
   }
 
   @Override
   public AudioAttributes getAudioAttributes() {
     return audioAttributes;
+  }
+
+  @Override
+  public void setAudioSessionId(int audioSessionId) {
+    verifyApplicationThread();
+    if (this.audioSessionId == audioSessionId) {
+      return;
+    }
+    this.audioSessionId = audioSessionId;
+    for (Renderer renderer : renderers) {
+      if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
+        player
+            .createMessage(renderer)
+            .setType(Renderer.MSG_SET_AUDIO_SESSION_ID)
+            .setPayload(audioSessionId)
+            .send();
+      }
+    }
+    if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
+      notifyAudioSessionIdSet();
+    }
   }
 
   @Override
@@ -741,6 +757,30 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public float getVolume() {
     return audioVolume;
+  }
+
+  @Override
+  public boolean getSkipSilenceEnabled() {
+    return skipSilenceEnabled;
+  }
+
+  @Override
+  public void setSkipSilenceEnabled(boolean skipSilenceEnabled) {
+    verifyApplicationThread();
+    if (this.skipSilenceEnabled == skipSilenceEnabled) {
+      return;
+    }
+    this.skipSilenceEnabled = skipSilenceEnabled;
+    for (Renderer renderer : renderers) {
+      if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
+        player
+            .createMessage(renderer)
+            .setType(Renderer.MSG_SET_SKIP_SILENCE_ENABLED)
+            .setPayload(skipSilenceEnabled)
+            .send();
+      }
+    }
+    notifySkipSilenceEnabledChanged();
   }
 
   /**
@@ -843,23 +883,19 @@ public class SimpleExoPlayer extends BasePlayer
     this.priorityTaskManager = priorityTaskManager;
   }
 
-  /**
-   * Sets the {@link PlaybackParams} governing audio playback.
-   *
-   * @deprecated Use {@link #setPlaybackParameters(PlaybackParameters)}.
-   * @param params The {@link PlaybackParams}, or null to clear any previously set parameters.
-   */
+  /** @deprecated Use {@link #setPlaybackSpeed(float)} instead. */
+  @SuppressWarnings("deprecation")
   @Deprecated
-  @TargetApi(23)
+  @RequiresApi(23)
   public void setPlaybackParams(@Nullable PlaybackParams params) {
-    PlaybackParameters playbackParameters;
+    float playbackSpeed;
     if (params != null) {
       params.allowDefaults();
-      playbackParameters = new PlaybackParameters(params.getSpeed(), params.getPitch());
+      playbackSpeed = params.getSpeed();
     } else {
-      playbackParameters = null;
+      playbackSpeed = 1.0f;
     }
-    setPlaybackParameters(playbackParameters);
+    setPlaybackSpeed(playbackSpeed);
   }
 
   /** Returns the video format currently being played, or null if no video is being played. */
@@ -958,6 +994,11 @@ public class SimpleExoPlayer extends BasePlayer
             .send();
       }
     }
+  }
+
+  /** Returns whether skipping silences in the audio stream is enabled. */
+  public boolean isSkipSilenceEnabled() {
+    return skipSilenceEnabled;
   }
 
   /**
@@ -1161,11 +1202,19 @@ public class SimpleExoPlayer extends BasePlayer
     return player.getPlaybackSuppressionReason();
   }
 
+  /** @deprecated Use {@link #getPlayerError()} instead. */
+  @Deprecated
   @Override
   @Nullable
   public ExoPlaybackException getPlaybackError() {
+    return getPlayerError();
+  }
+
+  @Override
+  @Nullable
+  public ExoPlaybackException getPlayerError() {
     verifyApplicationThread();
-    return player.getPlaybackError();
+    return player.getPlayerError();
   }
 
   /** @deprecated Use {@link #prepare()} instead. */
@@ -1179,9 +1228,11 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void prepare() {
     verifyApplicationThread();
+    boolean playWhenReady = getPlayWhenReady();
     @AudioFocusManager.PlayerCommand
-    int playerCommand = audioFocusManager.handlePrepare(getPlayWhenReady());
-    updatePlayWhenReady(getPlayWhenReady(), playerCommand);
+    int playerCommand = audioFocusManager.updateAudioFocus(playWhenReady, Player.STATE_BUFFERING);
+    updatePlayWhenReady(
+        playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
     player.prepare();
   }
 
@@ -1208,6 +1259,49 @@ public class SimpleExoPlayer extends BasePlayer
         /* startWindowIndex= */ resetPosition ? 0 : C.INDEX_UNSET,
         /* startPositionMs= */ C.TIME_UNSET);
     prepare();
+  }
+
+  @Override
+  public void setMediaItems(List<MediaItem> mediaItems) {
+    verifyApplicationThread();
+    analyticsCollector.resetForNewPlaylist();
+    player.setMediaItems(mediaItems);
+  }
+
+  @Override
+  public void setMediaItems(List<MediaItem> mediaItems, boolean resetPosition) {
+    verifyApplicationThread();
+    analyticsCollector.resetForNewPlaylist();
+    player.setMediaItems(mediaItems, resetPosition);
+  }
+
+  @Override
+  public void setMediaItems(
+      List<MediaItem> mediaItems, int startWindowIndex, long startPositionMs) {
+    verifyApplicationThread();
+    analyticsCollector.resetForNewPlaylist();
+    player.setMediaItems(mediaItems, startWindowIndex, startPositionMs);
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem) {
+    verifyApplicationThread();
+    analyticsCollector.resetForNewPlaylist();
+    player.setMediaItem(mediaItem);
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem, boolean resetPosition) {
+    verifyApplicationThread();
+    analyticsCollector.resetForNewPlaylist();
+    player.setMediaItem(mediaItem, resetPosition);
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem, long startPositionMs) {
+    verifyApplicationThread();
+    analyticsCollector.resetForNewPlaylist();
+    player.setMediaItem(mediaItem, startPositionMs);
   }
 
   @Override
@@ -1251,6 +1345,30 @@ public class SimpleExoPlayer extends BasePlayer
     verifyApplicationThread();
     analyticsCollector.resetForNewPlaylist();
     player.setMediaSource(mediaSource, startPositionMs);
+  }
+
+  @Override
+  public void addMediaItems(List<MediaItem> mediaItems) {
+    verifyApplicationThread();
+    player.addMediaItems(mediaItems);
+  }
+
+  @Override
+  public void addMediaItems(int index, List<MediaItem> mediaItems) {
+    verifyApplicationThread();
+    player.addMediaItems(index, mediaItems);
+  }
+
+  @Override
+  public void addMediaItem(MediaItem mediaItem) {
+    verifyApplicationThread();
+    player.addMediaItem(mediaItem);
+  }
+
+  @Override
+  public void addMediaItem(int index, MediaItem mediaItem) {
+    verifyApplicationThread();
+    player.addMediaItem(index, mediaItem);
   }
 
   @Override
@@ -1317,14 +1435,27 @@ public class SimpleExoPlayer extends BasePlayer
   public void setPlayWhenReady(boolean playWhenReady) {
     verifyApplicationThread();
     @AudioFocusManager.PlayerCommand
-    int playerCommand = audioFocusManager.handleSetPlayWhenReady(playWhenReady, getPlaybackState());
-    updatePlayWhenReady(playWhenReady, playerCommand);
+    int playerCommand = audioFocusManager.updateAudioFocus(playWhenReady, getPlaybackState());
+    updatePlayWhenReady(
+        playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
   }
 
   @Override
   public boolean getPlayWhenReady() {
     verifyApplicationThread();
     return player.getPlayWhenReady();
+  }
+
+  @Override
+  public void setPauseAtEndOfMediaItems(boolean pauseAtEndOfMediaItems) {
+    verifyApplicationThread();
+    player.setPauseAtEndOfMediaItems(pauseAtEndOfMediaItems);
+  }
+
+  @Override
+  public boolean getPauseAtEndOfMediaItems() {
+    verifyApplicationThread();
+    return player.getPauseAtEndOfMediaItems();
   }
 
   @Override
@@ -1364,16 +1495,37 @@ public class SimpleExoPlayer extends BasePlayer
     player.seekTo(windowIndex, positionMs);
   }
 
+  /**
+   * @deprecated Use {@link #setPlaybackSpeed(float)} and {@link #setSkipSilenceEnabled(boolean)}
+   *     instead.
+   */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   public void setPlaybackParameters(@Nullable PlaybackParameters playbackParameters) {
     verifyApplicationThread();
     player.setPlaybackParameters(playbackParameters);
   }
 
+  /** @deprecated Use {@link #getPlaybackSpeed()} and {@link #getSkipSilenceEnabled()} instead. */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   public PlaybackParameters getPlaybackParameters() {
     verifyApplicationThread();
     return player.getPlaybackParameters();
+  }
+
+  @Override
+  public void setPlaybackSpeed(float playbackSpeed) {
+    verifyApplicationThread();
+    player.setPlaybackSpeed(playbackSpeed);
+  }
+
+  @Override
+  public float getPlaybackSpeed() {
+    verifyApplicationThread();
+    return player.getPlaybackSpeed();
   }
 
   @Override
@@ -1397,8 +1549,8 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void stop(boolean reset) {
     verifyApplicationThread();
+    audioFocusManager.updateAudioFocus(getPlayWhenReady(), Player.STATE_IDLE);
     player.stop(reset);
-    audioFocusManager.handleStop();
     currentCues = Collections.emptyList();
   }
 
@@ -1406,8 +1558,9 @@ public class SimpleExoPlayer extends BasePlayer
   public void release() {
     verifyApplicationThread();
     audioBecomingNoisyManager.setEnabled(false);
-    audioFocusManager.handleStop();
+    audioFocusManager.updateAudioFocus(/* playWhenReady= */ false, Player.STATE_IDLE);
     wakeLockManager.setStayAwake(false);
+    wifiLockManager.setStayAwake(false);
     player.release();
     removeSurfaceCallbacks();
     if (surface != null) {
@@ -1542,9 +1695,45 @@ public class SimpleExoPlayer extends BasePlayer
    *
    * @param handleWakeLock Whether the player should use a {@link android.os.PowerManager.WakeLock}
    *     to ensure the device stays awake for playback, even when the screen is off.
+   * @deprecated Use {@link #setWakeMode(int)} instead.
    */
+  @Deprecated
   public void setHandleWakeLock(boolean handleWakeLock) {
-    wakeLockManager.setEnabled(handleWakeLock);
+    setWakeMode(handleWakeLock ? C.WAKE_MODE_LOCAL : C.WAKE_MODE_NONE);
+  }
+
+  /**
+   * Sets how the player should keep the device awake for playback when the screen is off.
+   *
+   * <p>Enabling this feature requires the {@link android.Manifest.permission#WAKE_LOCK} permission.
+   * It should be used together with a foreground {@link android.app.Service} for use cases where
+   * playback occurs and the screen is off (e.g. background audio playback). It is not useful when
+   * the screen will be kept on during playback (e.g. foreground video playback).
+   *
+   * <p>When enabled, the locks ({@link android.os.PowerManager.WakeLock} / {@link
+   * android.net.wifi.WifiManager.WifiLock}) will be held whenever the player is in the {@link
+   * #STATE_READY} or {@link #STATE_BUFFERING} states with {@code playWhenReady = true}. The locks
+   * held depends on the specified {@link C.WakeMode}.
+   *
+   * @param wakeMode The {@link C.WakeMode} option to keep the device awake during playback.
+   */
+  public void setWakeMode(@C.WakeMode int wakeMode) {
+    switch (wakeMode) {
+      case C.WAKE_MODE_NONE:
+        wakeLockManager.setEnabled(false);
+        wifiLockManager.setEnabled(false);
+        break;
+      case C.WAKE_MODE_LOCAL:
+        wakeLockManager.setEnabled(true);
+        wifiLockManager.setEnabled(false);
+        break;
+      case C.WAKE_MODE_NETWORK:
+        wakeLockManager.setEnabled(true);
+        wifiLockManager.setEnabled(true);
+        break;
+      default:
+        break;
+    }
   }
 
   // Internal methods.
@@ -1633,15 +1822,62 @@ public class SimpleExoPlayer extends BasePlayer
     }
   }
 
+  private void notifyAudioSessionIdSet() {
+    for (AudioListener audioListener : audioListeners) {
+      // Prevent duplicate notification if a listener is both a AudioRendererEventListener and
+      // a AudioListener, as they have the same method signature.
+      if (!audioDebugListeners.contains(audioListener)) {
+        audioListener.onAudioSessionId(audioSessionId);
+      }
+    }
+    for (AudioRendererEventListener audioDebugListener : audioDebugListeners) {
+      audioDebugListener.onAudioSessionId(audioSessionId);
+    }
+  }
+
+  @SuppressWarnings("SuspiciousMethodCalls")
+  private void notifySkipSilenceEnabledChanged() {
+    for (AudioListener listener : audioListeners) {
+      // Prevent duplicate notification if a listener is both a AudioRendererEventListener and
+      // a AudioListener, as they have the same method signature.
+      if (!audioDebugListeners.contains(listener)) {
+        listener.onSkipSilenceEnabledChanged(skipSilenceEnabled);
+      }
+    }
+    for (AudioRendererEventListener listener : audioDebugListeners) {
+      listener.onSkipSilenceEnabledChanged(skipSilenceEnabled);
+    }
+  }
+
   private void updatePlayWhenReady(
-      boolean playWhenReady, @AudioFocusManager.PlayerCommand int playerCommand) {
+      boolean playWhenReady,
+      @AudioFocusManager.PlayerCommand int playerCommand,
+      @Player.PlayWhenReadyChangeReason int playWhenReadyChangeReason) {
     playWhenReady = playWhenReady && playerCommand != AudioFocusManager.PLAYER_COMMAND_DO_NOT_PLAY;
     @PlaybackSuppressionReason
     int playbackSuppressionReason =
         playWhenReady && playerCommand != AudioFocusManager.PLAYER_COMMAND_PLAY_WHEN_READY
             ? Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
             : Player.PLAYBACK_SUPPRESSION_REASON_NONE;
-    player.setPlayWhenReady(playWhenReady, playbackSuppressionReason);
+    player.setPlayWhenReady(playWhenReady, playbackSuppressionReason, playWhenReadyChangeReason);
+  }
+
+  private void updateWakeAndWifiLock() {
+    @State int playbackState = getPlaybackState();
+    switch (playbackState) {
+      case Player.STATE_READY:
+      case Player.STATE_BUFFERING:
+        wakeLockManager.setStayAwake(getPlayWhenReady());
+        wifiLockManager.setStayAwake(getPlayWhenReady());
+        break;
+      case Player.STATE_ENDED:
+      case Player.STATE_IDLE:
+        wakeLockManager.setStayAwake(false);
+        wifiLockManager.setStayAwake(false);
+        break;
+      default:
+        throw new IllegalStateException();
+    }
   }
 
   private void verifyApplicationThread() {
@@ -1653,6 +1889,12 @@ public class SimpleExoPlayer extends BasePlayer
           hasNotifiedFullWrongThreadWarning ? null : new IllegalStateException());
       hasNotifiedFullWrongThreadWarning = true;
     }
+  }
+
+  private static int getPlayWhenReadyChangeReason(boolean playWhenReady, int playerCommand) {
+    return playWhenReady && playerCommand != AudioFocusManager.PLAYER_COMMAND_PLAY_WHEN_READY
+        ? PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS
+        : PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST;
   }
 
   private final class ComponentListener
@@ -1738,6 +1980,15 @@ public class SimpleExoPlayer extends BasePlayer
       videoDecoderCounters = null;
     }
 
+    @Override
+    public void onVideoFrameProcessingOffset(
+        long totalProcessingOffsetUs, int frameCount, Format format) {
+      for (VideoRendererEventListener videoDebugListener : videoDebugListeners) {
+        videoDebugListener.onVideoFrameProcessingOffset(
+            totalProcessingOffsetUs, frameCount, format);
+      }
+    }
+
     // AudioRendererEventListener implementation
 
     @Override
@@ -1754,16 +2005,7 @@ public class SimpleExoPlayer extends BasePlayer
         return;
       }
       audioSessionId = sessionId;
-      for (AudioListener audioListener : audioListeners) {
-        // Prevent duplicate notification if a listener is both a AudioRendererEventListener and
-        // a AudioListener, as they have the same method signature.
-        if (!audioDebugListeners.contains(audioListener)) {
-          audioListener.onAudioSessionId(sessionId);
-        }
-      }
-      for (AudioRendererEventListener audioDebugListener : audioDebugListeners) {
-        audioDebugListener.onAudioSessionId(sessionId);
-      }
+      notifyAudioSessionIdSet();
     }
 
     @Override
@@ -1799,6 +2041,15 @@ public class SimpleExoPlayer extends BasePlayer
       audioFormat = null;
       audioDecoderCounters = null;
       audioSessionId = C.AUDIO_SESSION_ID_UNSET;
+    }
+
+    @Override
+    public void onSkipSilenceEnabledChanged(boolean skipSilenceEnabled) {
+      if (SimpleExoPlayer.this.skipSilenceEnabled == skipSilenceEnabled) {
+        return;
+      }
+      SimpleExoPlayer.this.skipSilenceEnabled = skipSilenceEnabled;
+      notifySkipSilenceEnabledChanged();
     }
 
     // TextOutput implementation
@@ -1872,20 +2123,25 @@ public class SimpleExoPlayer extends BasePlayer
 
     @Override
     public void executePlayerCommand(@AudioFocusManager.PlayerCommand int playerCommand) {
-      updatePlayWhenReady(getPlayWhenReady(), playerCommand);
+      boolean playWhenReady = getPlayWhenReady();
+      updatePlayWhenReady(
+          playWhenReady, playerCommand, getPlayWhenReadyChangeReason(playWhenReady, playerCommand));
     }
 
     // AudioBecomingNoisyManager.EventListener implementation.
 
     @Override
     public void onAudioBecomingNoisy() {
-      pause();
+      updatePlayWhenReady(
+          /* playWhenReady= */ false,
+          AudioFocusManager.PLAYER_COMMAND_DO_NOT_PLAY,
+          Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY);
     }
 
     // Player.EventListener implementation.
 
     @Override
-    public void onLoadingChanged(boolean isLoading) {
+    public void onIsLoadingChanged(boolean isLoading) {
       if (priorityTaskManager != null) {
         if (isLoading && !isPriorityTaskManagerRegistered) {
           priorityTaskManager.add(C.PRIORITY_PLAYBACK);
@@ -1898,17 +2154,14 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     @Override
-    public void onPlayerStateChanged(boolean playWhenReady, @State int playbackState) {
-      switch (playbackState) {
-        case Player.STATE_READY:
-        case Player.STATE_BUFFERING:
-          wakeLockManager.setStayAwake(playWhenReady);
-          break;
-        case Player.STATE_ENDED:
-        case Player.STATE_IDLE:
-          wakeLockManager.setStayAwake(false);
-          break;
-      }
+    public void onPlaybackStateChanged(@State int playbackState) {
+      updateWakeAndWifiLock();
+    }
+
+    @Override
+    public void onPlayWhenReadyChanged(
+        boolean playWhenReady, @PlayWhenReadyChangeReason int reason) {
+      updateWakeAndWifiLock();
     }
   }
 }

@@ -15,7 +15,6 @@
  */
 package com.google.android.exoplayer2.testutil;
 
-import static com.google.common.truth.Truth.assertThat;
 
 import com.google.android.exoplayer2.BaseRenderer;
 import com.google.android.exoplayer2.C;
@@ -25,15 +24,18 @@ import com.google.android.exoplayer2.FormatHolder;
 import com.google.android.exoplayer2.Renderer;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
+import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
-import java.util.Arrays;
+import com.google.android.exoplayer2.util.Util;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * Fake {@link Renderer} that supports any format with the matching MIME type. The renderer
- * verifies that it reads one of the given {@link Format}s.
+ * Fake {@link Renderer} that supports any format with the matching track type.
+ *
+ * <p>The renderer verifies that all the formats it reads have the provided track type.
  */
 public class FakeRenderer extends BaseRenderer {
 
@@ -44,29 +46,29 @@ public class FakeRenderer extends BaseRenderer {
    */
   private static final long SOURCE_READAHEAD_US = 250000;
 
-  private final List<Format> expectedFormats;
   private final DecoderInputBuffer buffer;
 
   private long playbackPositionUs;
   private long lastSamplePositionUs;
+  private boolean hasPendingBuffer;
+  private List<Format> formatsRead;
 
   public boolean isEnded;
   public int positionResetCount;
-  public int formatReadCount;
   public int sampleBufferReadCount;
 
-  public FakeRenderer(Format... expectedFormats) {
-    super(expectedFormats.length == 0 ? C.TRACK_TYPE_UNKNOWN
-        : MimeTypes.getTrackType(expectedFormats[0].sampleMimeType));
-    this.expectedFormats = Collections.unmodifiableList(Arrays.asList(expectedFormats));
+  public FakeRenderer(int trackType) {
+    super(trackType);
     buffer = new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL);
     lastSamplePositionUs = Long.MIN_VALUE;
+    formatsRead = new ArrayList<>();
   }
 
   @Override
   protected void onPositionReset(long positionUs, boolean joining) throws ExoPlaybackException {
     playbackPositionUs = positionUs;
     lastSamplePositionUs = Long.MIN_VALUE;
+    hasPendingBuffer = false;
     positionResetCount++;
     isEnded = false;
   }
@@ -77,32 +79,51 @@ public class FakeRenderer extends BaseRenderer {
       return;
     }
     playbackPositionUs = positionUs;
-    while (lastSamplePositionUs < positionUs + SOURCE_READAHEAD_US) {
-      FormatHolder formatHolder = getFormatHolder();
-      buffer.clear();
-      int result = readSource(formatHolder, buffer, false);
-      if (result == C.RESULT_FORMAT_READ) {
-        formatReadCount++;
-        assertThat(expectedFormats).contains(formatHolder.format);
-        onFormatChanged(formatHolder.format);
-      } else if (result == C.RESULT_BUFFER_READ) {
-        if (buffer.isEndOfStream()) {
-          isEnded = true;
+    while (true) {
+      if (!hasPendingBuffer) {
+        FormatHolder formatHolder = getFormatHolder();
+        buffer.clear();
+        @SampleStream.ReadDataResult
+        int result = readSource(formatHolder, buffer, /* formatRequired= */ false);
+        if (result == C.RESULT_FORMAT_READ) {
+          Format format = Assertions.checkNotNull(formatHolder.format);
+          if (MimeTypes.getTrackType(format.sampleMimeType) != getTrackType()) {
+            throw ExoPlaybackException.createForRenderer(
+                new IllegalStateException(
+                    Util.formatInvariant(
+                        "Format track type (%s) doesn't match renderer track type (%s).",
+                        MimeTypes.getTrackType(format.sampleMimeType), getTrackType())),
+                getIndex(),
+                format,
+                FORMAT_UNSUPPORTED_TYPE);
+          }
+          formatsRead.add(format);
+          onFormatChanged(format);
+        } else if (result == C.RESULT_BUFFER_READ) {
+          if (buffer.isEndOfStream()) {
+            isEnded = true;
+            return;
+          }
+          hasPendingBuffer = true;
+        } else {
+          Assertions.checkState(result == C.RESULT_NOTHING_READ);
+          return;
+        }
+      }
+      if (hasPendingBuffer) {
+        if (!shouldProcessBuffer(buffer.timeUs, positionUs)) {
           return;
         }
         lastSamplePositionUs = buffer.timeUs;
         sampleBufferReadCount++;
-        onBufferRead();
-      } else {
-        Assertions.checkState(result == C.RESULT_NOTHING_READ);
-        return;
+        hasPendingBuffer = false;
       }
     }
   }
 
   @Override
   public boolean isReady() {
-    return lastSamplePositionUs >= playbackPositionUs || isSourceReady();
+    return lastSamplePositionUs >= playbackPositionUs || hasPendingBuffer || isSourceReady();
   }
 
   @Override
@@ -113,7 +134,8 @@ public class FakeRenderer extends BaseRenderer {
   @Override
   @Capabilities
   public int supportsFormat(Format format) throws ExoPlaybackException {
-    return getTrackType() == MimeTypes.getTrackType(format.sampleMimeType)
+    int trackType = MimeTypes.getTrackType(format.sampleMimeType);
+    return trackType != C.TRACK_TYPE_UNKNOWN && trackType == getTrackType()
         ? RendererCapabilities.create(FORMAT_HANDLED, ADAPTIVE_SEAMLESS, TUNNELING_NOT_SUPPORTED)
         : RendererCapabilities.create(FORMAT_UNSUPPORTED_TYPE);
   }
@@ -121,6 +143,19 @@ public class FakeRenderer extends BaseRenderer {
   /** Called when the renderer reads a new format. */
   protected void onFormatChanged(Format format) {}
 
-  /** Called when the renderer read a sample from the buffer. */
-  protected void onBufferRead() {}
+  /** Returns the list of formats read by the renderer. */
+  public List<Format> getFormatsRead() {
+    return Collections.unmodifiableList(formatsRead);
+  }
+
+  /**
+   * Called before the renderer processes a buffer.
+   *
+   * @param bufferTimeUs The buffer timestamp, in microseconds.
+   * @param playbackPositionUs The playback position, in microseconds
+   * @return Whether the buffer should be processed.
+   */
+  protected boolean shouldProcessBuffer(long bufferTimeUs, long playbackPositionUs) {
+    return bufferTimeUs < playbackPositionUs + SOURCE_READAHEAD_US;
+  }
 }

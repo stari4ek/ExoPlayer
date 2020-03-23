@@ -146,7 +146,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
   }
 
   @Override
-  public boolean sniff(ExtractorInput input) throws IOException, InterruptedException {
+  public boolean sniff(ExtractorInput input) throws IOException {
     return Sniffer.sniffUnfragmented(input);
   }
 
@@ -176,8 +176,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
   }
 
   @Override
-  public int read(ExtractorInput input, PositionHolder seekPosition)
-      throws IOException, InterruptedException {
+  public int read(ExtractorInput input, PositionHolder seekPosition) throws IOException {
     while (true) {
       switch (parserState) {
         case STATE_READING_ATOM_HEADER:
@@ -270,7 +269,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
     atomHeaderBytesRead = 0;
   }
 
-  private boolean readAtomHeader(ExtractorInput input) throws IOException, InterruptedException {
+  private boolean readAtomHeader(ExtractorInput input) throws IOException {
     if (atomHeaderBytesRead == 0) {
       // Read the standard length atom header.
       if (!input.readFully(atomHeader.data, 0, Atom.HEADER_SIZE, true)) {
@@ -341,7 +340,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
    * restart loading at the position in {@code positionHolder}. Otherwise, the atom is read/skipped.
    */
   private boolean readAtomPayload(ExtractorInput input, PositionHolder positionHolder)
-      throws IOException, InterruptedException {
+      throws IOException {
     long atomPayloadSize = atomSize - atomHeaderBytesRead;
     long atomEndPosition = input.getPosition() + atomPayloadSize;
     boolean seekRequired = false;
@@ -423,17 +422,17 @@ public final class Mp4Extractor implements Extractor, SeekMap {
       // Each sample has up to three bytes of overhead for the start code that replaces its length.
       // Allow ten source samples per output sample, like the platform extractor.
       int maxInputSize = trackSampleTable.maximumSize + 3 * 10;
-      Format format = track.format.copyWithMaxInputSize(maxInputSize);
+      Format.Builder formatBuilder = track.format.buildUpon();
+      formatBuilder.setMaxInputSize(maxInputSize);
       if (track.type == C.TRACK_TYPE_VIDEO
           && trackDurationUs > 0
           && trackSampleTable.sampleCount > 1) {
         float frameRate = trackSampleTable.sampleCount / (trackDurationUs / 1000000f);
-        format = format.copyWithFrameRate(frameRate);
+        formatBuilder.setFrameRate(frameRate);
       }
-      format =
-          MetadataUtil.getFormatWithMetadata(
-              track.type, format, udtaMetadata, mdtaMetadata, gaplessInfoHolder);
-      mp4Track.trackOutput.format(format);
+      MetadataUtil.setFormatMetadata(
+          track.type, udtaMetadata, mdtaMetadata, gaplessInfoHolder, formatBuilder);
+      mp4Track.trackOutput.format(formatBuilder.build());
 
       if (track.type == C.TRACK_TYPE_VIDEO && firstVideoTrackIndex == C.INDEX_UNSET) {
         firstVideoTrackIndex = tracks.size();
@@ -485,22 +484,20 @@ public final class Mp4Extractor implements Extractor, SeekMap {
 
   /**
    * Attempts to extract the next sample in the current mdat atom for the specified track.
-   * <p>
-   * Returns {@link #RESULT_SEEK} if the source should be reloaded from the position in
-   * {@code positionHolder}.
-   * <p>
-   * Returns {@link #RESULT_END_OF_INPUT} if no samples are left. Otherwise, returns
-   * {@link #RESULT_CONTINUE}.
+   *
+   * <p>Returns {@link #RESULT_SEEK} if the source should be reloaded from the position in {@code
+   * positionHolder}.
+   *
+   * <p>Returns {@link #RESULT_END_OF_INPUT} if no samples are left. Otherwise, returns {@link
+   * #RESULT_CONTINUE}.
    *
    * @param input The {@link ExtractorInput} from which to read data.
    * @param positionHolder If {@link #RESULT_SEEK} is returned, this holder is updated to hold the
    *     position of the required data.
    * @return One of the {@code RESULT_*} flags in {@link Extractor}.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  private int readSample(ExtractorInput input, PositionHolder positionHolder)
-      throws IOException, InterruptedException {
+  private int readSample(ExtractorInput input, PositionHolder positionHolder) throws IOException {
     long inputPosition = input.getPosition();
     if (sampleTrackIndex == C.INDEX_UNSET) {
       sampleTrackIndex = getTrackIndexOfNextReadSample(inputPosition);
@@ -663,8 +660,7 @@ public final class Mp4Extractor implements Extractor, SeekMap {
    * we can't rely on the file type though. Instead we must check the 8 bytes after the common
    * header bytes ourselves.
    */
-  private void maybeSkipRemainingMetaAtomHeaderBytes(ExtractorInput input)
-      throws IOException, InterruptedException {
+  private void maybeSkipRemainingMetaAtomHeaderBytes(ExtractorInput input) throws IOException {
     scratch.reset(8);
     // Peek the next 8 bytes which can be either
     // (iso) [1 byte version + 3 bytes flags][4 byte size of next atom]

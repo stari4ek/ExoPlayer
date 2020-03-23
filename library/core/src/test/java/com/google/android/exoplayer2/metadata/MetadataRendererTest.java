@@ -32,7 +32,6 @@ import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import org.junit.Test;
@@ -65,7 +64,7 @@ public class MetadataRendererTest {
               0x00, 0x00, 0x00, 0x00)); // CRC_32 (ignored, check happens at extraction).
 
   private static final Format EMSG_FORMAT =
-      Format.createSampleFormat(null, MimeTypes.APPLICATION_EMSG, Format.OFFSET_SAMPLE_RELATIVE);
+      new Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build();
 
   private final EventMessageEncoder eventMessageEncoder = new EventMessageEncoder();
 
@@ -146,8 +145,10 @@ public class MetadataRendererTest {
         new FakeSampleStream(
             EMSG_FORMAT,
             /* eventDispatcher= */ null,
-            Arrays.asList(new FakeSampleStreamItem(input), FakeSampleStreamItem.END_OF_STREAM_ITEM),
-            0),
+            /* firstSampleTimeUs= */ 0,
+            /* timeUsIncrement= */ 0,
+            new FakeSampleStreamItem(input),
+            FakeSampleStreamItem.END_OF_STREAM_ITEM),
         /* offsetUs= */ 0L);
     renderer.render(/* positionUs= */ 0, /* elapsedRealtimeUs= */ 0); // Read the format
     renderer.render(/* positionUs= */ 0, /* elapsedRealtimeUs= */ 0); // Read the data

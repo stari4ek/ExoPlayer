@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.util;
 
 import android.os.SystemClock;
+import android.text.TextUtils;
 import android.view.Surface;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
@@ -91,14 +92,22 @@ public class EventLogger implements AnalyticsListener {
   // AnalyticsListener
 
   @Override
-  public void onLoadingChanged(EventTime eventTime, boolean isLoading) {
+  public void onIsLoadingChanged(EventTime eventTime, boolean isLoading) {
     logd(eventTime, "loading", Boolean.toString(isLoading));
   }
 
   @Override
-  public void onPlayerStateChanged(
-      EventTime eventTime, boolean playWhenReady, @Player.State int state) {
-    logd(eventTime, "state", playWhenReady + ", " + getStateString(state));
+  public void onPlaybackStateChanged(EventTime eventTime, @Player.State int state) {
+    logd(eventTime, "state", getStateString(state));
+  }
+
+  @Override
+  public void onPlayWhenReadyChanged(
+      EventTime eventTime, boolean playWhenReady, @Player.PlayWhenReadyChangeReason int reason) {
+    logd(
+        eventTime,
+        "playWhenReady",
+        playWhenReady + ", " + getPlayWhenReadyChangeReasonString(reason));
   }
 
   @Override
@@ -141,9 +150,12 @@ public class EventLogger implements AnalyticsListener {
     logd(
         eventTime,
         "playbackParameters",
-        Util.formatInvariant(
-            "speed=%.2f, pitch=%.2f, skipSilence=%s",
-            playbackParameters.speed, playbackParameters.pitch, playbackParameters.skipSilence));
+        Util.formatInvariant("speed=%.2f", playbackParameters.speed));
+  }
+
+  @Override
+  public void onPlaybackSpeedChanged(EventTime eventTime, float playbackSpeed) {
+    logd(eventTime, "playbackSpeed", Float.toString(playbackSpeed));
   }
 
   @Override
@@ -198,7 +210,7 @@ public class EventLogger implements AnalyticsListener {
       logd(eventTime, "tracks", "[]");
       return;
     }
-    logd("tracks [" + getEventTimeString(eventTime) + ", ");
+    logd("tracks [" + getEventTimeString(eventTime));
     // Log tracks associated to renderers.
     int rendererCount = mappedTrackInfo.getRendererCount();
     for (int rendererIndex = 0; rendererIndex < rendererCount; rendererIndex++) {
@@ -282,7 +294,7 @@ public class EventLogger implements AnalyticsListener {
 
   @Override
   public void onMetadata(EventTime eventTime, Metadata metadata) {
-    logd("metadata [" + getEventTimeString(eventTime) + ", ");
+    logd("metadata [" + getEventTimeString(eventTime));
     printMetadata(metadata, "  ");
     logd("]");
   }
@@ -309,6 +321,11 @@ public class EventLogger implements AnalyticsListener {
             + audioAttributes.usage
             + ","
             + audioAttributes.allowedCapturePolicy);
+  }
+
+  @Override
+  public void onSkipSilenceEnabledChanged(EventTime eventTime, boolean skipSilenceEnabled) {
+    logd(eventTime, "skipSilenceEnabled", Boolean.toString(skipSilenceEnabled));
   }
 
   @Override
@@ -469,27 +486,26 @@ public class EventLogger implements AnalyticsListener {
   }
 
   /**
-   * Logs an error message and exception.
+   * Logs an error message.
    *
    * @param msg The message to log.
-   * @param tr The exception to log.
    */
-  protected void loge(String msg, @Nullable Throwable tr) {
-    Log.e(tag, msg, tr);
+  protected void loge(String msg) {
+    Log.e(tag, msg);
   }
 
   // Internal methods
 
   private void logd(EventTime eventTime, String eventName) {
-    logd(getEventString(eventTime, eventName));
+    logd(getEventString(eventTime, eventName, /* eventDescription= */ null, /* throwable= */ null));
   }
 
   private void logd(EventTime eventTime, String eventName, String eventDescription) {
-    logd(getEventString(eventTime, eventName, eventDescription));
+    logd(getEventString(eventTime, eventName, eventDescription, /* throwable= */ null));
   }
 
   private void loge(EventTime eventTime, String eventName, @Nullable Throwable throwable) {
-    loge(getEventString(eventTime, eventName), throwable);
+    loge(getEventString(eventTime, eventName, /* eventDescription= */ null, throwable));
   }
 
   private void loge(
@@ -497,7 +513,7 @@ public class EventLogger implements AnalyticsListener {
       String eventName,
       String eventDescription,
       @Nullable Throwable throwable) {
-    loge(getEventString(eventTime, eventName, eventDescription), throwable);
+    loge(getEventString(eventTime, eventName, eventDescription, throwable));
   }
 
   private void printInternalError(EventTime eventTime, String type, Exception e) {
@@ -510,12 +526,21 @@ public class EventLogger implements AnalyticsListener {
     }
   }
 
-  private String getEventString(EventTime eventTime, String eventName) {
-    return eventName + " [" + getEventTimeString(eventTime) + "]";
-  }
-
-  private String getEventString(EventTime eventTime, String eventName, String eventDescription) {
-    return eventName + " [" + getEventTimeString(eventTime) + ", " + eventDescription + "]";
+  private String getEventString(
+      EventTime eventTime,
+      String eventName,
+      @Nullable String eventDescription,
+      @Nullable Throwable throwable) {
+    String eventString = eventName + " [" + getEventTimeString(eventTime);
+    if (eventDescription != null) {
+      eventString += ", " + eventDescription;
+    }
+    @Nullable String throwableString = Log.getThrowableString(throwable);
+    if (!TextUtils.isEmpty(throwableString)) {
+      eventString += "\n  " + throwableString.replace("\n", "\n  ") + '\n';
+    }
+    eventString += "]";
+    return eventString;
   }
 
   private String getEventTimeString(EventTime eventTime) {
@@ -633,6 +658,24 @@ public class EventLogger implements AnalyticsListener {
         return "NONE";
       case Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS:
         return "TRANSIENT_AUDIO_FOCUS_LOSS";
+      default:
+        return "?";
+    }
+  }
+
+  private static String getPlayWhenReadyChangeReasonString(
+      @Player.PlayWhenReadyChangeReason int reason) {
+    switch (reason) {
+      case Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY:
+        return "AUDIO_BECOMING_NOISY";
+      case Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS:
+        return "AUDIO_FOCUS_LOSS";
+      case Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE:
+        return "REMOTE";
+      case Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST:
+        return "USER_REQUEST";
+      case Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM:
+        return "END_OF_MEDIA_ITEM";
       default:
         return "?";
     }

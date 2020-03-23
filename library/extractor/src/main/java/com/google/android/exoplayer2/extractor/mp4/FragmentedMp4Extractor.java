@@ -114,7 +114,7 @@ public class FragmentedMp4Extractor implements Extractor {
   private static final byte[] PIFF_SAMPLE_ENCRYPTION_BOX_EXTENDED_TYPE =
       new byte[] {-94, 57, 79, 82, 90, -101, 79, 20, -94, 68, 108, 66, 124, 100, -115, -12};
   private static final Format EMSG_FORMAT =
-      Format.createSampleFormat(null, MimeTypes.APPLICATION_EMSG, Format.OFFSET_SAMPLE_RELATIVE);
+      new Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build();
 
   // Parser states.
   private static final int STATE_READING_ATOM_HEADER = 0;
@@ -129,7 +129,6 @@ public class FragmentedMp4Extractor implements Extractor {
 
   // Sideloaded data.
   private final List<Format> closedCaptionFormats;
-  @Nullable private final DrmInitData sideloadedDrmInitData;
 
   // Track-linked data bundle, accessible as a whole through trackID.
   private final SparseArray<TrackBundle> trackBundles;
@@ -185,7 +184,7 @@ public class FragmentedMp4Extractor implements Extractor {
    * @param flags Flags that control the extractor's behavior.
    */
   public FragmentedMp4Extractor(@Flags int flags) {
-    this(flags, null);
+    this(flags, /* timestampAdjuster= */ null);
   }
 
   /**
@@ -193,7 +192,7 @@ public class FragmentedMp4Extractor implements Extractor {
    * @param timestampAdjuster Adjusts sample timestamps. May be null if no adjustment is needed.
    */
   public FragmentedMp4Extractor(@Flags int flags, @Nullable TimestampAdjuster timestampAdjuster) {
-    this(flags, timestampAdjuster, null, null);
+    this(flags, timestampAdjuster, /* sideloadedTrack= */ null, Collections.emptyList());
   }
 
   /**
@@ -201,15 +200,12 @@ public class FragmentedMp4Extractor implements Extractor {
    * @param timestampAdjuster Adjusts sample timestamps. May be null if no adjustment is needed.
    * @param sideloadedTrack Sideloaded track information, in the case that the extractor will not
    *     receive a moov box in the input data. Null if a moov box is expected.
-   * @param sideloadedDrmInitData The {@link DrmInitData} to use for encrypted tracks. If null, the
-   *     pssh boxes (if present) will be used.
    */
   public FragmentedMp4Extractor(
       @Flags int flags,
       @Nullable TimestampAdjuster timestampAdjuster,
-      @Nullable Track sideloadedTrack,
-      @Nullable DrmInitData sideloadedDrmInitData) {
-    this(flags, timestampAdjuster, sideloadedTrack, sideloadedDrmInitData, Collections.emptyList());
+      @Nullable Track sideloadedTrack) {
+    this(flags, timestampAdjuster, sideloadedTrack, Collections.emptyList());
   }
 
   /**
@@ -217,8 +213,6 @@ public class FragmentedMp4Extractor implements Extractor {
    * @param timestampAdjuster Adjusts sample timestamps. May be null if no adjustment is needed.
    * @param sideloadedTrack Sideloaded track information, in the case that the extractor will not
    *     receive a moov box in the input data. Null if a moov box is expected.
-   * @param sideloadedDrmInitData The {@link DrmInitData} to use for encrypted tracks. If null, the
-   *     pssh boxes (if present) will be used.
    * @param closedCaptionFormats For tracks that contain SEI messages, the formats of the closed
    *     caption channels to expose.
    */
@@ -226,10 +220,13 @@ public class FragmentedMp4Extractor implements Extractor {
       @Flags int flags,
       @Nullable TimestampAdjuster timestampAdjuster,
       @Nullable Track sideloadedTrack,
-      @Nullable DrmInitData sideloadedDrmInitData,
       List<Format> closedCaptionFormats) {
-    this(flags, timestampAdjuster, sideloadedTrack, sideloadedDrmInitData,
-        closedCaptionFormats, null);
+    this(
+        flags,
+        timestampAdjuster,
+        sideloadedTrack,
+        closedCaptionFormats,
+        /* additionalEmsgTrackOutput= */ null);
   }
 
   /**
@@ -237,8 +234,6 @@ public class FragmentedMp4Extractor implements Extractor {
    * @param timestampAdjuster Adjusts sample timestamps. May be null if no adjustment is needed.
    * @param sideloadedTrack Sideloaded track information, in the case that the extractor will not
    *     receive a moov box in the input data. Null if a moov box is expected.
-   * @param sideloadedDrmInitData The {@link DrmInitData} to use for encrypted tracks. If null, the
-   *     pssh boxes (if present) will be used.
    * @param closedCaptionFormats For tracks that contain SEI messages, the formats of the closed
    *     caption channels to expose.
    * @param additionalEmsgTrackOutput An extra track output that will receive all emsg messages
@@ -249,13 +244,11 @@ public class FragmentedMp4Extractor implements Extractor {
       @Flags int flags,
       @Nullable TimestampAdjuster timestampAdjuster,
       @Nullable Track sideloadedTrack,
-      @Nullable DrmInitData sideloadedDrmInitData,
       List<Format> closedCaptionFormats,
       @Nullable TrackOutput additionalEmsgTrackOutput) {
     this.flags = flags | (sideloadedTrack != null ? FLAG_SIDELOADED : 0);
     this.timestampAdjuster = timestampAdjuster;
     this.sideloadedTrack = sideloadedTrack;
-    this.sideloadedDrmInitData = sideloadedDrmInitData;
     this.closedCaptionFormats = Collections.unmodifiableList(closedCaptionFormats);
     this.additionalEmsgTrackOutput = additionalEmsgTrackOutput;
     eventMessageEncoder = new EventMessageEncoder();
@@ -275,7 +268,7 @@ public class FragmentedMp4Extractor implements Extractor {
   }
 
   @Override
-  public boolean sniff(ExtractorInput input) throws IOException, InterruptedException {
+  public boolean sniff(ExtractorInput input) throws IOException {
     return Sniffer.sniffFragmented(input);
   }
 
@@ -310,8 +303,7 @@ public class FragmentedMp4Extractor implements Extractor {
   }
 
   @Override
-  public int read(ExtractorInput input, PositionHolder seekPosition)
-      throws IOException, InterruptedException {
+  public int read(ExtractorInput input, PositionHolder seekPosition) throws IOException {
     while (true) {
       switch (parserState) {
         case STATE_READING_ATOM_HEADER:
@@ -338,7 +330,7 @@ public class FragmentedMp4Extractor implements Extractor {
     atomHeaderBytesRead = 0;
   }
 
-  private boolean readAtomHeader(ExtractorInput input) throws IOException, InterruptedException {
+  private boolean readAtomHeader(ExtractorInput input) throws IOException {
     if (atomHeaderBytesRead == 0) {
       // Read the standard length atom header.
       if (!input.readFully(atomHeader.data, 0, Atom.HEADER_SIZE, true)) {
@@ -426,7 +418,7 @@ public class FragmentedMp4Extractor implements Extractor {
     return true;
   }
 
-  private void readAtomPayload(ExtractorInput input) throws IOException, InterruptedException {
+  private void readAtomPayload(ExtractorInput input) throws IOException {
     int atomPayloadSize = (int) atomSize - atomHeaderBytesRead;
     if (atomData != null) {
       input.readFully(atomData.data, Atom.HEADER_SIZE, atomPayloadSize);
@@ -470,8 +462,7 @@ public class FragmentedMp4Extractor implements Extractor {
   private void onMoovContainerAtomRead(ContainerAtom moov) throws ParserException {
     Assertions.checkState(sideloadedTrack == null, "Unexpected moov box.");
 
-    DrmInitData drmInitData = sideloadedDrmInitData != null ? sideloadedDrmInitData
-        : getDrmInitDataFromAtoms(moov.leafChildren);
+    @Nullable DrmInitData drmInitData = getDrmInitDataFromAtoms(moov.leafChildren);
 
     // Read declaration of track fragments in the Moov box.
     ContainerAtom mvex = moov.getContainerAtomOfType(Atom.TYPE_mvex);
@@ -550,9 +541,8 @@ public class FragmentedMp4Extractor implements Extractor {
 
   private void onMoofContainerAtomRead(ContainerAtom moof) throws ParserException {
     parseMoof(moof, trackBundles, flags, scratchBytes);
-    // If drm init data is sideloaded, we ignore pssh boxes.
-    DrmInitData drmInitData = sideloadedDrmInitData != null ? null
-        : getDrmInitDataFromAtoms(moof.leafChildren);
+
+    @Nullable DrmInitData drmInitData = getDrmInitDataFromAtoms(moof.leafChildren);
     if (drmInitData != null) {
       int trackCount = trackBundles.size();
       for (int i = 0; i < trackCount; i++) {
@@ -1179,7 +1169,7 @@ public class FragmentedMp4Extractor implements Extractor {
         new ChunkIndex(sizes, offsets, durationsUs, timesUs));
   }
 
-  private void readEncryptionData(ExtractorInput input) throws IOException, InterruptedException {
+  private void readEncryptionData(ExtractorInput input) throws IOException {
     TrackBundle nextTrackBundle = null;
     long nextDataOffset = Long.MAX_VALUE;
     int trackBundlesSize = trackBundles.size();
@@ -1217,9 +1207,8 @@ public class FragmentedMp4Extractor implements Extractor {
    * @return Whether a sample was read. The read sample may have been output or skipped. False
    *     indicates that there are no samples left to read in the current mdat.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  private boolean readSample(ExtractorInput input) throws IOException, InterruptedException {
+  private boolean readSample(ExtractorInput input) throws IOException {
     if (parserState == STATE_READING_SAMPLE_START) {
       if (currentTrackBundle == null) {
         @Nullable TrackBundle currentTrackBundle = getNextFragmentRun(trackBundles);
@@ -1417,6 +1406,7 @@ public class FragmentedMp4Extractor implements Extractor {
   }
 
   /** Returns DrmInitData from leaf atoms. */
+  @Nullable
   private static DrmInitData getDrmInitDataFromAtoms(List<Atom.LeafAtom> leafChildren) {
     @Nullable ArrayList<SchemeData> schemeDatas = null;
     int leafChildrenSize = leafChildren.size();
@@ -1512,7 +1502,9 @@ public class FragmentedMp4Extractor implements Extractor {
       TrackEncryptionBox encryptionBox =
           track.getSampleDescriptionEncryptionBox(fragment.header.sampleDescriptionIndex);
       @Nullable String schemeType = encryptionBox != null ? encryptionBox.schemeType : null;
-      output.format(track.format.copyWithDrmInitData(drmInitData.copyWithSchemeType(schemeType)));
+      DrmInitData updatedDrmInitData = drmInitData.copyWithSchemeType(schemeType);
+      Format format = track.format.buildUpon().setDrmInitData(updatedDrmInitData).build();
+      output.format(format);
     }
 
     /** Resets the current fragment and sample indices. */

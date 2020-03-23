@@ -83,7 +83,7 @@ public final class InitializationChunk extends Chunk {
 
   @SuppressWarnings("NonAtomicVolatileUpdate")
   @Override
-  public void load() throws IOException, InterruptedException {
+  public void load() throws IOException {
     if (nextLoadPosition == 0) {
       extractorWrapper.init(
           trackOutputProvider, /* startTimeUs= */ C.TIME_UNSET, /* endTimeUs= */ C.TIME_UNSET);
@@ -93,7 +93,7 @@ public final class InitializationChunk extends Chunk {
       DataSpec loadDataSpec = dataSpec.subrange(nextLoadPosition);
       ExtractorInput input =
           new DefaultExtractorInput(
-              dataSource, loadDataSpec.absoluteStreamPosition, dataSource.open(loadDataSpec));
+              dataSource, loadDataSpec.position, dataSource.open(loadDataSpec));
       // Load and decode the initialization data.
       try {
         Extractor extractor = extractorWrapper.extractor;
@@ -103,7 +103,7 @@ public final class InitializationChunk extends Chunk {
         }
         Assertions.checkState(result != Extractor.RESULT_SEEK);
       } finally {
-        nextLoadPosition = input.getPosition() - dataSpec.absoluteStreamPosition;
+        nextLoadPosition = input.getPosition() - dataSpec.position;
       }
     } finally {
       Util.closeQuietly(dataSource);

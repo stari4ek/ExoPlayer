@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.source.dash.manifest;
 import static com.google.common.truth.Truth.assertThat;
 
 import android.net.Uri;
+import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
@@ -40,11 +41,12 @@ import org.xmlpull.v1.XmlPullParserFactory;
 @RunWith(AndroidJUnit4.class)
 public class DashManifestParserTest {
 
-  private static final String SAMPLE_MPD = "sample_mpd";
-  private static final String SAMPLE_MPD_UNKNOWN_MIME_TYPE = "sample_mpd_unknown_mime_type";
-  private static final String SAMPLE_MPD_SEGMENT_TEMPLATE = "sample_mpd_segment_template";
-  private static final String SAMPLE_MPD_EVENT_STREAM = "sample_mpd_event_stream";
-  private static final String SAMPLE_MPD_LABELS = "sample_mpd_labels";
+  private static final String SAMPLE_MPD = "mpd/sample_mpd";
+  private static final String SAMPLE_MPD_UNKNOWN_MIME_TYPE = "mpd/sample_mpd_unknown_mime_type";
+  private static final String SAMPLE_MPD_SEGMENT_TEMPLATE = "mpd/sample_mpd_segment_template";
+  private static final String SAMPLE_MPD_EVENT_STREAM = "mpd/sample_mpd_event_stream";
+  private static final String SAMPLE_MPD_LABELS = "mpd/sample_mpd_labels";
+  private static final String SAMPLE_MPD_ASSET_IDENTIFIER = "mpd/sample_mpd_asset_identifier";
 
   private static final String NEXT_TAG_NAME = "Next";
   private static final String NEXT_TAG = "<" + NEXT_TAG_NAME + "/>";
@@ -375,6 +377,27 @@ public class DashManifestParserTest {
             DashManifestParser.parseCea708AccessibilityChannel(
                 buildCea708AccessibilityDescriptors("Wrong format")))
         .isEqualTo(Format.NO_VALUE);
+  }
+
+  @Test
+  public void parsePeriodAssetIdentifier() throws IOException {
+    DashManifestParser parser = new DashManifestParser();
+    DashManifest mpd =
+        parser.parse(
+            Uri.parse("https://example.com/test.mpd"),
+            TestUtil.getInputStream(
+                ApplicationProvider.getApplicationContext(), SAMPLE_MPD_ASSET_IDENTIFIER));
+
+    assertThat(mpd.getPeriodCount()).isEqualTo(1);
+
+    Period period = mpd.getPeriod(0);
+    assertThat(period).isNotNull();
+    @Nullable Descriptor assetIdentifier = period.assetIdentifier;
+    assertThat(assetIdentifier).isNotNull();
+
+    assertThat(assetIdentifier.schemeIdUri).isEqualTo("urn:org:dashif:asset-id:2013");
+    assertThat(assetIdentifier.value).isEqualTo("md:cid:EIDR:10.5240%2f0EFB-02CD-126E-8092-1E49-W");
+    assertThat(assetIdentifier.id).isEqualTo("uniqueId");
   }
 
   private static List<Descriptor> buildCea608AccessibilityDescriptors(String value) {

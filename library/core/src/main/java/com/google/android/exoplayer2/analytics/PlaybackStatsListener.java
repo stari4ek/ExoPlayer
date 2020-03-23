@@ -20,7 +20,6 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.Format;
-import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Timeline.Period;
@@ -133,6 +132,7 @@ public final class PlaybackStatsListener
    */
   @Nullable
   public PlaybackStats getPlaybackStats() {
+    @Nullable
     PlaybackStatsTracker activeStatsTracker =
         activeAdPlayback != null
             ? playbackStatsTrackers.get(activeAdPlayback)
@@ -194,11 +194,15 @@ public final class PlaybackStatsListener
   @Override
   public void onAdPlaybackStarted(EventTime eventTime, String contentSession, String adSession) {
     Assertions.checkState(Assertions.checkNotNull(eventTime.mediaPeriodId).isAd());
-    long contentPositionUs =
+    long contentPeriodPositionUs =
         eventTime
             .timeline
             .getPeriodByUid(eventTime.mediaPeriodId.periodUid, period)
             .getAdGroupTimeUs(eventTime.mediaPeriodId.adGroupIndex);
+    long contentWindowPositionUs =
+        contentPeriodPositionUs == C.TIME_END_OF_SOURCE
+            ? C.TIME_END_OF_SOURCE
+            : contentPeriodPositionUs + period.getPositionInWindowUs();
     EventTime contentEventTime =
         new EventTime(
             eventTime.realtimeMs,
@@ -208,7 +212,7 @@ public final class PlaybackStatsListener
                 eventTime.mediaPeriodId.periodUid,
                 eventTime.mediaPeriodId.windowSequenceNumber,
                 eventTime.mediaPeriodId.adGroupIndex),
-            /* eventPlaybackPositionMs= */ C.usToMs(contentPositionUs),
+            /* eventPlaybackPositionMs= */ C.usToMs(contentWindowPositionUs),
             eventTime.currentPlaybackPositionMs,
             eventTime.totalBufferedDurationMs);
     Assertions.checkNotNull(playbackStatsTrackers.get(contentSession))
@@ -319,9 +323,8 @@ public final class PlaybackStatsListener
   }
 
   @Override
-  public void onPlaybackParametersChanged(
-      EventTime eventTime, PlaybackParameters playbackParameters) {
-    playbackSpeed = playbackParameters.speed;
+  public void onPlaybackSpeedChanged(EventTime eventTime, float playbackSpeed) {
+    this.playbackSpeed = playbackSpeed;
     sessionManager.updateSessions(eventTime);
     for (PlaybackStatsTracker tracker : playbackStatsTrackers.values()) {
       tracker.onPlaybackSpeedChanged(eventTime, playbackSpeed);
@@ -699,7 +702,8 @@ public final class PlaybackStatsListener
      */
     public void onVideoSizeChanged(EventTime eventTime, int width, int height) {
       if (currentVideoFormat != null && currentVideoFormat.height == Format.NO_VALUE) {
-        Format formatWithHeight = currentVideoFormat.copyWithVideoSize(width, height);
+        Format formatWithHeight =
+            currentVideoFormat.buildUpon().setWidth(width).setHeight(height).build();
         maybeUpdateVideoFormat(eventTime, formatWithHeight);
       }
     }

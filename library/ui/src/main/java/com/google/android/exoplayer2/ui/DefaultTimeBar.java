@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.ui;
 
-import android.annotation.TargetApi;
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
@@ -54,8 +54,6 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
  * <h3>Attributes</h3>
  *
  * The following attributes can be set on a DefaultTimeBar when used in a layout XML file:
- *
- * <p>
  *
  * <ul>
  *   <li><b>{@code bar_height}</b> - Dimension for the height of the time bar.
@@ -166,6 +164,9 @@ public class DefaultTimeBar extends View implements TimeBar {
 
   private static final int DEFAULT_INCREMENT_COUNT = 20;
 
+  private static final float SHOWN_SCRUBBER_SCALE = 1.0f;
+  private static final float HIDDEN_SCRUBBER_SCALE = 0.0f;
+
   /**
    * The name of the Android SDK view that most closely resembles this custom view. Used as the
    * class name for accessibility.
@@ -204,6 +205,8 @@ public class DefaultTimeBar extends View implements TimeBar {
   private int lastCoarseScrubXPosition;
   private @MonotonicNonNull Rect lastExclusionRectangle;
 
+  private ValueAnimator scrubberScalingAnimator;
+  private float scrubberScale;
   private boolean scrubbing;
   private long scrubPosition;
   private long duration;
@@ -327,6 +330,13 @@ public class DefaultTimeBar extends View implements TimeBar {
           (Math.max(scrubberDisabledSize, Math.max(scrubberEnabledSize, scrubberDraggedSize)) + 1)
               / 2;
     }
+    scrubberScale = 1.0f;
+    scrubberScalingAnimator = new ValueAnimator();
+    scrubberScalingAnimator.addUpdateListener(
+        animation -> {
+          scrubberScale = (float) animation.getAnimatedValue();
+          invalidate(seekBounds);
+        });
     duration = C.TIME_UNSET;
     keyTimeIncrement = C.TIME_UNSET;
     keyCountIncrement = DEFAULT_INCREMENT_COUNT;
@@ -334,6 +344,44 @@ public class DefaultTimeBar extends View implements TimeBar {
     if (getImportantForAccessibility() == View.IMPORTANT_FOR_ACCESSIBILITY_AUTO) {
       setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
     }
+  }
+
+  /** Shows the scrubber handle. */
+  public void showScrubber() {
+    showScrubber(/* showAnimationDurationMs= */ 0);
+  }
+
+  /**
+   * Shows the scrubber handle with animation.
+   *
+   * @param showAnimationDurationMs The duration for scrubber showing animation.
+   */
+  public void showScrubber(long showAnimationDurationMs) {
+    if (scrubberScalingAnimator.isStarted()) {
+      scrubberScalingAnimator.cancel();
+    }
+    scrubberScalingAnimator.setFloatValues(scrubberScale, SHOWN_SCRUBBER_SCALE);
+    scrubberScalingAnimator.setDuration(showAnimationDurationMs);
+    scrubberScalingAnimator.start();
+  }
+
+  /** Hides the scrubber handle. */
+  public void hideScrubber() {
+    hideScrubber(/* hideAnimationDurationMs= */ 0);
+  }
+
+  /**
+   * Hides the scrubber handle with animation.
+   *
+   * @param hideAnimationDurationMs The duration for scrubber hiding animation.
+   */
+  public void hideScrubber(long hideAnimationDurationMs) {
+    if (scrubberScalingAnimator.isStarted()) {
+      scrubberScalingAnimator.cancel();
+    }
+    scrubberScalingAnimator.setFloatValues(scrubberScale, HIDDEN_SCRUBBER_SCALE);
+    scrubberScalingAnimator.setDuration(hideAnimationDurationMs);
+    scrubberScalingAnimator.start();
   }
 
   /**
@@ -626,7 +674,6 @@ public class DefaultTimeBar extends View implements TimeBar {
     event.setClassName(ACCESSIBILITY_CLASS_NAME);
   }
 
-  @TargetApi(21)
   @Override
   public void onInitializeAccessibilityNodeInfo(AccessibilityNodeInfo info) {
     super.onInitializeAccessibilityNodeInfo(info);
@@ -816,11 +863,11 @@ public class DefaultTimeBar extends View implements TimeBar {
     if (scrubberDrawable == null) {
       int scrubberSize = (scrubbing || isFocused()) ? scrubberDraggedSize
           : (isEnabled() ? scrubberEnabledSize : scrubberDisabledSize);
-      int playheadRadius = scrubberSize / 2;
+      int playheadRadius = (int) ((scrubberSize * scrubberScale) / 2);
       canvas.drawCircle(playheadX, playheadY, playheadRadius, scrubberPaint);
     } else {
-      int scrubberDrawableWidth = scrubberDrawable.getIntrinsicWidth();
-      int scrubberDrawableHeight = scrubberDrawable.getIntrinsicHeight();
+      int scrubberDrawableWidth = (int) (scrubberDrawable.getIntrinsicWidth() * scrubberScale);
+      int scrubberDrawableHeight = (int) (scrubberDrawable.getIntrinsicHeight() * scrubberScale);
       scrubberDrawable.setBounds(
           playheadX - scrubberDrawableWidth / 2,
           playheadY - scrubberDrawableHeight / 2,

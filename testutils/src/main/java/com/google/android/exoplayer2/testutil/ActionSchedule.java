@@ -20,7 +20,6 @@ import android.view.Surface;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
-import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.PlayerMessage;
 import com.google.android.exoplayer2.PlayerMessage.Target;
@@ -36,7 +35,7 @@ import com.google.android.exoplayer2.testutil.Action.Seek;
 import com.google.android.exoplayer2.testutil.Action.SendMessages;
 import com.google.android.exoplayer2.testutil.Action.SetAudioAttributes;
 import com.google.android.exoplayer2.testutil.Action.SetPlayWhenReady;
-import com.google.android.exoplayer2.testutil.Action.SetPlaybackParameters;
+import com.google.android.exoplayer2.testutil.Action.SetPlaybackSpeed;
 import com.google.android.exoplayer2.testutil.Action.SetRendererDisabled;
 import com.google.android.exoplayer2.testutil.Action.SetRepeatMode;
 import com.google.android.exoplayer2.testutil.Action.SetShuffleModeEnabled;
@@ -54,6 +53,7 @@ import com.google.android.exoplayer2.testutil.Action.WaitForTimelineChanged;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.HandlerWrapper;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /**
  * Schedules a sequence of {@link Action}s for execution during a test.
@@ -89,7 +89,8 @@ public final class ActionSchedule {
    *
    * @param player The player to which actions should be applied.
    * @param trackSelector The track selector to which actions should be applied.
-   * @param surface The surface to use when applying actions.
+   * @param surface The surface to use when applying actions, or {@code null} if no surface is
+   *     needed.
    * @param mainHandler A handler associated with the main thread of the host activity.
    * @param callback A {@link Callback} to notify when the action schedule finishes, or null if no
    *     notification is needed.
@@ -97,7 +98,7 @@ public final class ActionSchedule {
   /* package */ void start(
       SimpleExoPlayer player,
       DefaultTrackSelector trackSelector,
-      Surface surface,
+      @Nullable Surface surface,
       HandlerWrapper mainHandler,
       @Nullable Callback callback) {
     callbackAction.setCallback(callback);
@@ -211,14 +212,14 @@ public final class ActionSchedule {
     }
 
     /**
-     * Schedules a playback parameters setting action.
+     * Schedules a playback speed setting action.
      *
-     * @param playbackParameters The playback parameters to set.
+     * @param playbackSpeed The playback speed to set.
      * @return The builder, for convenience.
-     * @see Player#setPlaybackParameters(PlaybackParameters)
+     * @see Player#setPlaybackSpeed(float)
      */
-    public Builder setPlaybackParameters(PlaybackParameters playbackParameters) {
-      return apply(new SetPlaybackParameters(tag, playbackParameters));
+    public Builder setPlaybackSpeed(float playbackSpeed) {
+      return apply(new SetPlaybackSpeed(tag, playbackSpeed));
     }
 
     /**
@@ -607,9 +608,9 @@ public final class ActionSchedule {
       void onMessageArrived();
     }
 
-    private SimpleExoPlayer player;
+    @Nullable private SimpleExoPlayer player;
     private boolean hasArrived;
-    private Callback callback;
+    @Nullable private Callback callback;
 
     public void setCallback(Callback callback) {
       this.callback = callback;
@@ -629,7 +630,7 @@ public final class ActionSchedule {
 
     @Override
     public final void handleMessage(int messageType, @Nullable Object message) {
-      handleMessage(player, messageType, message);
+      handleMessage(Assertions.checkStateNotNull(player), messageType, message);
       if (callback != null) {
         hasArrived = true;
         callback.onMessageArrived();
@@ -643,7 +644,7 @@ public final class ActionSchedule {
    */
   public abstract static class PlayerRunnable implements Runnable {
 
-    private SimpleExoPlayer player;
+    @Nullable private SimpleExoPlayer player;
 
     /** Executes Runnable with reference to player. */
     public abstract void run(SimpleExoPlayer player);
@@ -655,7 +656,7 @@ public final class ActionSchedule {
 
     @Override
     public final void run() {
-      run(player);
+      run(Assertions.checkStateNotNull(player));
     }
   }
 
@@ -666,12 +667,12 @@ public final class ActionSchedule {
     private final long delayMs;
     private final long repeatIntervalMs;
 
-    private ActionNode next;
+    @Nullable private ActionNode next;
 
-    private SimpleExoPlayer player;
-    private DefaultTrackSelector trackSelector;
-    private Surface surface;
-    private HandlerWrapper mainHandler;
+    private @MonotonicNonNull SimpleExoPlayer player;
+    private @MonotonicNonNull DefaultTrackSelector trackSelector;
+    @Nullable private Surface surface;
+    private @MonotonicNonNull HandlerWrapper mainHandler;
 
     /**
      * @param action The wrapped action.
@@ -708,13 +709,13 @@ public final class ActionSchedule {
      *
      * @param player The player to which actions should be applied.
      * @param trackSelector The track selector to which actions should be applied.
-     * @param surface The surface to use when applying actions.
+     * @param surface The surface to use when applying actions, or {@code null}.
      * @param mainHandler A handler associated with the main thread of the host activity.
      */
     public void schedule(
         SimpleExoPlayer player,
         DefaultTrackSelector trackSelector,
-        Surface surface,
+        @Nullable Surface surface,
         HandlerWrapper mainHandler) {
       this.player = player;
       this.trackSelector = trackSelector;
@@ -729,14 +730,20 @@ public final class ActionSchedule {
 
     @Override
     public void run() {
-      action.doActionAndScheduleNext(player, trackSelector, surface, mainHandler, next);
+      action.doActionAndScheduleNext(
+          Assertions.checkStateNotNull(player),
+          Assertions.checkStateNotNull(trackSelector),
+          surface,
+          Assertions.checkStateNotNull(mainHandler),
+          next);
       if (repeatIntervalMs != C.TIME_UNSET) {
         mainHandler.postDelayed(
             new Runnable() {
               @Override
               public void run() {
-                action.doActionAndScheduleNext(player, trackSelector, surface, mainHandler, null);
-                mainHandler.postDelayed(this, repeatIntervalMs);
+                action.doActionAndScheduleNext(
+                    player, trackSelector, surface, mainHandler, /* nextAction= */ null);
+                mainHandler.postDelayed(/* runnable= */ this, repeatIntervalMs);
               }
             },
             repeatIntervalMs);
@@ -756,7 +763,7 @@ public final class ActionSchedule {
 
     @Override
     protected void doActionImpl(
-        SimpleExoPlayer player, DefaultTrackSelector trackSelector, Surface surface) {
+        SimpleExoPlayer player, DefaultTrackSelector trackSelector, @Nullable Surface surface) {
       // Do nothing.
     }
   }
@@ -780,18 +787,19 @@ public final class ActionSchedule {
     protected void doActionAndScheduleNextImpl(
         SimpleExoPlayer player,
         DefaultTrackSelector trackSelector,
-        Surface surface,
+        @Nullable Surface surface,
         HandlerWrapper handler,
-        ActionNode nextAction) {
+        @Nullable ActionNode nextAction) {
       Assertions.checkArgument(nextAction == null);
+      @Nullable Callback callback = this.callback;
       if (callback != null) {
-        handler.post(() -> callback.onActionScheduleFinished());
+        handler.post(callback::onActionScheduleFinished);
       }
     }
 
     @Override
     protected void doActionImpl(
-        SimpleExoPlayer player, DefaultTrackSelector trackSelector, Surface surface) {
+        SimpleExoPlayer player, DefaultTrackSelector trackSelector, @Nullable Surface surface) {
       // Not triggered.
     }
   }

@@ -96,6 +96,9 @@ public final class TsExtractor implements Extractor {
   public static final int TS_STREAM_TYPE_SPLICE_INFO = 0x86;
   public static final int TS_STREAM_TYPE_DVBSUBS = 0x59;
 
+  // Stream types that aren't defined by the MPEG-2 TS specification.
+  public static final int TS_STREAM_TYPE_AIT = 0x101;
+
   public static final int TS_PACKET_SIZE = 188;
   public static final int TS_SYNC_BYTE = 0x47; // First byte of each TS packet.
 
@@ -109,6 +112,10 @@ public final class TsExtractor implements Extractor {
 
   private static final int BUFFER_SIZE = TS_PACKET_SIZE * 50;
   private static final int SNIFF_TS_PACKET_COUNT = 5;
+
+  // TVirl: https://github.com/google/ExoPlayer/issues/2014
+  public static boolean HLS_MULTIPLE_TRACKS_ALLOWED = false;
+  // !TVirl
 
   private final @Mode int mode;
   private final List<TimestampAdjuster> timestampAdjusters;
@@ -187,7 +194,7 @@ public final class TsExtractor implements Extractor {
   // Extractor implementation.
 
   @Override
-  public boolean sniff(ExtractorInput input) throws IOException, InterruptedException {
+  public boolean sniff(ExtractorInput input) throws IOException {
     byte[] buffer = tsPacketBuffer.data;
     input.peekFully(buffer, 0, TS_PACKET_SIZE * SNIFF_TS_PACKET_COUNT);
     for (int startPosCandidate = 0; startPosCandidate < TS_PACKET_SIZE; startPosCandidate++) {
@@ -250,7 +257,7 @@ public final class TsExtractor implements Extractor {
 
   @Override
   public @ReadResult int read(ExtractorInput input, PositionHolder seekPosition)
-      throws IOException, InterruptedException {
+      throws IOException {
     long inputLength = input.getLength();
     if (tracksEnded) {
       boolean canReadDuration = inputLength != C.LENGTH_UNSET && mode != MODE_HLS;
@@ -369,8 +376,7 @@ public final class TsExtractor implements Extractor {
     }
   }
 
-  private boolean fillBufferWithAtLeastOnePacket(ExtractorInput input)
-      throws IOException, InterruptedException {
+  private boolean fillBufferWithAtLeastOnePacket(ExtractorInput input) throws IOException {
     byte[] data = tsPacketBuffer.data;
     // Shift bytes to the start of the buffer if there isn't enough space left at the end.
     if (BUFFER_SIZE - tsPacketBuffer.getPosition() < TS_PACKET_SIZE) {
@@ -494,6 +500,7 @@ public final class TsExtractor implements Extractor {
     private static final int TS_PMT_DESC_REGISTRATION = 0x05;
     private static final int TS_PMT_DESC_ISO639_LANG = 0x0A;
     private static final int TS_PMT_DESC_AC3 = 0x6A;
+    private static final int TS_PMT_DESC_AIT = 0x6F;
     private static final int TS_PMT_DESC_EAC3 = 0x7A;
     private static final int TS_PMT_DESC_DTS = 0x7B;
     private static final int TS_PMT_DESC_DVB_EXT = 0x7F;
@@ -578,12 +585,15 @@ public final class TsExtractor implements Extractor {
         pmtScratch.skipBits(4); // reserved
         int esInfoLength = pmtScratch.readBits(12); // ES_info_length.
         EsInfo esInfo = readEsInfo(sectionData, esInfoLength);
-        if (streamType == 0x06) {
+        if (streamType == 0x06 || streamType == 0x05) {
           streamType = esInfo.streamType;
         }
         remainingEntriesLength -= esInfoLength + 5;
 
-        int trackId = mode == MODE_HLS ? streamType : elementaryPid;
+        // TVirl
+        //int trackId = mode == MODE_HLS ? streamType : elementaryPid;
+        int trackId = mode == MODE_HLS && !HLS_MULTIPLE_TRACKS_ALLOWED ? streamType : elementaryPid;
+        // !TVirl
         if (trackIds.get(trackId)) {
           continue;
         }
@@ -688,6 +698,8 @@ public final class TsExtractor implements Extractor {
             dvbSubtitleInfos.add(new DvbSubtitleInfo(dvbLanguage, dvbSubtitlingType,
                 initializationData));
           }
+        } else if (descriptorTag == TS_PMT_DESC_AIT) {
+          streamType = TS_STREAM_TYPE_AIT;
         }
         // Skip unused bytes of current descriptor.
         data.skipBytes(positionOfNextDescriptor - data.getPosition());

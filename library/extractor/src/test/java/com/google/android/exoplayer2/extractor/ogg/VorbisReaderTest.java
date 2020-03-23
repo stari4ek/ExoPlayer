@@ -36,7 +36,7 @@ import org.junit.runner.RunWith;
 public final class VorbisReaderTest {
 
   @Test
-  public void testReadBits() throws Exception {
+  public void readBits_returnsSignificantBitsFromIndex() {
     assertThat(readBits((byte) 0x00, 2, 2)).isEqualTo(0);
     assertThat(readBits((byte) 0x02, 1, 1)).isEqualTo(1);
     assertThat(readBits((byte) 0xF0, 4, 4)).isEqualTo(15);
@@ -44,7 +44,7 @@ public final class VorbisReaderTest {
   }
 
   @Test
-  public void testAppendNumberOfSamples() throws Exception {
+  public void appendNumberOfSamples() {
     ParsableByteArray buffer = new ParsableByteArray(4);
     buffer.setLimit(0);
     VorbisReader.appendNumberOfSamples(buffer, 0x01234567);
@@ -56,7 +56,7 @@ public final class VorbisReaderTest {
   }
 
   @Test
-  public void testReadSetupHeadersWithIOExceptions() throws IOException, InterruptedException {
+  public void readSetupHeaders_withIOExceptions_readSuccess() throws IOException {
     // initial two pages of bytes which by spec contain the three Vorbis header packets:
     // identification, comment and setup header.
     byte[] data =
@@ -77,8 +77,8 @@ public final class VorbisReaderTest {
     assertThat(vorbisSetup.idHeader.data).hasLength(30);
     assertThat(vorbisSetup.setupHeaderData).hasLength(3597);
 
-    assertThat(vorbisSetup.idHeader.bitrateMax).isEqualTo(-1);
-    assertThat(vorbisSetup.idHeader.bitrateMin).isEqualTo(-1);
+    assertThat(vorbisSetup.idHeader.bitrateMaximum).isEqualTo(-1);
+    assertThat(vorbisSetup.idHeader.bitrateMinimum).isEqualTo(-1);
     assertThat(vorbisSetup.idHeader.bitrateNominal).isEqualTo(66666);
     assertThat(vorbisSetup.idHeader.blockSize0).isEqualTo(512);
     assertThat(vorbisSetup.idHeader.blockSize1).isEqualTo(1024);
@@ -98,7 +98,7 @@ public final class VorbisReaderTest {
   }
 
   private static VorbisSetup readSetupHeaders(VorbisReader reader, ExtractorInput input)
-      throws IOException, InterruptedException {
+      throws IOException {
     OggPacket oggPacket = new OggPacket();
     while (true) {
       try {

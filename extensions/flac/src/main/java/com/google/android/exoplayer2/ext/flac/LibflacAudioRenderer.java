@@ -22,8 +22,7 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.audio.AudioProcessor;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.audio.AudioSink;
-import com.google.android.exoplayer2.audio.SimpleDecoderAudioRenderer;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
+import com.google.android.exoplayer2.audio.DecoderAudioRenderer;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
 import com.google.android.exoplayer2.extractor.FlacStreamMetadata;
 import com.google.android.exoplayer2.util.Assertions;
@@ -33,7 +32,7 @@ import com.google.android.exoplayer2.util.Util;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /** Decodes and renders audio using the native Flac decoder. */
-public final class LibflacAudioRenderer extends SimpleDecoderAudioRenderer {
+public final class LibflacAudioRenderer extends DecoderAudioRenderer {
 
   private static final int NUM_BUFFERS = 16;
 
@@ -69,15 +68,12 @@ public final class LibflacAudioRenderer extends SimpleDecoderAudioRenderer {
     super(
         eventHandler,
         eventListener,
-        /* drmSessionManager= */ null,
-        /* playClearSamplesWithoutKeys= */ false,
         audioSink);
   }
 
   @Override
   @FormatSupport
-  protected int supportsFormatInternal(
-      @Nullable DrmSessionManager<ExoMediaCrypto> drmSessionManager, Format format) {
+  protected int supportsFormatInternal(Format format) {
     if (!FlacLibrary.isAvailable()
         || !MimeTypes.AUDIO_FLAC.equalsIgnoreCase(format.sampleMimeType)) {
       return FORMAT_UNSUPPORTED_TYPE;
@@ -99,7 +95,7 @@ public final class LibflacAudioRenderer extends SimpleDecoderAudioRenderer {
     }
     if (!supportsOutput(format.channelCount, pcmEncoding)) {
       return FORMAT_UNSUPPORTED_SUBTYPE;
-    } else if (!supportsFormatDrm(drmSessionManager, format.drmInitData)) {
+    } else if (format.drmInitData != null && format.exoMediaCryptoType == null) {
       return FORMAT_UNSUPPORTED_DRM;
     } else {
       return FORMAT_HANDLED;
@@ -118,18 +114,11 @@ public final class LibflacAudioRenderer extends SimpleDecoderAudioRenderer {
   @Override
   protected Format getOutputFormat() {
     Assertions.checkNotNull(streamMetadata);
-    return Format.createAudioSampleFormat(
-        /* id= */ null,
-        MimeTypes.AUDIO_RAW,
-        /* codecs= */ null,
-        /* bitrate= */ Format.NO_VALUE,
-        /* maxInputSize= */ Format.NO_VALUE,
-        streamMetadata.channels,
-        streamMetadata.sampleRate,
-        Util.getPcmEncoding(streamMetadata.bitsPerSample),
-        /* initializationData= */ null,
-        /* drmInitData= */ null,
-        /* selectionFlags= */ 0,
-        /* language= */ null);
+    return new Format.Builder()
+        .setSampleMimeType(MimeTypes.AUDIO_RAW)
+        .setChannelCount(streamMetadata.channels)
+        .setSampleRate(streamMetadata.sampleRate)
+        .setPcmEncoding(Util.getPcmEncoding(streamMetadata.bitsPerSample))
+        .build();
   }
 }

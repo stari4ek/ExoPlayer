@@ -54,8 +54,7 @@ public final class AdtsExtractorSeekTest {
   }
 
   @Test
-  public void testAdtsExtractorReads_returnSeekableSeekMap()
-      throws IOException, InterruptedException {
+  public void adtsExtractorReads_returnSeekableSeekMap() throws IOException {
     String fileName = TEST_FILE;
     Uri fileUri = TestUtil.buildAssetUri(fileName);
     expectedTrackOutput =
@@ -74,8 +73,7 @@ public final class AdtsExtractorSeekTest {
   }
 
   @Test
-  public void testSeeking_handlesSeekingToPositionInFile_extractsCorrectSample()
-      throws IOException, InterruptedException {
+  public void seeking_handlesSeekingToPositionInFile_extractsCorrectSample() throws IOException {
     String fileName = TEST_FILE;
     Uri fileUri = TestUtil.buildAssetUri(fileName);
     expectedTrackOutput =
@@ -101,8 +99,7 @@ public final class AdtsExtractorSeekTest {
   }
 
   @Test
-  public void testSeeking_handlesSeekToEoF_extractsLastSample()
-      throws IOException, InterruptedException {
+  public void seeking_handlesSeekToEoF_extractsLastSample() throws IOException {
     String fileName = TEST_FILE;
     Uri fileUri = TestUtil.buildAssetUri(fileName);
     expectedTrackOutput =
@@ -128,8 +125,7 @@ public final class AdtsExtractorSeekTest {
   }
 
   @Test
-  public void testSeeking_handlesSeekingBackward_extractsCorrectSamples()
-      throws IOException, InterruptedException {
+  public void seeking_handlesSeekingBackward_extractsCorrectSamples() throws IOException {
     String fileName = TEST_FILE;
     Uri fileUri = TestUtil.buildAssetUri(fileName);
     expectedTrackOutput =
@@ -157,8 +153,7 @@ public final class AdtsExtractorSeekTest {
   }
 
   @Test
-  public void testSeeking_handlesSeekingForward_extractsCorrectSamples()
-      throws IOException, InterruptedException {
+  public void seeking_handlesSeekingForward_extractsCorrectSamples() throws IOException {
     String fileName = TEST_FILE;
     Uri fileUri = TestUtil.buildAssetUri(fileName);
     expectedTrackOutput =
@@ -186,8 +181,7 @@ public final class AdtsExtractorSeekTest {
   }
 
   @Test
-  public void testSeeking_handlesRandomSeeks_extractsCorrectSamples()
-      throws IOException, InterruptedException {
+  public void seeking_handlesRandomSeeks_extractsCorrectSamples() throws IOException {
     String fileName = TEST_FILE;
     Uri fileUri = TestUtil.buildAssetUri(fileName);
     expectedTrackOutput =

@@ -45,7 +45,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void peekId3Metadata_updatesPeekPosition() throws Exception {
-    ExtractorInput input = buildExtractorInput("flac/bear_with_id3_enabled.flac");
+    ExtractorInput input = buildExtractorInput("flac/bear_with_id3.flac");
 
     FlacMetadataReader.peekId3Metadata(input, /* parseData= */ false);
 
@@ -55,7 +55,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void peekId3Metadata_parseData_returnsNonEmptyMetadata() throws Exception {
-    ExtractorInput input = buildExtractorInput("flac/bear_with_id3_enabled.flac");
+    ExtractorInput input = buildExtractorInput("flac/bear_with_id3.flac");
 
     Metadata metadata = FlacMetadataReader.peekId3Metadata(input, /* parseData= */ true);
 
@@ -65,7 +65,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void peekId3Metadata_doNotParseData_returnsNull() throws Exception {
-    ExtractorInput input = buildExtractorInput("flac/bear_with_id3_enabled.flac");
+    ExtractorInput input = buildExtractorInput("flac/bear_with_id3.flac");
 
     Metadata metadata = FlacMetadataReader.peekId3Metadata(input, /* parseData= */ false);
 
@@ -103,7 +103,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void checkAndPeekStreamMarker_invalidData_isFalse() throws Exception {
-    ExtractorInput input = buildExtractorInput("mp3/bear-xing-header.mp3");
+    ExtractorInput input = buildExtractorInput("mp3/bear-vbr-xing-header.mp3");
 
     boolean result = FlacMetadataReader.checkAndPeekStreamMarker(input);
 
@@ -112,7 +112,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void readId3Metadata_updatesReadPositionAndAlignsPeekPosition() throws Exception {
-    ExtractorInput input = buildExtractorInput("flac/bear_with_id3_enabled.flac");
+    ExtractorInput input = buildExtractorInput("flac/bear_with_id3.flac");
     // Advance peek position after ID3 metadata.
     FlacMetadataReader.peekId3Metadata(input, /* parseData= */ false);
     input.advancePeekPosition(1);
@@ -125,7 +125,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void readId3Metadata_parseData_returnsNonEmptyMetadata() throws Exception {
-    ExtractorInput input = buildExtractorInput("flac/bear_with_id3_enabled.flac");
+    ExtractorInput input = buildExtractorInput("flac/bear_with_id3.flac");
 
     Metadata metadata = FlacMetadataReader.readId3Metadata(input, /* parseData= */ true);
 
@@ -135,7 +135,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void readId3Metadata_doNotParseData_returnsNull() throws Exception {
-    ExtractorInput input = buildExtractorInput("flac/bear_with_id3_enabled.flac");
+    ExtractorInput input = buildExtractorInput("flac/bear_with_id3.flac");
 
     Metadata metadata = FlacMetadataReader.readId3Metadata(input, /* parseData= */ false);
 
@@ -163,7 +163,7 @@ public class FlacMetadataReaderTest {
 
   @Test
   public void readStreamMarker_invalidData_throwsException() throws Exception {
-    ExtractorInput input = buildExtractorInput("mp3/bear-xing-header.mp3");
+    ExtractorInput input = buildExtractorInput("mp3/bear-vbr-xing-header.mp3");
 
     assertThrows(ParserException.class, () -> FlacMetadataReader.readStreamMarker(input));
   }

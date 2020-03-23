@@ -41,9 +41,9 @@ public final class MpegAudioUtil {
     public int samplesPerFrame;
 
     /**
-     * Populates the fields in this instance to reflect the the MPEG audio header in {@code
-     * headerData}, returning whether the header was valid. If false, the values of the fields in
-     * this instance will not be updated.
+     * Populates the fields in this instance to reflect the MPEG audio header in {@code headerData},
+     * returning whether the header was valid. If false, the values of the fields in this instance
+     * will not be updated.
      *
      * @param headerData Header data to parse.
      * @return True if the fields were populated. False otherwise, indicating that {@code
@@ -208,6 +208,12 @@ public final class MpegAudioUtil {
    * size is 4 KiB.
    */
   public static final int MAX_FRAME_SIZE_BYTES = 4096;
+
+  /**
+   * Maximum rate for an MPEG audio stream corresponding to MPEG-1 layer III (320 kbit/s), in bytes
+   * per second.
+   */
+  public static final int MAX_RATE_BYTES_PER_SECOND = 320 * 1000 / 8;
 
   private static final String[] MIME_TYPE_BY_LAYER =
       new String[] {MimeTypes.AUDIO_MPEG_L1, MimeTypes.AUDIO_MPEG_L2, MimeTypes.AUDIO_MPEG};

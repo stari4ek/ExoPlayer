@@ -174,7 +174,7 @@ public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callb
   @Override
   public long seekToUs(long positionUs) {
     pendingInitialDiscontinuityPositionUs = C.TIME_UNSET;
-    for (ClippingSampleStream sampleStream : sampleStreams) {
+    for (@Nullable ClippingSampleStream sampleStream : sampleStreams) {
       if (sampleStream != null) {
         sampleStream.clearSentEos();
       }
@@ -310,14 +310,19 @@ public final class ClippingMediaPeriod implements MediaPeriod, MediaPeriod.Callb
         buffer.setFlags(C.BUFFER_FLAG_END_OF_STREAM);
         return C.RESULT_BUFFER_READ;
       }
-      int result = childStream.readData(formatHolder, buffer, requireFormat);
+      @ReadDataResult int result = childStream.readData(formatHolder, buffer, requireFormat);
       if (result == C.RESULT_FORMAT_READ) {
         Format format = Assertions.checkNotNull(formatHolder.format);
         if (format.encoderDelay != 0 || format.encoderPadding != 0) {
           // Clear gapless playback metadata if the start/end points don't match the media.
           int encoderDelay = startUs != 0 ? 0 : format.encoderDelay;
           int encoderPadding = endUs != C.TIME_END_OF_SOURCE ? 0 : format.encoderPadding;
-          formatHolder.format = format.copyWithGaplessInfo(encoderDelay, encoderPadding);
+          formatHolder.format =
+              format
+                  .buildUpon()
+                  .setEncoderDelay(encoderDelay)
+                  .setEncoderPadding(encoderPadding)
+                  .build();
         }
         return C.RESULT_FORMAT_READ;
       }

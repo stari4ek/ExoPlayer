@@ -74,9 +74,10 @@ public class ForwardingAudioSink implements AudioSink {
   }
 
   @Override
-  public boolean handleBuffer(ByteBuffer buffer, long presentationTimeUs)
+  public boolean handleBuffer(
+      ByteBuffer buffer, long presentationTimeUs, int encodedAccessUnitCount)
       throws InitializationException, WriteException {
-    return sink.handleBuffer(buffer, presentationTimeUs);
+    return sink.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount);
   }
 
   @Override
@@ -94,14 +95,43 @@ public class ForwardingAudioSink implements AudioSink {
     return sink.hasPendingData();
   }
 
+  /**
+   * @deprecated Use {@link #setPlaybackSpeed(float)} and {@link #setSkipSilenceEnabled(boolean)}
+   *     instead.
+   */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   public void setPlaybackParameters(PlaybackParameters playbackParameters) {
     sink.setPlaybackParameters(playbackParameters);
   }
 
+  /** @deprecated Use {@link #getPlaybackSpeed()} and {@link #getSkipSilenceEnabled()} instead. */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   public PlaybackParameters getPlaybackParameters() {
     return sink.getPlaybackParameters();
+  }
+
+  @Override
+  public void setPlaybackSpeed(float playbackSpeed) {
+    sink.setPlaybackSpeed(playbackSpeed);
+  }
+
+  @Override
+  public float getPlaybackSpeed() {
+    return sink.getPlaybackSpeed();
+  }
+
+  @Override
+  public void setSkipSilenceEnabled(boolean skipSilenceEnabled) {
+    sink.setSkipSilenceEnabled(skipSilenceEnabled);
+  }
+
+  @Override
+  public boolean getSkipSilenceEnabled() {
+    return sink.getSkipSilenceEnabled();
   }
 
   @Override

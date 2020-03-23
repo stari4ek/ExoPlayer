@@ -61,7 +61,7 @@ public final class WavExtractor implements Extractor {
   }
 
   @Override
-  public boolean sniff(ExtractorInput input) throws IOException, InterruptedException {
+  public boolean sniff(ExtractorInput input) throws IOException {
     return WavHeaderReader.peek(input) != null;
   }
 
@@ -85,8 +85,7 @@ public final class WavExtractor implements Extractor {
   }
 
   @Override
-  public int read(ExtractorInput input, PositionHolder seekPosition)
-      throws IOException, InterruptedException {
+  public int read(ExtractorInput input, PositionHolder seekPosition) throws IOException {
     assertInitialized();
     if (outputWriter == null) {
       WavHeader header = WavHeaderReader.peek(input);
@@ -176,10 +175,8 @@ public final class WavExtractor implements Extractor {
      * @param bytesLeft The number of sample data bytes left to be read from the input.
      * @return Whether the end of the sample data has been reached.
      * @throws IOException If an error occurs reading from the input.
-     * @throws InterruptedException If the thread has been interrupted.
      */
-    boolean sampleData(ExtractorInput input, long bytesLeft)
-        throws IOException, InterruptedException;
+    boolean sampleData(ExtractorInput input, long bytesLeft) throws IOException;
   }
 
   private static final class PassthroughOutputWriter implements OutputWriter {
@@ -223,22 +220,19 @@ public final class WavExtractor implements Extractor {
             "Expected block size: " + bytesPerFrame + "; got: " + header.blockSize);
       }
 
+      int constantBitrate = header.frameRateHz * bytesPerFrame * 8;
       targetSampleSizeBytes =
           Math.max(bytesPerFrame, header.frameRateHz * bytesPerFrame / TARGET_SAMPLES_PER_SECOND);
       format =
-          Format.createAudioSampleFormat(
-              /* id= */ null,
-              mimeType,
-              /* codecs= */ null,
-              /* bitrate= */ header.frameRateHz * bytesPerFrame * 8,
-              /* maxInputSize= */ targetSampleSizeBytes,
-              header.numChannels,
-              header.frameRateHz,
-              pcmEncoding,
-              /* initializationData= */ null,
-              /* drmInitData= */ null,
-              /* selectionFlags= */ 0,
-              /* language= */ null);
+          new Format.Builder()
+              .setSampleMimeType(mimeType)
+              .setAverageBitrate(constantBitrate)
+              .setPeakBitrate(constantBitrate)
+              .setMaxInputSize(targetSampleSizeBytes)
+              .setChannelCount(header.numChannels)
+              .setSampleRate(header.frameRateHz)
+              .setPcmEncoding(pcmEncoding)
+              .build();
     }
 
     @Override
@@ -256,8 +250,7 @@ public final class WavExtractor implements Extractor {
     }
 
     @Override
-    public boolean sampleData(ExtractorInput input, long bytesLeft)
-        throws IOException, InterruptedException {
+    public boolean sampleData(ExtractorInput input, long bytesLeft) throws IOException {
       // Write sample data until we've reached the target sample size, or the end of the data.
       boolean endOfSampleData = bytesLeft == 0;
       while (!endOfSampleData && pendingOutputBytes < targetSampleSizeBytes) {
@@ -371,21 +364,17 @@ public final class WavExtractor implements Extractor {
 
       // Create the format. We calculate the bitrate of the data before decoding, since this is the
       // bitrate of the stream itself.
-      int bitrate = header.frameRateHz * header.blockSize * 8 / framesPerBlock;
+      int constantBitrate = header.frameRateHz * header.blockSize * 8 / framesPerBlock;
       format =
-          Format.createAudioSampleFormat(
-              /* id= */ null,
-              MimeTypes.AUDIO_RAW,
-              /* codecs= */ null,
-              bitrate,
-              /* maxInputSize= */ numOutputFramesToBytes(targetSampleSizeFrames, numChannels),
-              header.numChannels,
-              header.frameRateHz,
-              C.ENCODING_PCM_16BIT,
-              /* initializationData= */ null,
-              /* drmInitData= */ null,
-              /* selectionFlags= */ 0,
-              /* language= */ null);
+          new Format.Builder()
+              .setSampleMimeType(MimeTypes.AUDIO_RAW)
+              .setAverageBitrate(constantBitrate)
+              .setPeakBitrate(constantBitrate)
+              .setMaxInputSize(numOutputFramesToBytes(targetSampleSizeFrames, numChannels))
+              .setChannelCount(header.numChannels)
+              .setSampleRate(header.frameRateHz)
+              .setPcmEncoding(C.ENCODING_PCM_16BIT)
+              .build();
     }
 
     @Override
@@ -404,8 +393,7 @@ public final class WavExtractor implements Extractor {
     }
 
     @Override
-    public boolean sampleData(ExtractorInput input, long bytesLeft)
-        throws IOException, InterruptedException {
+    public boolean sampleData(ExtractorInput input, long bytesLeft) throws IOException {
       // Calculate the number of additional frames that we need on the output side to complete a
       // sample of the target size.
       int targetFramesRemaining =

@@ -19,6 +19,7 @@ import android.os.Handler;
 import android.os.Looper;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.Timeline;
+import com.google.android.exoplayer2.drm.DrmSessionEventListener;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import java.util.ArrayList;
@@ -106,7 +107,7 @@ public abstract class BaseMediaSource implements MediaSource {
    */
   protected final MediaSourceEventListener.EventDispatcher createEventDispatcher(
       MediaPeriodId mediaPeriodId, long mediaTimeOffsetMs) {
-    Assertions.checkArgument(mediaPeriodId != null);
+    Assertions.checkNotNull(mediaPeriodId);
     return eventDispatcher.withParameters(/* windowIndex= */ 0, mediaPeriodId, mediaTimeOffsetMs);
   }
 
@@ -141,11 +142,21 @@ public abstract class BaseMediaSource implements MediaSource {
   }
 
   @Override
+  public final void addDrmEventListener(Handler handler, DrmSessionEventListener eventListener) {
+    eventDispatcher.addEventListener(handler, eventListener, DrmSessionEventListener.class);
+  }
+
+  @Override
+  public final void removeDrmEventListener(DrmSessionEventListener eventListener) {
+    eventDispatcher.removeEventListener(eventListener, DrmSessionEventListener.class);
+  }
+
+  @Override
   public final void prepareSource(
       MediaSourceCaller caller, @Nullable TransferListener mediaTransferListener) {
     Looper looper = Looper.myLooper();
     Assertions.checkArgument(this.looper == null || this.looper == looper);
-    Timeline timeline = this.timeline;
+    @Nullable Timeline timeline = this.timeline;
     mediaSourceCallers.add(caller);
     if (this.looper == null) {
       this.looper = looper;

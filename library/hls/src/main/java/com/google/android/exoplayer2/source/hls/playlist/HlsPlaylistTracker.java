@@ -99,6 +99,24 @@ public interface HlsPlaylistTracker {
     }
   }
 
+  // TVirl
+  /** Thrown when a playlist is considered to be stuck due to a server side error. */
+  final class PlaylistEmptyManifestException extends IOException {
+
+    /** The url of the stuck playlist. */
+    public final Uri url;
+
+    /**
+     * Creates an instance.
+     *
+     * @param url See {@link #url}.
+     */
+    public PlaylistEmptyManifestException(Uri url) {
+      this.url = url;
+    }
+  }
+  // !TVirl
+
   /** Thrown when the media sequence of a new snapshot indicates the server has reset. */
   final class PlaylistResetException extends IOException {
 

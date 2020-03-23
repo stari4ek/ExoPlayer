@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.extractor;
 
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.upstream.DataReader;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -63,12 +64,12 @@ import java.io.InputStream;
  *       (regardless of {@code allowEndOfInput}).
  * </ul>
  */
-public interface ExtractorInput {
+public interface ExtractorInput extends DataReader {
 
   /**
    * Reads up to {@code length} bytes from the input and resets the peek position.
-   * <p>
-   * This method blocks until at least one byte of data can be read, the end of the input is
+   *
+   * <p>This method blocks until at least one byte of data can be read, the end of the input is
    * detected, or an exception is thrown.
    *
    * @param target A target array into which data should be written.
@@ -76,9 +77,9 @@ public interface ExtractorInput {
    * @param length The maximum number of bytes to read from the input.
    * @return The number of bytes read, or {@link C#RESULT_END_OF_INPUT} if the input has ended.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
-  int read(byte[] target, int offset, int length) throws IOException, InterruptedException;
+  @Override
+  int read(byte[] target, int offset, int length) throws IOException;
 
   /**
    * Like {@link #read(byte[], int, int)}, but reads the requested {@code length} in full.
@@ -96,10 +97,9 @@ public interface ExtractorInput {
    *     (i.e. having read at least one byte, but fewer than {@code length}), or if no bytes were
    *     read and {@code allowEndOfInput} is false.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
   boolean readFully(byte[] target, int offset, int length, boolean allowEndOfInput)
-      throws IOException, InterruptedException;
+      throws IOException;
 
   /**
    * Equivalent to {@link #readFully(byte[], int, int, boolean) readFully(target, offset, length,
@@ -110,9 +110,8 @@ public interface ExtractorInput {
    * @param length The number of bytes to read from the input.
    * @throws EOFException If the end of input was encountered.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  void readFully(byte[] target, int offset, int length) throws IOException, InterruptedException;
+  void readFully(byte[] target, int offset, int length) throws IOException;
 
   /**
    * Like {@link #read(byte[], int, int)}, except the data is skipped instead of read.
@@ -120,9 +119,8 @@ public interface ExtractorInput {
    * @param length The maximum number of bytes to skip from the input.
    * @return The number of bytes skipped, or {@link C#RESULT_END_OF_INPUT} if the input has ended.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
-  int skip(int length) throws IOException, InterruptedException;
+  int skip(int length) throws IOException;
 
   /**
    * Like {@link #readFully(byte[], int, int, boolean)}, except the data is skipped instead of read.
@@ -138,22 +136,20 @@ public interface ExtractorInput {
    *     (i.e. having skipped at least one byte, but fewer than {@code length}), or if no bytes were
    *     skipped and {@code allowEndOfInput} is false.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
-  boolean skipFully(int length, boolean allowEndOfInput) throws IOException, InterruptedException;
+  boolean skipFully(int length, boolean allowEndOfInput) throws IOException;
 
   /**
    * Like {@link #readFully(byte[], int, int)}, except the data is skipped instead of read.
-   * <p>
-   * Encountering the end of input is always considered an error, and will result in an
-   * {@link EOFException} being thrown.
+   *
+   * <p>Encountering the end of input is always considered an error, and will result in an {@link
+   * EOFException} being thrown.
    *
    * @param length The number of bytes to skip from the input.
    * @throws EOFException If the end of input was encountered.
    * @throws IOException If an error occurs reading from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  void skipFully(int length) throws IOException, InterruptedException;
+  void skipFully(int length) throws IOException;
 
   /**
    * Peeks up to {@code length} bytes from the peek position. The current read position is left
@@ -171,9 +167,8 @@ public interface ExtractorInput {
    * @param length The maximum number of bytes to peek from the input.
    * @return The number of bytes peeked, or {@link C#RESULT_END_OF_INPUT} if the input has ended.
    * @throws IOException If an error occurs peeking from the input.
-   * @throws InterruptedException If the thread has been interrupted.
    */
-  int peek(byte[] target, int offset, int length) throws IOException, InterruptedException;
+  int peek(byte[] target, int offset, int length) throws IOException;
 
   /**
    * Like {@link #peek(byte[], int, int)}, but peeks the requested {@code length} in full.
@@ -191,10 +186,9 @@ public interface ExtractorInput {
    *     (i.e. having peeked at least one byte, but fewer than {@code length}), or if no bytes were
    *     peeked and {@code allowEndOfInput} is false.
    * @throws IOException If an error occurs peeking from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
   boolean peekFully(byte[] target, int offset, int length, boolean allowEndOfInput)
-      throws IOException, InterruptedException;
+      throws IOException;
 
   /**
    * Equivalent to {@link #peekFully(byte[], int, int, boolean) peekFully(target, offset, length,
@@ -205,9 +199,8 @@ public interface ExtractorInput {
    * @param length The number of bytes to peek from the input.
    * @throws EOFException If the end of input was encountered.
    * @throws IOException If an error occurs peeking from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  void peekFully(byte[] target, int offset, int length) throws IOException, InterruptedException;
+  void peekFully(byte[] target, int offset, int length) throws IOException;
 
   /**
    * Advances the peek position by {@code length} bytes. Like {@link #peekFully(byte[], int, int,
@@ -224,10 +217,8 @@ public interface ExtractorInput {
    *     advanced by at least one byte, but fewer than {@code length}), or if the end of input was
    *     encountered before advancing and {@code allowEndOfInput} is false.
    * @throws IOException If an error occurs advancing the peek position.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  boolean advancePeekPosition(int length, boolean allowEndOfInput)
-      throws IOException, InterruptedException;
+  boolean advancePeekPosition(int length, boolean allowEndOfInput) throws IOException;
 
   /**
    * Advances the peek position by {@code length} bytes. Like {@link #peekFully(byte[], int, int)}
@@ -236,9 +227,8 @@ public interface ExtractorInput {
    * @param length The number of bytes to peek from the input.
    * @throws EOFException If the end of input was encountered.
    * @throws IOException If an error occurs peeking from the input.
-   * @throws InterruptedException If the thread is interrupted.
    */
-  void advancePeekPosition(int length) throws IOException, InterruptedException;
+  void advancePeekPosition(int length) throws IOException;
 
   /**
    * Resets the peek position to equal the current read position.

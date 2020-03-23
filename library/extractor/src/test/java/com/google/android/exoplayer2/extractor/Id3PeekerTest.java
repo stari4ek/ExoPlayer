@@ -35,8 +35,7 @@ import org.junit.runner.RunWith;
 public final class Id3PeekerTest {
 
   @Test
-  public void testPeekId3Data_returnNull_ifId3TagNotPresentAtBeginningOfInput()
-      throws IOException, InterruptedException {
+  public void peekId3Data_returnNull_ifId3TagNotPresentAtBeginningOfInput() throws IOException {
     Id3Peeker id3Peeker = new Id3Peeker();
     FakeExtractorInput input =
         new FakeExtractorInput.Builder()
@@ -48,8 +47,7 @@ public final class Id3PeekerTest {
   }
 
   @Test
-  public void testPeekId3Data_returnId3Tag_ifId3TagPresent()
-      throws IOException, InterruptedException {
+  public void peekId3Data_returnId3Tag_ifId3TagPresent() throws IOException {
     Id3Peeker id3Peeker = new Id3Peeker();
     FakeExtractorInput input =
         new FakeExtractorInput.Builder()
@@ -69,8 +67,8 @@ public final class Id3PeekerTest {
   }
 
   @Test
-  public void testPeekId3Data_returnId3TagAccordingToGivenPredicate_ifId3TagPresent()
-      throws IOException, InterruptedException {
+  public void peekId3Data_returnId3TagAccordingToGivenPredicate_ifId3TagPresent()
+      throws IOException {
     Id3Peeker id3Peeker = new Id3Peeker();
     FakeExtractorInput input =
         new FakeExtractorInput.Builder()

@@ -34,6 +34,7 @@ import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
 import com.google.android.exoplayer2.extractor.PositionHolder;
 import com.google.android.exoplayer2.extractor.SeekMap;
+import com.google.android.exoplayer2.metadata.MetadataInputBuffer;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.util.Assertions;
@@ -42,6 +43,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Random;
 
@@ -339,11 +341,10 @@ public class TestUtil {
    * @return The extracted {@link SeekMap}.
    * @throws IOException If an error occurred reading from the input, or if the extractor finishes
    *     reading from input without extracting any {@link SeekMap}.
-   * @throws InterruptedException If the thread was interrupted.
    */
   public static SeekMap extractSeekMap(
       Extractor extractor, FakeExtractorOutput output, DataSource dataSource, Uri uri)
-      throws IOException, InterruptedException {
+      throws IOException {
     ExtractorInput input = getExtractorInputFromPosition(dataSource, /* position= */ 0, uri);
     extractor.init(output);
     PositionHolder positionHolder = new PositionHolder();
@@ -380,11 +381,9 @@ public class TestUtil {
    * @return The {@link FakeTrackOutput} containing the extracted samples.
    * @throws IOException If an error occurred reading from the input, or if the extractor finishes
    *     reading from input without extracting any {@link SeekMap}.
-   * @throws InterruptedException If the thread was interrupted.
    */
   public static FakeExtractorOutput extractAllSamplesFromFile(
-      Extractor extractor, Context context, String fileName)
-      throws IOException, InterruptedException {
+      Extractor extractor, Context context, String fileName) throws IOException {
     byte[] data = TestUtil.getByteArray(context, fileName);
     FakeExtractorOutput expectedOutput = new FakeExtractorOutput();
     extractor.init(expectedOutput);
@@ -426,7 +425,7 @@ public class TestUtil {
       DataSource dataSource,
       FakeTrackOutput trackOutput,
       Uri uri)
-      throws IOException, InterruptedException {
+      throws IOException {
     int numSampleBeforeSeek = trackOutput.getSampleCount();
     SeekMap.SeekPoints seekPoints = seekMap.getSeekPoints(seekTimeUs);
 
@@ -466,11 +465,22 @@ public class TestUtil {
   /** Returns an {@link ExtractorInput} to read from the given input at given position. */
   public static ExtractorInput getExtractorInputFromPosition(
       DataSource dataSource, long position, Uri uri) throws IOException {
-    DataSpec dataSpec = new DataSpec(uri, position, C.LENGTH_UNSET, /* key= */ null);
+    DataSpec dataSpec = new DataSpec(uri, position, C.LENGTH_UNSET);
     long length = dataSource.open(dataSpec);
     if (length != C.LENGTH_UNSET) {
       length += position;
     }
     return new DefaultExtractorInput(dataSource, position, length);
+  }
+
+  /**
+   * Create a new {@link MetadataInputBuffer} and copy {@code data} into the backing {@link
+   * ByteBuffer}.
+   */
+  public static MetadataInputBuffer createMetadataInputBuffer(byte[] data) {
+    MetadataInputBuffer buffer = new MetadataInputBuffer();
+    buffer.data = ByteBuffer.allocate(data.length).put(data);
+    buffer.data.flip();
+    return buffer;
   }
 }

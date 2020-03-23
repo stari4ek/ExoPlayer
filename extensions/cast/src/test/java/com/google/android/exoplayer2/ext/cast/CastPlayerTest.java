@@ -80,8 +80,9 @@ public class CastPlayerTest {
     remoteMediaClientListener = listenerArgumentCaptor.getValue();
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void testSetPlayWhenReady_masksRemoteState() {
+  public void setPlayWhenReady_masksRemoteState() {
     when(mockRemoteMediaClient.play()).thenReturn(mockPendingResult);
     assertThat(castPlayer.getPlayWhenReady()).isFalse();
 
@@ -89,6 +90,8 @@ public class CastPlayerTest {
     verify(mockPendingResult).setResultCallback(setResultCallbackArgumentCaptor.capture());
     assertThat(castPlayer.getPlayWhenReady()).isTrue();
     verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
 
     // There is a status update in the middle, which should be hidden by masking.
     remoteMediaClientListener.onStatusUpdated();
@@ -102,8 +105,9 @@ public class CastPlayerTest {
     verifyNoMoreInteractions(mockListener);
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void testSetPlayWhenReadyMasking_updatesUponResultChange() {
+  public void setPlayWhenReadyMasking_updatesUponResultChange() {
     when(mockRemoteMediaClient.play()).thenReturn(mockPendingResult);
     assertThat(castPlayer.getPlayWhenReady()).isFalse();
 
@@ -111,26 +115,49 @@ public class CastPlayerTest {
     verify(mockPendingResult).setResultCallback(setResultCallbackArgumentCaptor.capture());
     assertThat(castPlayer.getPlayWhenReady()).isTrue();
     verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
 
     // Upon result, the remote media client is still paused. The state should reflect that.
     setResultCallbackArgumentCaptor
         .getValue()
         .onResult(Mockito.mock(RemoteMediaClient.MediaChannelResult.class));
     verify(mockListener).onPlayerStateChanged(false, Player.STATE_IDLE);
+    verify(mockListener).onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE);
     assertThat(castPlayer.getPlayWhenReady()).isFalse();
   }
 
+  @SuppressWarnings("deprecation")
   @Test
-  public void testPlayWhenReady_changesOnStatusUpdates() {
+  public void setPlayWhenReady_correctChangeReasonOnPause() {
+    when(mockRemoteMediaClient.play()).thenReturn(mockPendingResult);
+    when(mockRemoteMediaClient.pause()).thenReturn(mockPendingResult);
+    castPlayer.play();
+    assertThat(castPlayer.getPlayWhenReady()).isTrue();
+    verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
+
+    castPlayer.pause();
+    assertThat(castPlayer.getPlayWhenReady()).isFalse();
+    verify(mockListener).onPlayerStateChanged(false, Player.STATE_IDLE);
+    verify(mockListener)
+        .onPlayWhenReadyChanged(false, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
+  }
+
+  @SuppressWarnings("deprecation")
+  @Test
+  public void playWhenReady_changesOnStatusUpdates() {
     assertThat(castPlayer.getPlayWhenReady()).isFalse();
     when(mockRemoteMediaClient.isPaused()).thenReturn(false);
     remoteMediaClientListener.onStatusUpdated();
     verify(mockListener).onPlayerStateChanged(true, Player.STATE_IDLE);
+    verify(mockListener).onPlayWhenReadyChanged(true, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE);
     assertThat(castPlayer.getPlayWhenReady()).isTrue();
   }
 
   @Test
-  public void testSetRepeatMode_masksRemoteState() {
+  public void setRepeatMode_masksRemoteState() {
     when(mockRemoteMediaClient.queueSetRepeatMode(anyInt(), any())).thenReturn(mockPendingResult);
     assertThat(castPlayer.getRepeatMode()).isEqualTo(Player.REPEAT_MODE_OFF);
 
@@ -153,7 +180,7 @@ public class CastPlayerTest {
   }
 
   @Test
-  public void testSetRepeatMode_updatesUponResultChange() {
+  public void setRepeatMode_updatesUponResultChange() {
     when(mockRemoteMediaClient.queueSetRepeatMode(anyInt(), any())).thenReturn(mockPendingResult);
 
     castPlayer.setRepeatMode(Player.REPEAT_MODE_ONE);
@@ -175,7 +202,7 @@ public class CastPlayerTest {
   }
 
   @Test
-  public void testRepeatMode_changesOnStatusUpdates() {
+  public void repeatMode_changesOnStatusUpdates() {
     assertThat(castPlayer.getRepeatMode()).isEqualTo(Player.REPEAT_MODE_OFF);
     when(mockMediaStatus.getQueueRepeatMode()).thenReturn(MediaStatus.REPEAT_MODE_REPEAT_SINGLE);
     remoteMediaClientListener.onStatusUpdated();

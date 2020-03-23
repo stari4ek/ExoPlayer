@@ -51,6 +51,13 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
   public boolean hasEnabledTracks;
   /** {@link MediaPeriodInfo} about this media period. */
   public MediaPeriodInfo info;
+  /**
+   * Whether all required renderers have been enabled with the {@link #sampleStreams} for this
+   * {@link #mediaPeriod}. This means either {@link Renderer#enable(RendererConfiguration, Format[],
+   * SampleStream, long, boolean, boolean, long)} or {@link Renderer#replaceStream(Format[],
+   * SampleStream, long)} has been called.
+   */
+  public boolean allRenderersEnabled;
 
   private final boolean[] mayRetainStreamFlags;
   private final RendererCapabilities[] rendererCapabilities;
@@ -171,9 +178,14 @@ import org.checkerframework.checker.nullness.compatqual.NullableType;
     prepared = true;
     trackGroups = mediaPeriod.getTrackGroups();
     TrackSelectorResult selectorResult = selectTracks(playbackSpeed, timeline);
+    long requestedStartPositionUs = info.startPositionUs;
+    if (info.durationUs != C.TIME_UNSET && requestedStartPositionUs >= info.durationUs) {
+      // Make sure start position doesn't exceed period duration.
+      requestedStartPositionUs = Math.max(0, info.durationUs - 1);
+    }
     long newStartPositionUs =
         applyTrackSelection(
-            selectorResult, info.startPositionUs, /* forceRecreateStreams= */ false);
+            selectorResult, requestedStartPositionUs, /* forceRecreateStreams= */ false);
     rendererPositionOffsetUs += info.startPositionUs - newStartPositionUs;
     info = info.copyWithStartPositionUs(newStartPositionUs);
   }
