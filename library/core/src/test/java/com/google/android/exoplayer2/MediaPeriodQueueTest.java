@@ -18,6 +18,7 @@ package com.google.android.exoplayer2;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
+import static org.robolectric.annotation.LooperMode.Mode.LEGACY;
 
 import android.net.Uri;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -37,8 +38,10 @@ import java.util.Collections;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.annotation.LooperMode;
 
 /** Unit tests for {@link MediaPeriodQueue}. */
+@LooperMode(LEGACY)
 @RunWith(AndroidJUnit4.class)
 public final class MediaPeriodQueueTest {
 
@@ -181,7 +184,7 @@ public final class MediaPeriodQueueTest {
     advance();
     assertGetNextMediaPeriodInfoReturnsContentMediaPeriod(
         /* periodUid= */ firstPeriodUid,
-        /* startPositionUs= */ CONTENT_DURATION_US,
+        /* startPositionUs= */ CONTENT_DURATION_US - 1,
         /* requestedContentPositionUs= */ CONTENT_DURATION_US,
         /* endPositionUs= */ C.TIME_UNSET,
         /* durationUs= */ CONTENT_DURATION_US,
@@ -206,7 +209,7 @@ public final class MediaPeriodQueueTest {
     setAdGroupFailedToLoad(/* adGroupIndex= */ 0);
     assertGetNextMediaPeriodInfoReturnsContentMediaPeriod(
         /* periodUid= */ firstPeriodUid,
-        /* startPositionUs= */ CONTENT_DURATION_US,
+        /* startPositionUs= */ CONTENT_DURATION_US - 1,
         /* requestedContentPositionUs= */ CONTENT_DURATION_US,
         /* endPositionUs= */ C.TIME_UNSET,
         /* durationUs= */ CONTENT_DURATION_US,
@@ -418,6 +421,8 @@ public final class MediaPeriodQueueTest {
             /* trackGroups= */ null,
             /* trackSelectorResult= */ null,
             /* loadingMediaPeriodId= */ null,
+            /* playWhenReady= */ false,
+            Player.PLAYBACK_SUPPRESSION_REASON_NONE,
             /* bufferedPositionUs= */ 0,
             /* totalBufferedDurationUs= */ 0,
             /* positionUs= */ 0);

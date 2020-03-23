@@ -20,6 +20,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DefaultAllocator;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 
 /**
@@ -57,7 +58,7 @@ public class DefaultLoadControl implements LoadControl {
   public static final int DEFAULT_TARGET_BUFFER_BYTES = C.LENGTH_UNSET;
 
   /** The default prioritization of buffer time constraints over size constraints. */
-  public static final boolean DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS = true;
+  public static final boolean DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS = false;
 
   /** The default back buffer duration in milliseconds. */
   public static final int DEFAULT_BACK_BUFFER_DURATION_MS = 0;
@@ -66,10 +67,10 @@ public class DefaultLoadControl implements LoadControl {
   public static final boolean DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME = false;
 
   /** A default size in bytes for a video buffer. */
-  public static final int DEFAULT_VIDEO_BUFFER_SIZE = 500 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+  public static final int DEFAULT_VIDEO_BUFFER_SIZE = 2000 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
 
   /** A default size in bytes for an audio buffer. */
-  public static final int DEFAULT_AUDIO_BUFFER_SIZE = 54 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
+  public static final int DEFAULT_AUDIO_BUFFER_SIZE = 200 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
 
   /** A default size in bytes for a text buffer. */
   public static final int DEFAULT_TEXT_BUFFER_SIZE = 2 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
@@ -83,6 +84,12 @@ public class DefaultLoadControl implements LoadControl {
   /** A default size in bytes for a muxed buffer (e.g. containing video, audio and text). */
   public static final int DEFAULT_MUXED_BUFFER_SIZE =
       DEFAULT_VIDEO_BUFFER_SIZE + DEFAULT_AUDIO_BUFFER_SIZE + DEFAULT_TEXT_BUFFER_SIZE;
+
+  /**
+   * The buffer size in bytes that will be used as a minimum target buffer in all cases. This is
+   * also the default target buffer before tracks are selected.
+   */
+  public static final int DEFAULT_MIN_BUFFER_SIZE = 200 * C.DEFAULT_BUFFER_SEGMENT_SIZE;
 
   /** Builder for {@link DefaultLoadControl}. */
   public static final class Builder {
@@ -316,7 +323,7 @@ public class DefaultLoadControl implements LoadControl {
     this.targetBufferBytes =
         targetBufferBytesOverwrite != C.LENGTH_UNSET
             ? targetBufferBytesOverwrite
-            : DEFAULT_MUXED_BUFFER_SIZE;
+            : DEFAULT_MIN_BUFFER_SIZE;
     this.prioritizeTimeOverSizeThresholds = prioritizeTimeOverSizeThresholds;
     this.backBufferDurationUs = C.msToUs(backBufferDurationMs);
     this.retainBackBufferFromKeyframe = retainBackBufferFromKeyframe;
@@ -377,6 +384,11 @@ public class DefaultLoadControl implements LoadControl {
     minBufferUs = Math.max(minBufferUs, 500_000);
     if (bufferedDurationUs < minBufferUs) {
       isBuffering = prioritizeTimeOverSizeThresholds || !targetBufferSizeReached;
+      if (!isBuffering && bufferedDurationUs < 500_000) {
+        Log.w(
+            "DefaultLoadControl",
+            "Target buffer size reached with less than 500ms of buffered media data.");
+      }
     } else if (bufferedDurationUs >= maxBufferUs || targetBufferSizeReached) {
       isBuffering = false;
     } // Else don't change the buffering state
@@ -410,13 +422,13 @@ public class DefaultLoadControl implements LoadControl {
         targetBufferSize += getDefaultBufferSize(renderers[i].getTrackType());
       }
     }
-    return targetBufferSize;
+    return Math.max(DEFAULT_MIN_BUFFER_SIZE, targetBufferSize);
   }
 
   private void reset(boolean resetAllocator) {
     targetBufferBytes =
         targetBufferBytesOverwrite == C.LENGTH_UNSET
-            ? DEFAULT_MUXED_BUFFER_SIZE
+            ? DEFAULT_MIN_BUFFER_SIZE
             : targetBufferBytesOverwrite;
     isBuffering = false;
     if (resetAllocator) {

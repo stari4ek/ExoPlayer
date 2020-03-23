@@ -19,6 +19,7 @@ import android.net.Uri;
 import android.os.Handler;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
@@ -111,13 +112,10 @@ public final class ExtractorMediaSource extends CompositeMediaSource<Void> {
     }
 
     /**
-     * Sets a tag for the media source which will be published in the {@link
-     * com.google.android.exoplayer2.Timeline} of the source as {@link
-     * com.google.android.exoplayer2.Timeline.Window#tag}.
-     *
-     * @param tag A tag for the media source.
-     * @return This factory, for convenience.
+     * @deprecated Use {@link MediaItem.Builder#setTag(Object)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
      */
+    @Deprecated
     public Factory setTag(@Nullable Object tag) {
       this.tag = tag;
       return this;
@@ -138,6 +136,7 @@ public final class ExtractorMediaSource extends CompositeMediaSource<Void> {
      * @param loadErrorHandlingPolicy A {@link LoadErrorHandlingPolicy}.
      * @return This factory, for convenience.
      */
+    @Override
     public Factory setLoadErrorHandlingPolicy(
         @Nullable LoadErrorHandlingPolicy loadErrorHandlingPolicy) {
       this.loadErrorHandlingPolicy =
@@ -165,26 +164,39 @@ public final class ExtractorMediaSource extends CompositeMediaSource<Void> {
     /** @deprecated Use {@link ProgressiveMediaSource.Factory#setDrmSessionManager} instead. */
     @Deprecated
     @Override
-    public Factory setDrmSessionManager(@Nullable DrmSessionManager<?> drmSessionManager) {
+    public Factory setDrmSessionManager(@Nullable DrmSessionManager drmSessionManager) {
       throw new UnsupportedOperationException();
     }
 
     /**
      * Returns a new {@link ExtractorMediaSource} using the current parameters.
      *
-     * @param uri The {@link Uri}.
+     * @param uri The {@link Uri uri}.
      * @return The new {@link ExtractorMediaSource}.
      */
     @Override
     public ExtractorMediaSource createMediaSource(Uri uri) {
+      return createMediaSource(new MediaItem.Builder().setSourceUri(uri).build());
+    }
+
+    /**
+     * Returns a new {@link ExtractorMediaSource} using the current parameters.
+     *
+     * @param mediaItem The {@link MediaItem}.
+     * @return The new {@link ExtractorMediaSource}.
+     * @throws NullPointerException if {@link MediaItem#playbackProperties} is {@code null}.
+     */
+    @Override
+    public ExtractorMediaSource createMediaSource(MediaItem mediaItem) {
+      Assertions.checkNotNull(mediaItem.playbackProperties);
       return new ExtractorMediaSource(
-          uri,
+          mediaItem.playbackProperties.sourceUri,
           dataSourceFactory,
           extractorsFactory,
           loadErrorHandlingPolicy,
           customCacheKey,
           continueLoadingCheckIntervalBytes,
-          tag);
+          mediaItem.playbackProperties.tag != null ? mediaItem.playbackProperties.tag : tag);
     }
 
     /**

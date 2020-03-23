@@ -22,17 +22,15 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.audio.AudioProcessor;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener;
 import com.google.android.exoplayer2.audio.AudioSink;
+import com.google.android.exoplayer2.audio.DecoderAudioRenderer;
 import com.google.android.exoplayer2.audio.DefaultAudioSink;
-import com.google.android.exoplayer2.audio.SimpleDecoderAudioRenderer;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
-/**
- * Decodes and renders audio using FFmpeg.
- */
-public final class FfmpegAudioRenderer extends SimpleDecoderAudioRenderer {
+/** Decodes and renders audio using FFmpeg. */
+public final class FfmpegAudioRenderer extends DecoderAudioRenderer {
 
   /** The number of input and output buffers. */
   private static final int NUM_BUFFERS = 16;
@@ -48,6 +46,8 @@ public final class FfmpegAudioRenderer extends SimpleDecoderAudioRenderer {
   }
 
   /**
+   * Creates a new instance.
+   *
    * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
    *     null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
@@ -65,6 +65,8 @@ public final class FfmpegAudioRenderer extends SimpleDecoderAudioRenderer {
   }
 
   /**
+   * Creates a new instance.
+   *
    * @param eventHandler A handler to use when delivering events to {@code eventListener}. May be
    *     null if delivery of events is not required.
    * @param eventListener A listener of events. May be null if delivery of events is not required.
@@ -89,10 +91,10 @@ public final class FfmpegAudioRenderer extends SimpleDecoderAudioRenderer {
   @Override
   @FormatSupport
   protected int supportsFormatInternal(Format format) {
-    Assertions.checkNotNull(format.sampleMimeType);
-    if (!FfmpegLibrary.isAvailable()) {
+    String mimeType = Assertions.checkNotNull(format.sampleMimeType);
+    if (!FfmpegLibrary.isAvailable() || !MimeTypes.isAudio(mimeType)) {
       return FORMAT_UNSUPPORTED_TYPE;
-    } else if (!FfmpegLibrary.supportsFormat(format.sampleMimeType) || !isOutputSupported(format)) {
+    } else if (!FfmpegLibrary.supportsFormat(mimeType) || !isOutputSupported(format)) {
       return FORMAT_UNSUPPORTED_SUBTYPE;
     } else if (format.drmInitData != null && format.exoMediaCryptoType == null) {
       return FORMAT_UNSUPPORTED_DRM;

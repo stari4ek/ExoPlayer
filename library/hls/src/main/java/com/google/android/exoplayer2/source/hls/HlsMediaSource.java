@@ -23,6 +23,7 @@ import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.drm.DrmSession;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.extractor.Extractor;
@@ -52,6 +53,7 @@ import com.google.android.exoplayer2.util.Assertions;
 import java.io.IOException;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
+import java.util.Collections;
 import java.util.List;
 
 /** An HLS {@link MediaSource}. */
@@ -93,12 +95,12 @@ public final class HlsMediaSource extends BaseMediaSource
     private HlsPlaylistParserFactory playlistParserFactory;
     private HlsPlaylistTracker.Factory playlistTrackerFactory;
     private CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
-    private DrmSessionManager<?> drmSessionManager;
+    private DrmSessionManager drmSessionManager;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
     private boolean allowChunklessPreparation;
     @MetadataType private int metadataType;
     private boolean useSessionKeys;
-    @Nullable private List<StreamKey> streamKeys;
+    private List<StreamKey> streamKeys;
     @Nullable private Object tag;
 
     /**
@@ -127,16 +129,14 @@ public final class HlsMediaSource extends BaseMediaSource
       loadErrorHandlingPolicy = new DefaultLoadErrorHandlingPolicy();
       compositeSequenceableLoaderFactory = new DefaultCompositeSequenceableLoaderFactory();
       metadataType = METADATA_TYPE_ID3;
+      streamKeys = Collections.emptyList();
     }
 
     /**
-     * Sets a tag for the media source which will be published in the {@link
-     * com.google.android.exoplayer2.Timeline} of the source as {@link
-     * com.google.android.exoplayer2.Timeline.Window#tag}.
-     *
-     * @param tag A tag for the media source.
-     * @return This factory, for convenience.
+     * @deprecated Use {@link MediaItem.Builder#setTag(Object)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
      */
+    @Deprecated
     public Factory setTag(@Nullable Object tag) {
       this.tag = tag;
       return this;
@@ -290,7 +290,7 @@ public final class HlsMediaSource extends BaseMediaSource
      * @return This factory, for convenience.
      */
     @Override
-    public Factory setDrmSessionManager(@Nullable DrmSessionManager<?> drmSessionManager) {
+    public Factory setDrmSessionManager(@Nullable DrmSessionManager drmSessionManager) {
       this.drmSessionManager =
           drmSessionManager != null
               ? drmSessionManager
@@ -298,9 +298,15 @@ public final class HlsMediaSource extends BaseMediaSource
       return this;
     }
 
+    /**
+     * @deprecated Use {@link MediaItem.Builder#setStreamKeys(List)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
+     */
+    @SuppressWarnings("deprecation")
+    @Deprecated
     @Override
     public Factory setStreamKeys(@Nullable List<StreamKey> streamKeys) {
-      this.streamKeys = streamKeys != null && !streamKeys.isEmpty() ? streamKeys : null;
+      this.streamKeys = streamKeys != null ? streamKeys : Collections.emptyList();
       return this;
     }
 
@@ -308,6 +314,7 @@ public final class HlsMediaSource extends BaseMediaSource
      * @deprecated Use {@link #createMediaSource(Uri)} and {@link #addEventListener(Handler,
      *     MediaSourceEventListener)} instead.
      */
+    @SuppressWarnings("deprecation")
     @Deprecated
     public HlsMediaSource createMediaSource(
         Uri playlistUri,
@@ -323,17 +330,35 @@ public final class HlsMediaSource extends BaseMediaSource
     /**
      * Returns a new {@link HlsMediaSource} using the current parameters.
      *
+     * @param uri The {@link Uri uri}.
      * @return The new {@link HlsMediaSource}.
      */
     @Override
-    public HlsMediaSource createMediaSource(Uri playlistUri) {
+    public HlsMediaSource createMediaSource(Uri uri) {
+      return createMediaSource(new MediaItem.Builder().setSourceUri(uri).build());
+    }
+
+    /**
+     * Returns a new {@link HlsMediaSource} using the current parameters.
+     *
+     * @param mediaItem The {@link MediaItem}.
+     * @return The new {@link HlsMediaSource}.
+     * @throws NullPointerException if {@link MediaItem#playbackProperties} is {@code null}.
+     */
+    @Override
+    public HlsMediaSource createMediaSource(MediaItem mediaItem) {
+      Assertions.checkNotNull(mediaItem.playbackProperties);
       HlsPlaylistParserFactory playlistParserFactory = this.playlistParserFactory;
-      if (streamKeys != null) {
+      List<StreamKey> streamKeys =
+          !mediaItem.playbackProperties.streamKeys.isEmpty()
+              ? mediaItem.playbackProperties.streamKeys
+              : this.streamKeys;
+      if (!streamKeys.isEmpty()) {
         playlistParserFactory =
             new FilteringHlsPlaylistParserFactory(playlistParserFactory, streamKeys);
       }
       return new HlsMediaSource(
-          playlistUri,
+          mediaItem.playbackProperties.sourceUri,
           hlsDataSourceFactory,
           extractorFactory,
           compositeSequenceableLoaderFactory,
@@ -344,7 +369,7 @@ public final class HlsMediaSource extends BaseMediaSource
           allowChunklessPreparation,
           metadataType,
           useSessionKeys,
-          tag);
+          mediaItem.playbackProperties.tag != null ? mediaItem.playbackProperties.tag : tag);
     }
 
     @Override
@@ -357,7 +382,7 @@ public final class HlsMediaSource extends BaseMediaSource
   private final Uri manifestUri;
   private final HlsDataSourceFactory dataSourceFactory;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
-  private final DrmSessionManager<?> drmSessionManager;
+  private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final boolean allowChunklessPreparation;
   private final @MetadataType int metadataType;
@@ -372,7 +397,7 @@ public final class HlsMediaSource extends BaseMediaSource
       HlsDataSourceFactory dataSourceFactory,
       HlsExtractorFactory extractorFactory,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
-      DrmSessionManager<?> drmSessionManager,
+      DrmSessionManager drmSessionManager,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
       HlsPlaylistTracker playlistTracker,
       boolean allowChunklessPreparation,

@@ -42,7 +42,7 @@ import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.drm.DrmInitData;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
+import com.google.android.exoplayer2.mediacodec.MediaCodecDecoderException;
 import com.google.android.exoplayer2.mediacodec.MediaCodecInfo;
 import com.google.android.exoplayer2.mediacodec.MediaCodecRenderer;
 import com.google.android.exoplayer2.mediacodec.MediaCodecSelector;
@@ -72,6 +72,9 @@ import java.util.List;
  *       payload should be one of the integer scaling modes in {@link VideoScalingMode}. Note that
  *       the scaling mode only applies if the {@link Surface} targeted by this renderer is owned by
  *       a {@link android.view.SurfaceView}.
+ *   <li>Message with type {@link #MSG_SET_VIDEO_FRAME_METADATA_LISTENER} to set a listener for
+ *       metadata associated with frames being rendered. The message payload should be the {@link
+ *       VideoFrameMetadataListener}, or null.
  * </ul>
  */
 public class MediaCodecVideoRenderer extends MediaCodecRenderer {
@@ -94,23 +97,6 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   /** Magic frame render timestamp that indicates the EOS in tunneling mode. */
   private static final long TUNNELING_EOS_PRESENTATION_TIME_US = Long.MAX_VALUE;
-
-  /** A {@link DecoderException} with additional surface information. */
-  public static final class VideoDecoderException extends DecoderException {
-
-    /** The {@link System#identityHashCode(Object)} of the surface when the exception occurred. */
-    public final int surfaceIdentityHashCode;
-
-    /** Whether the surface was valid when the exception occurred. */
-    public final boolean isSurfaceValid;
-
-    public VideoDecoderException(
-        Throwable cause, @Nullable MediaCodecInfo codecInfo, @Nullable Surface surface) {
-      super(cause, codecInfo);
-      surfaceIdentityHashCode = System.identityHashCode(surface);
-      isSurfaceValid = surface == null || surface.isValid();
-    }
-  }
 
   private static boolean evaluatedDeviceNeedsSetOutputSurfaceWorkaround;
   private static boolean deviceNeedsSetOutputSurfaceWorkaround;
@@ -285,9 +271,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     if (decoderInfos.isEmpty()) {
       return RendererCapabilities.create(FORMAT_UNSUPPORTED_SUBTYPE);
     }
-    boolean supportsFormatDrm =
-        drmInitData == null || FrameworkMediaCrypto.class.equals(format.exoMediaCryptoType);
-    if (!supportsFormatDrm) {
+    if (!supportsFormatDrm(format)) {
       return RendererCapabilities.create(FORMAT_UNSUPPORTED_DRM);
     }
     // Check capabilities for the first decoder in the list, which takes priority.
@@ -864,6 +848,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       processOutputFormat(getCodec(), format.width, format.height);
     }
     maybeNotifyVideoSizeChanged();
+    decoderCounters.renderedOutputBufferCount++;
     maybeNotifyRenderedFirstFrame();
     onProcessedOutputBuffer(presentationTimeUs);
   }
@@ -1302,9 +1287,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @Override
-  protected DecoderException createDecoderException(
+  protected MediaCodecDecoderException createDecoderException(
       Throwable cause, @Nullable MediaCodecInfo codecInfo) {
-    return new VideoDecoderException(cause, codecInfo, surface);
+    return new MediaCodecVideoDecoderException(cause, codecInfo, surface);
   }
 
   /**

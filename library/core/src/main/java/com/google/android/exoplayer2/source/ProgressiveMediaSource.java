@@ -18,6 +18,7 @@ package com.google.android.exoplayer2.source;
 import android.net.Uri;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.drm.DrmSession;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
@@ -29,6 +30,7 @@ import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DefaultLoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.TransferListener;
+import com.google.android.exoplayer2.util.Assertions;
 
 /**
  * Provides one period that loads data from a {@link Uri} and extracted using an {@link Extractor}.
@@ -50,7 +52,7 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     private final DataSource.Factory dataSourceFactory;
 
     private ExtractorsFactory extractorsFactory;
-    private DrmSessionManager<?> drmSessionManager;
+    private DrmSessionManager drmSessionManager;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
     private int continueLoadingCheckIntervalBytes;
     @Nullable private String customCacheKey;
@@ -106,13 +108,10 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     }
 
     /**
-     * Sets a tag for the media source which will be published in the {@link
-     * com.google.android.exoplayer2.Timeline} of the source as {@link
-     * com.google.android.exoplayer2.Timeline.Window#tag}.
-     *
-     * @param tag A tag for the media source.
-     * @return This factory, for convenience.
+     * @deprecated Use {@link MediaItem.Builder#setTag(Object)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
      */
+    @Deprecated
     public Factory setTag(@Nullable Object tag) {
       this.tag = tag;
       return this;
@@ -157,7 +156,7 @@ public final class ProgressiveMediaSource extends BaseMediaSource
      * @return This factory, for convenience.
      */
     @Override
-    public Factory setDrmSessionManager(@Nullable DrmSessionManager<?> drmSessionManager) {
+    public Factory setDrmSessionManager(@Nullable DrmSessionManager drmSessionManager) {
       this.drmSessionManager =
           drmSessionManager != null
               ? drmSessionManager
@@ -168,20 +167,33 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     /**
      * Returns a new {@link ProgressiveMediaSource} using the current parameters.
      *
-     * @param uri The {@link Uri}.
+     * @param uri The {@link Uri uri}.
      * @return The new {@link ProgressiveMediaSource}.
      */
     @Override
     public ProgressiveMediaSource createMediaSource(Uri uri) {
+      return createMediaSource(new MediaItem.Builder().setSourceUri(uri).build());
+    }
+
+    /**
+     * Returns a new {@link ProgressiveMediaSource} using the current parameters.
+     *
+     * @param mediaItem The {@link MediaItem}.
+     * @return The new {@link ProgressiveMediaSource}.
+     * @throws NullPointerException if {@link MediaItem#playbackProperties} is {@code null}.
+     */
+    @Override
+    public ProgressiveMediaSource createMediaSource(MediaItem mediaItem) {
+      Assertions.checkNotNull(mediaItem.playbackProperties);
       return new ProgressiveMediaSource(
-          uri,
+          mediaItem.playbackProperties.sourceUri,
           dataSourceFactory,
           extractorsFactory,
           drmSessionManager,
           loadErrorHandlingPolicy,
           customCacheKey,
           continueLoadingCheckIntervalBytes,
-          tag);
+          mediaItem.playbackProperties.tag != null ? mediaItem.playbackProperties.tag : tag);
     }
 
     @Override
@@ -199,7 +211,7 @@ public final class ProgressiveMediaSource extends BaseMediaSource
   private final Uri uri;
   private final DataSource.Factory dataSourceFactory;
   private final ExtractorsFactory extractorsFactory;
-  private final DrmSessionManager<?> drmSessionManager;
+  private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadableLoadErrorHandlingPolicy;
   @Nullable private final String customCacheKey;
   private final int continueLoadingCheckIntervalBytes;
@@ -216,7 +228,7 @@ public final class ProgressiveMediaSource extends BaseMediaSource
       Uri uri,
       DataSource.Factory dataSourceFactory,
       ExtractorsFactory extractorsFactory,
-      DrmSessionManager<?> drmSessionManager,
+      DrmSessionManager drmSessionManager,
       LoadErrorHandlingPolicy loadableLoadErrorHandlingPolicy,
       @Nullable String customCacheKey,
       int continueLoadingCheckIntervalBytes,

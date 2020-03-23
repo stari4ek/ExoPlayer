@@ -24,12 +24,14 @@ import android.graphics.SurfaceTexture;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.view.Surface;
+import androidx.annotation.GuardedBy;
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.RendererConfiguration;
+import com.google.android.exoplayer2.decoder.DecoderException;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
 import com.google.android.exoplayer2.testutil.FakeSampleStream;
@@ -43,10 +45,13 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.annotation.LooperMode;
+import org.robolectric.shadows.ShadowLooper;
 
-/** Unit test for {@link SimpleDecoderVideoRenderer}. */
+/** Unit test for {@link DecoderVideoRenderer}. */
+@LooperMode(LooperMode.Mode.PAUSED)
 @RunWith(AndroidJUnit4.class)
-public final class SimpleDecoderVideoRendererTest {
+public final class DecoderVideoRendererTest {
   @Rule public final MockitoRule mockito = MockitoJUnit.rule();
 
   private static final Format H264_FORMAT =
@@ -56,17 +61,23 @@ public final class SimpleDecoderVideoRendererTest {
           .setHeight(1080)
           .build();
 
-  private SimpleDecoderVideoRenderer renderer;
+  private DecoderVideoRenderer renderer;
   @Mock private VideoRendererEventListener eventListener;
 
   @Before
   public void setUp() {
     renderer =
-        new SimpleDecoderVideoRenderer(
+        new DecoderVideoRenderer(
             /* allowedJoiningTimeMs= */ 0,
             new Handler(),
             eventListener,
             /* maxDroppedFramesToNotify= */ -1) {
+
+          private final Object pendingDecodeCallLock = new Object();
+
+          @GuardedBy("pendingDecodeCallLock")
+          private int pendingDecodeCalls;
+
           @C.VideoOutputMode private int outputMode;
 
           @Override
@@ -87,13 +98,41 @@ public final class SimpleDecoderVideoRendererTest {
           }
 
           @Override
+          protected void onQueueInputBuffer(VideoDecoderInputBuffer buffer) {
+            // SimpleDecoder.decode() is called on a background thread we have no control about from
+            // the test. Ensure the background calls are predictably serialized by waiting for them
+            // to finish:
+            //  1. Mark decode calls as "pending" here.
+            //  2. Send a message on the test thread to wait for all pending decode calls.
+            //  3. Decrement the pending counter in decode calls and wake up the waiting test.
+            //  4. The tests need to call ShadowLooper.idleMainThread() to wait for pending calls.
+            synchronized (pendingDecodeCallLock) {
+              pendingDecodeCalls++;
+            }
+            new Handler()
+                .post(
+                    () -> {
+                      synchronized (pendingDecodeCallLock) {
+                        while (pendingDecodeCalls > 0) {
+                          try {
+                            pendingDecodeCallLock.wait();
+                          } catch (InterruptedException e) {
+                            // Ignore.
+                          }
+                        }
+                      }
+                    });
+            super.onQueueInputBuffer(buffer);
+          }
+
+          @Override
           protected SimpleDecoder<
                   VideoDecoderInputBuffer,
                   ? extends VideoDecoderOutputBuffer,
-                  ? extends VideoDecoderException>
+                  ? extends DecoderException>
               createDecoder(Format format, @Nullable ExoMediaCrypto mediaCrypto) {
             return new SimpleDecoder<
-                VideoDecoderInputBuffer, VideoDecoderOutputBuffer, VideoDecoderException>(
+                VideoDecoderInputBuffer, VideoDecoderOutputBuffer, DecoderException>(
                 new VideoDecoderInputBuffer[10], new VideoDecoderOutputBuffer[10]) {
               @Override
               protected VideoDecoderInputBuffer createInputBuffer() {
@@ -106,17 +145,21 @@ public final class SimpleDecoderVideoRendererTest {
               }
 
               @Override
-              protected VideoDecoderException createUnexpectedDecodeException(Throwable error) {
-                return new VideoDecoderException("error", error);
+              protected DecoderException createUnexpectedDecodeException(Throwable error) {
+                return new DecoderException("error", error);
               }
 
               @Nullable
               @Override
-              protected VideoDecoderException decode(
+              protected DecoderException decode(
                   VideoDecoderInputBuffer inputBuffer,
                   VideoDecoderOutputBuffer outputBuffer,
                   boolean reset) {
                 outputBuffer.init(inputBuffer.timeUs, outputMode, /* supplementalData= */ null);
+                synchronized (pendingDecodeCallLock) {
+                  pendingDecodeCalls--;
+                  pendingDecodeCallLock.notify();
+                }
                 return null;
               }
 
@@ -150,6 +193,8 @@ public final class SimpleDecoderVideoRendererTest {
         /* offsetUs */ 0);
     for (int i = 0; i < 10; i++) {
       renderer.render(/* positionUs= */ 0, SystemClock.elapsedRealtime() * 1000);
+      // Ensure pending messages are delivered.
+      ShadowLooper.idleMainLooper();
     }
 
     verify(eventListener).onRenderedFirstFrame(any());
@@ -176,6 +221,8 @@ public final class SimpleDecoderVideoRendererTest {
         /* offsetUs */ 0);
     for (int i = 0; i < 10; i++) {
       renderer.render(/* positionUs= */ 0, SystemClock.elapsedRealtime() * 1000);
+      // Ensure pending messages are delivered.
+      ShadowLooper.idleMainLooper();
     }
 
     verify(eventListener, never()).onRenderedFirstFrame(any());
@@ -202,12 +249,14 @@ public final class SimpleDecoderVideoRendererTest {
     renderer.start();
     for (int i = 0; i < 10; i++) {
       renderer.render(/* positionUs= */ 0, SystemClock.elapsedRealtime() * 1000);
+      // Ensure pending messages are delivered.
+      ShadowLooper.idleMainLooper();
     }
 
     verify(eventListener).onRenderedFirstFrame(any());
   }
 
-  // TODO: First frame of replaced stream are not yet reported.
+  // TODO: Fix rendering of first frame at stream transition.
   @Ignore
   @Test
   public void replaceStream_whenStarted_rendersFirstFrameOfNewStream() throws Exception {
@@ -238,17 +287,21 @@ public final class SimpleDecoderVideoRendererTest {
     renderer.start();
 
     boolean replacedStream = false;
-    for (int i = 0; i < 200; i += 10) {
+    for (int i = 0; i <= 10; i++) {
       renderer.render(/* positionUs= */ i * 10, SystemClock.elapsedRealtime() * 1000);
       if (!replacedStream && renderer.hasReadStreamToEnd()) {
         renderer.replaceStream(new Format[] {H264_FORMAT}, fakeSampleStream2, /* offsetUs= */ 100);
         replacedStream = true;
       }
+      // Ensure pending messages are delivered.
+      ShadowLooper.idleMainLooper();
     }
 
     verify(eventListener, times(2)).onRenderedFirstFrame(any());
   }
 
+  // TODO: Fix rendering of first frame at stream transition.
+  @Ignore
   @Test
   public void replaceStream_whenNotStarted_doesNotRenderFirstFrameOfNewStream() throws Exception {
     FakeSampleStream fakeSampleStream1 =
@@ -277,14 +330,21 @@ public final class SimpleDecoderVideoRendererTest {
         /* offsetUs */ 0);
 
     boolean replacedStream = false;
-    for (int i = 0; i < 200; i += 10) {
+    for (int i = 0; i < 10; i++) {
       renderer.render(/* positionUs= */ i * 10, SystemClock.elapsedRealtime() * 1000);
       if (!replacedStream && renderer.hasReadStreamToEnd()) {
         renderer.replaceStream(new Format[] {H264_FORMAT}, fakeSampleStream2, /* offsetUs= */ 100);
         replacedStream = true;
       }
+      // Ensure pending messages are delivered.
+      ShadowLooper.idleMainLooper();
     }
 
     verify(eventListener).onRenderedFirstFrame(any());
+
+    // Render to streamOffsetUs and verify the new first frame gets rendered.
+    renderer.render(/* positionUs= */ 100, SystemClock.elapsedRealtime() * 1000);
+
+    verify(eventListener, times(2)).onRenderedFirstFrame(any());
   }
 }

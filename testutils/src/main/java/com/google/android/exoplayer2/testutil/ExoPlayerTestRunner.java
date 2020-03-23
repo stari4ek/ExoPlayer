@@ -46,7 +46,9 @@ import com.google.android.exoplayer2.util.HandlerWrapper;
 import com.google.android.exoplayer2.util.MimeTypes;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -93,6 +95,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
     private AnalyticsListener analyticsListener;
     private Integer expectedPlayerEndedCount;
     private boolean useLazyPreparation;
+    private boolean pauseAtEndOfMediaItems;
     private int initialWindowIndex;
     private long initialPositionMs;
     private boolean skipSettingMediaSources;
@@ -191,6 +194,17 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
      */
     public Builder setUseLazyPreparation(boolean useLazyPreparation) {
       this.useLazyPreparation = useLazyPreparation;
+      return this;
+    }
+
+    /**
+     * Sets whether to enable pausing at the end of media items.
+     *
+     * @param pauseAtEndOfMediaItems Whether to pause at the end of media items.
+     * @return This builder.
+     */
+    public Builder setPauseAtEndOfMediaItems(boolean pauseAtEndOfMediaItems) {
+      this.pauseAtEndOfMediaItems = pauseAtEndOfMediaItems;
       return this;
     }
 
@@ -353,7 +367,16 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
       }
       if (renderersFactory == null) {
         if (renderers == null) {
-          renderers = new Renderer[] {new FakeRenderer(supportedFormats)};
+          Set<Integer> trackTypes = new HashSet<>();
+          for (Format format : supportedFormats) {
+            trackTypes.add(MimeTypes.getTrackType(format.sampleMimeType));
+          }
+          renderers = new Renderer[trackTypes.size()];
+          int i = 0;
+          for (int trackType : trackTypes) {
+            renderers[i] = new FakeRenderer(trackType);
+            i++;
+          }
         }
         renderersFactory =
             (eventHandler,
@@ -385,6 +408,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
           mediaSources,
           skipSettingMediaSources,
           useLazyPreparation,
+          pauseAtEndOfMediaItems,
           renderersFactory,
           trackSelector,
           loadControl,
@@ -420,6 +444,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
   private final ArrayList<Integer> playbackStates;
   private final boolean skipSettingMediaSources;
   private final boolean useLazyPreparation;
+  private final boolean pauseAtEndOfMediaItems;
 
   private SimpleExoPlayer player;
   private Exception exception;
@@ -434,6 +459,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
       List<MediaSource> mediaSources,
       boolean skipSettingMediaSources,
       boolean useLazyPreparation,
+      boolean pauseAtEndOfMediaItems,
       RenderersFactory renderersFactory,
       DefaultTrackSelector trackSelector,
       LoadControl loadControl,
@@ -449,6 +475,7 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
     this.mediaSources = mediaSources;
     this.skipSettingMediaSources = skipSettingMediaSources;
     this.useLazyPreparation = useLazyPreparation;
+    this.pauseAtEndOfMediaItems = pauseAtEndOfMediaItems;
     this.renderersFactory = renderersFactory;
     this.trackSelector = trackSelector;
     this.loadControl = loadControl;
@@ -508,6 +535,9 @@ public final class ExoPlayerTestRunner implements Player.EventListener, ActionSc
             }
             if (analyticsListener != null) {
               player.addAnalyticsListener(analyticsListener);
+            }
+            if (pauseAtEndOfMediaItems) {
+              player.setPauseAtEndOfMediaItems(true);
             }
             player.play();
             if (actionSchedule != null) {

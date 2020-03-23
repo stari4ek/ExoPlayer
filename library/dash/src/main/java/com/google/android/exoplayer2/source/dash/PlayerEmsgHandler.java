@@ -35,6 +35,7 @@ import com.google.android.exoplayer2.source.chunk.Chunk;
 import com.google.android.exoplayer2.source.dash.manifest.DashManifest;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataReader;
+import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
@@ -284,7 +285,11 @@ public final class PlayerEmsgHandler implements Handler.Callback {
     private final MetadataInputBuffer buffer;
 
     /* package */ PlayerTrackEmsgHandler(Allocator allocator) {
-      this.sampleQueue = new SampleQueue(allocator, DrmSessionManager.getDummyDrmSessionManager());
+      this.sampleQueue =
+          new SampleQueue(
+              allocator,
+              DrmSessionManager.getDummyDrmSessionManager(),
+              new MediaSourceEventDispatcher());
       formatHolder = new FormatHolder();
       buffer = new MetadataInputBuffer();
     }
@@ -296,7 +301,7 @@ public final class PlayerEmsgHandler implements Handler.Callback {
 
     @Override
     public int sampleData(DataReader input, int length, boolean allowEndOfInput)
-        throws IOException, InterruptedException {
+        throws IOException {
       return sampleQueue.sampleData(input, length, allowEndOfInput);
     }
 

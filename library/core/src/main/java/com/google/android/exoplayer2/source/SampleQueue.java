@@ -30,6 +30,7 @@ import com.google.android.exoplayer2.extractor.TrackOutput;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataReader;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
@@ -54,11 +55,12 @@ public class SampleQueue implements TrackOutput {
 
   private final SampleDataQueue sampleDataQueue;
   private final SampleExtrasHolder extrasHolder;
-  private final DrmSessionManager<?> drmSessionManager;
+  private final DrmSessionManager drmSessionManager;
+  private final MediaSourceEventDispatcher eventDispatcher;
   @Nullable private UpstreamFormatChangedListener upstreamFormatChangeListener;
 
   @Nullable private Format downstreamFormat;
-  @Nullable private DrmSession<?> currentDrmSession;
+  @Nullable private DrmSession currentDrmSession;
 
   private int capacity;
   private int[] sourceIds;
@@ -94,10 +96,16 @@ public class SampleQueue implements TrackOutput {
    * @param allocator An {@link Allocator} from which allocations for sample data can be obtained.
    * @param drmSessionManager The {@link DrmSessionManager} to obtain {@link DrmSession DrmSessions}
    *     from. The created instance does not take ownership of this {@link DrmSessionManager}.
+   * @param eventDispatcher A {@link MediaSourceEventDispatcher} to notify of events related to this
+   *     SampleQueue.
    */
-  public SampleQueue(Allocator allocator, DrmSessionManager<?> drmSessionManager) {
+  public SampleQueue(
+      Allocator allocator,
+      DrmSessionManager drmSessionManager,
+      MediaSourceEventDispatcher eventDispatcher) {
     sampleDataQueue = new SampleDataQueue(allocator);
     this.drmSessionManager = drmSessionManager;
+    this.eventDispatcher = eventDispatcher;
     extrasHolder = new SampleExtrasHolder();
     capacity = SAMPLE_CAPACITY_INCREMENT;
     sourceIds = new int[capacity];
@@ -470,7 +478,7 @@ public class SampleQueue implements TrackOutput {
 
   @Override
   public final int sampleData(DataReader input, int length, boolean allowEndOfInput)
-      throws IOException, InterruptedException {
+      throws IOException {
     return sampleDataQueue.sampleData(input, length, allowEndOfInput);
   }
 
@@ -647,7 +655,7 @@ public class SampleQueue implements TrackOutput {
 
   private void releaseDrmSessionReferences() {
     if (currentDrmSession != null) {
-      currentDrmSession.release();
+      currentDrmSession.release(eventDispatcher);
       currentDrmSession = null;
       // Clear downstream format to avoid violating the assumption that downstreamFormat.drmInitData
       // != null implies currentSession != null
@@ -787,17 +795,17 @@ public class SampleQueue implements TrackOutput {
     }
     // Ensure we acquire the new session before releasing the previous one in case the same session
     // is being used for both DrmInitData.
-    @Nullable DrmSession<?> previousSession = currentDrmSession;
+    @Nullable DrmSession previousSession = currentDrmSession;
     Looper playbackLooper = Assertions.checkNotNull(Looper.myLooper());
     currentDrmSession =
         newDrmInitData != null
-            ? drmSessionManager.acquireSession(playbackLooper, newDrmInitData)
+            ? drmSessionManager.acquireSession(playbackLooper, eventDispatcher, newDrmInitData)
             : drmSessionManager.acquirePlaceholderSession(
                 playbackLooper, MimeTypes.getTrackType(newFormat.sampleMimeType));
     outputFormatHolder.drmSession = currentDrmSession;
 
     if (previousSession != null) {
-      previousSession.release();
+      previousSession.release(eventDispatcher);
     }
   }
 

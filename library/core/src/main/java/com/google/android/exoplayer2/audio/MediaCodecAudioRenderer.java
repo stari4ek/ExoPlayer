@@ -28,12 +28,10 @@ import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
-import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.audio.AudioRendererEventListener.EventDispatcher;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
-import com.google.android.exoplayer2.drm.FrameworkMediaCrypto;
 import com.google.android.exoplayer2.mediacodec.MediaCodecInfo;
 import com.google.android.exoplayer2.mediacodec.MediaCodecRenderer;
 import com.google.android.exoplayer2.mediacodec.MediaCodecSelector;
@@ -63,6 +61,11 @@ import java.util.List;
  *   <li>Message with type {@link #MSG_SET_AUX_EFFECT_INFO} to set the auxiliary effect. The message
  *       payload should be an {@link AuxEffectInfo} instance that will configure the underlying
  *       audio track.
+ *   <li>Message with type {@link #MSG_SET_SKIP_SILENCE_ENABLED} to enable or disable skipping
+ *       silences. The message payload should be a {@link Boolean}.
+ *   <li>Message with type {@link #MSG_SET_AUDIO_SESSION_ID} to set the audio session ID. The
+ *       message payload should be a session ID {@link Integer} that will be attached to the
+ *       underlying audio track.
  * </ul>
  */
 public class MediaCodecAudioRenderer extends MediaCodecRenderer implements MediaClock {
@@ -210,8 +213,7 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
     }
     @TunnelingSupport
     int tunnelingSupport = Util.SDK_INT >= 21 ? TUNNELING_SUPPORTED : TUNNELING_NOT_SUPPORTED;
-    boolean supportsFormatDrm =
-        format.drmInitData == null || FrameworkMediaCrypto.class.equals(format.exoMediaCryptoType);
+    boolean supportsFormatDrm = supportsFormatDrm(format);
     if (supportsFormatDrm
         && allowPassthrough(format.channelCount, mimeType)
         && mediaCodecSelector.getPassthroughDecoderInfo() != null) {
@@ -567,13 +569,13 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
   }
 
   @Override
-  public void setPlaybackParameters(PlaybackParameters playbackParameters) {
-    audioSink.setPlaybackParameters(playbackParameters);
+  public void setPlaybackSpeed(float playbackSpeed) {
+    audioSink.setPlaybackSpeed(playbackSpeed);
   }
 
   @Override
-  public PlaybackParameters getPlaybackParameters() {
-    return audioSink.getPlaybackParameters();
+  public float getPlaybackSpeed() {
+    return audioSink.getPlaybackSpeed();
   }
 
   @Override
@@ -669,6 +671,12 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       case MSG_SET_AUX_EFFECT_INFO:
         AuxEffectInfo auxEffectInfo = (AuxEffectInfo) message;
         audioSink.setAuxEffectInfo(auxEffectInfo);
+        break;
+      case MSG_SET_SKIP_SILENCE_ENABLED:
+        audioSink.setSkipSilenceEnabled((Boolean) message);
+        break;
+      case MSG_SET_AUDIO_SESSION_ID:
+        audioSink.setAudioSessionId((Integer) message);
         break;
       default:
         super.handleMessage(messageType, message);

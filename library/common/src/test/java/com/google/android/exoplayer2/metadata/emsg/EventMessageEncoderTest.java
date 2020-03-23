@@ -16,6 +16,7 @@
 package com.google.android.exoplayer2.metadata.emsg;
 
 import static com.google.android.exoplayer2.testutil.TestUtil.createByteArray;
+import static com.google.android.exoplayer2.testutil.TestUtil.createMetadataInputBuffer;
 import static com.google.android.exoplayer2.testutil.TestUtil.joinByteArrays;
 import static com.google.common.truth.Truth.assertThat;
 
@@ -23,7 +24,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.MetadataInputBuffer;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -43,18 +43,15 @@ public final class EventMessageEncoderTest {
           createByteArray(0, 1, 2, 3, 4)); // message_data = {0, 1, 2, 3, 4}
 
   @Test
-  public void testEncodeEventStream() throws IOException {
-    byte[] foo = new byte[] {1, 2, 3};
-
+  public void encodeEventStream() throws IOException {
     byte[] encodedByteArray = new EventMessageEncoder().encode(DECODED_MESSAGE);
     assertThat(encodedByteArray).isEqualTo(ENCODED_MESSAGE);
   }
 
   @Test
-  public void testEncodeDecodeEventStream() throws IOException {
+  public void encodeDecodeEventStream() throws IOException {
     byte[] encodedByteArray = new EventMessageEncoder().encode(DECODED_MESSAGE);
-    MetadataInputBuffer buffer = new MetadataInputBuffer();
-    buffer.data = ByteBuffer.allocate(encodedByteArray.length).put(encodedByteArray);
+    MetadataInputBuffer buffer = createMetadataInputBuffer(encodedByteArray);
 
     EventMessageDecoder decoder = new EventMessageDecoder();
     Metadata metadata = decoder.decode(buffer);
@@ -63,7 +60,7 @@ public final class EventMessageEncoderTest {
   }
 
   @Test
-  public void testEncodeEventStreamMultipleTimesWorkingCorrectly() throws IOException {
+  public void encodeEventStreamMultipleTimesWorkingCorrectly() throws IOException {
     EventMessage eventMessage1 =
         new EventMessage("urn:test", "123", 3000, 1000402, new byte[] {4, 3, 2, 1, 0});
     byte[] expectedEmsgBody1 =

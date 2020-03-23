@@ -33,6 +33,7 @@ import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.EventDispatcher;
 import com.google.android.exoplayer2.util.Log;
+import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.Arrays;
@@ -47,7 +48,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /** A {@link DrmSession} that supports playbacks using {@link ExoMediaDrm}. */
 @RequiresApi(18)
-/* package */ class DefaultDrmSession<T extends ExoMediaCrypto> implements DrmSession<T> {
+/* package */ class DefaultDrmSession implements DrmSession {
 
   /** Thrown when an unexpected exception or error is thrown during provisioning or key requests. */
   public static final class UnexpectedDrmSessionException extends IOException {
@@ -58,7 +59,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   /** Manages provisioning requests. */
-  public interface ProvisioningManager<T extends ExoMediaCrypto> {
+  public interface ProvisioningManager {
 
     /**
      * Called when a session requires provisioning. The manager <em>may</em> call {@link
@@ -68,7 +69,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
      *
      * @param session The session.
      */
-    void provisionRequired(DefaultDrmSession<T> session);
+    void provisionRequired(DefaultDrmSession session);
 
     /**
      * Called by a session when it fails to perform a provisioning operation.
@@ -82,14 +83,14 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   /** Callback to be notified when the session is released. */
-  public interface ReleaseCallback<T extends ExoMediaCrypto> {
+  public interface ReleaseCallback {
 
     /**
      * Called immediately after releasing session resources.
      *
      * @param session The session.
      */
-    void onSessionReleased(DefaultDrmSession<T> session);
+    void onSessionReleased(DefaultDrmSession session);
   }
 
   private static final String TAG = "DefaultDrmSession";
@@ -101,14 +102,14 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   /** The DRM scheme datas, or null if this session uses offline keys. */
   @Nullable public final List<SchemeData> schemeDatas;
 
-  private final ExoMediaDrm<T> mediaDrm;
-  private final ProvisioningManager<T> provisioningManager;
-  private final ReleaseCallback<T> releaseCallback;
+  private final ExoMediaDrm mediaDrm;
+  private final ProvisioningManager provisioningManager;
+  private final ReleaseCallback releaseCallback;
   private final @DefaultDrmSessionManager.Mode int mode;
   private final boolean playClearSamplesWithoutKeys;
   private final boolean isPlaceholderSession;
   private final HashMap<String, String> keyRequestParameters;
-  private final EventDispatcher<DefaultDrmSessionEventListener> eventDispatcher;
+  private final EventDispatcher<DrmSessionEventListener> eventDispatcher;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
 
   /* package */ final MediaDrmCallback callback;
@@ -119,7 +120,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private int referenceCount;
   @Nullable private HandlerThread requestHandlerThread;
   @Nullable private RequestHandler requestHandler;
-  @Nullable private T mediaCrypto;
+  @Nullable private ExoMediaCrypto mediaCrypto;
   @Nullable private DrmSessionException lastException;
   @Nullable private byte[] sessionId;
   private byte @MonotonicNonNull [] offlineLicenseKeySetId;
@@ -149,9 +150,9 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
    */
   public DefaultDrmSession(
       UUID uuid,
-      ExoMediaDrm<T> mediaDrm,
-      ProvisioningManager<T> provisioningManager,
-      ReleaseCallback<T> releaseCallback,
+      ExoMediaDrm mediaDrm,
+      ProvisioningManager provisioningManager,
+      ReleaseCallback releaseCallback,
       @Nullable List<SchemeData> schemeDatas,
       @DefaultDrmSessionManager.Mode int mode,
       boolean playClearSamplesWithoutKeys,
@@ -160,7 +161,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       HashMap<String, String> keyRequestParameters,
       MediaDrmCallback callback,
       Looper playbackLooper,
-      EventDispatcher<DefaultDrmSessionEventListener> eventDispatcher,
+      EventDispatcher<DrmSessionEventListener> eventDispatcher,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy) {
     if (mode == DefaultDrmSessionManager.MODE_QUERY
         || mode == DefaultDrmSessionManager.MODE_RELEASE) {
@@ -241,7 +242,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   @Override
-  public final @Nullable T getMediaCrypto() {
+  public final @Nullable ExoMediaCrypto getMediaCrypto() {
     return mediaCrypto;
   }
 
@@ -258,7 +259,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   @Override
-  public void acquire() {
+  public void acquire(@Nullable MediaSourceEventDispatcher eventDispatcher) {
     Assertions.checkState(referenceCount >= 0);
     if (++referenceCount == 1) {
       Assertions.checkState(state == STATE_OPENING);
@@ -272,7 +273,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   }
 
   @Override
-  public void release() {
+  public void release(@Nullable MediaSourceEventDispatcher eventDispatcher) {
     if (--referenceCount == 0) {
       // Assigning null to various non-null variables for clean-up.
       state = STATE_RELEASED;
@@ -288,7 +289,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       if (sessionId != null) {
         mediaDrm.closeSession(sessionId);
         sessionId = null;
-        eventDispatcher.dispatch(DefaultDrmSessionEventListener::onDrmSessionReleased);
+        this.eventDispatcher.dispatch(DrmSessionEventListener::onDrmSessionReleased);
       }
       releaseCallback.onSessionReleased(this);
     }
@@ -313,7 +314,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     try {
       sessionId = mediaDrm.openSession();
       mediaCrypto = mediaDrm.createMediaCrypto(sessionId);
-      eventDispatcher.dispatch(DefaultDrmSessionEventListener::onDrmSessionAcquired);
+      eventDispatcher.dispatch(DrmSessionEventListener::onDrmSessionAcquired);
       state = STATE_OPENED;
       Assertions.checkNotNull(sessionId);
       return true;
@@ -377,7 +378,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
             onError(new KeysExpiredException());
           } else {
             state = STATE_OPENED_WITH_KEYS;
-            eventDispatcher.dispatch(DefaultDrmSessionEventListener::onDrmKeysRestored);
+            eventDispatcher.dispatch(DrmSessionEventListener::onDrmKeysRestored);
           }
         }
         break;
@@ -447,7 +448,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       byte[] responseData = (byte[]) response;
       if (mode == DefaultDrmSessionManager.MODE_RELEASE) {
         mediaDrm.provideKeyResponse(Util.castNonNull(offlineLicenseKeySetId), responseData);
-        eventDispatcher.dispatch(DefaultDrmSessionEventListener::onDrmKeysRestored);
+        eventDispatcher.dispatch(DrmSessionEventListener::onDrmKeysRestored);
       } else {
         byte[] keySetId = mediaDrm.provideKeyResponse(sessionId, responseData);
         if ((mode == DefaultDrmSessionManager.MODE_DOWNLOAD
@@ -458,7 +459,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
           offlineLicenseKeySetId = keySetId;
         }
         state = STATE_OPENED_WITH_KEYS;
-        eventDispatcher.dispatch(DefaultDrmSessionEventListener::onDrmKeysLoaded);
+        eventDispatcher.dispatch(DrmSessionEventListener::onDrmKeysLoaded);
       }
     } catch (Exception e) {
       onKeysError(e);

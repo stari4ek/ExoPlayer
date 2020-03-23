@@ -23,6 +23,7 @@ import android.util.SparseArray;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.drm.DrmSession;
@@ -63,6 +64,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
@@ -82,13 +84,13 @@ public final class DashMediaSource extends BaseMediaSource {
     private final DashChunkSource.Factory chunkSourceFactory;
     @Nullable private final DataSource.Factory manifestDataSourceFactory;
 
-    private DrmSessionManager<?> drmSessionManager;
+    private DrmSessionManager drmSessionManager;
     private CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
     private LoadErrorHandlingPolicy loadErrorHandlingPolicy;
     private long livePresentationDelayMs;
     private boolean livePresentationDelayOverridesManifest;
     @Nullable private ParsingLoadable.Parser<? extends DashManifest> manifestParser;
-    @Nullable private List<StreamKey> streamKeys;
+    private List<StreamKey> streamKeys;
     @Nullable private Object tag;
 
     /**
@@ -119,24 +121,28 @@ public final class DashMediaSource extends BaseMediaSource {
       loadErrorHandlingPolicy = new DefaultLoadErrorHandlingPolicy();
       livePresentationDelayMs = DEFAULT_LIVE_PRESENTATION_DELAY_MS;
       compositeSequenceableLoaderFactory = new DefaultCompositeSequenceableLoaderFactory();
+      streamKeys = Collections.emptyList();
     }
 
     /**
-     * Sets a tag for the media source which will be published in the {@link
-     * com.google.android.exoplayer2.Timeline} of the source as {@link
-     * com.google.android.exoplayer2.Timeline.Window#tag}.
-     *
-     * @param tag A tag for the media source.
-     * @return This factory, for convenience.
+     * @deprecated Use {@link MediaItem.Builder#setTag(Object)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
      */
+    @Deprecated
     public Factory setTag(@Nullable Object tag) {
       this.tag = tag;
       return this;
     }
 
+    /**
+     * @deprecated Use {@link MediaItem.Builder#setStreamKeys(List)} and {@link
+     *     #createMediaSource(MediaItem)} instead.
+     */
+    @SuppressWarnings("deprecation")
+    @Deprecated
     @Override
     public Factory setStreamKeys(@Nullable List<StreamKey> streamKeys) {
-      this.streamKeys = streamKeys != null && !streamKeys.isEmpty() ? streamKeys : null;
+      this.streamKeys = streamKeys != null ? streamKeys : Collections.emptyList();
       return this;
     }
 
@@ -148,7 +154,7 @@ public final class DashMediaSource extends BaseMediaSource {
      * @return This factory, for convenience.
      */
     @Override
-    public Factory setDrmSessionManager(@Nullable DrmSessionManager<?> drmSessionManager) {
+    public Factory setDrmSessionManager(@Nullable DrmSessionManager drmSessionManager) {
       this.drmSessionManager =
           drmSessionManager != null
               ? drmSessionManager
@@ -252,7 +258,7 @@ public final class DashMediaSource extends BaseMediaSource {
      */
     public DashMediaSource createMediaSource(DashManifest manifest) {
       Assertions.checkArgument(!manifest.dynamic);
-      if (streamKeys != null) {
+      if (!streamKeys.isEmpty()) {
         manifest = manifest.copy(streamKeys);
       }
       return new DashMediaSource(
@@ -304,21 +310,38 @@ public final class DashMediaSource extends BaseMediaSource {
     /**
      * Returns a new {@link DashMediaSource} using the current parameters.
      *
-     * @param manifestUri The manifest {@link Uri}.
+     * @param uri The {@link Uri uri}.
      * @return The new {@link DashMediaSource}.
      */
     @Override
-    public DashMediaSource createMediaSource(Uri manifestUri) {
+    public DashMediaSource createMediaSource(Uri uri) {
+      return createMediaSource(new MediaItem.Builder().setSourceUri(uri).build());
+    }
+
+    /**
+     * Returns a new {@link DashMediaSource} using the current parameters.
+     *
+     * @param mediaItem The media item of the dash stream.
+     * @return The new {@link DashMediaSource}.
+     * @throws NullPointerException if {@link MediaItem#playbackProperties} is {@code null}.
+     */
+    @Override
+    public DashMediaSource createMediaSource(MediaItem mediaItem) {
+      Assertions.checkNotNull(mediaItem.playbackProperties);
       @Nullable ParsingLoadable.Parser<? extends DashManifest> manifestParser = this.manifestParser;
       if (manifestParser == null) {
         manifestParser = new DashManifestParser();
       }
-      if (streamKeys != null) {
+      List<StreamKey> streamKeys =
+          !mediaItem.playbackProperties.streamKeys.isEmpty()
+              ? mediaItem.playbackProperties.streamKeys
+              : this.streamKeys;
+      if (!streamKeys.isEmpty()) {
         manifestParser = new FilteringManifestParser<>(manifestParser, streamKeys);
       }
       return new DashMediaSource(
           /* manifest= */ null,
-          Assertions.checkNotNull(manifestUri),
+          mediaItem.playbackProperties.sourceUri,
           manifestDataSourceFactory,
           manifestParser,
           chunkSourceFactory,
@@ -327,7 +350,7 @@ public final class DashMediaSource extends BaseMediaSource {
           loadErrorHandlingPolicy,
           livePresentationDelayMs,
           livePresentationDelayOverridesManifest,
-          tag);
+          mediaItem.playbackProperties.tag != null ? mediaItem.playbackProperties.tag : tag);
     }
 
     @Override
@@ -365,7 +388,7 @@ public final class DashMediaSource extends BaseMediaSource {
   private final DataSource.Factory manifestDataSourceFactory;
   private final DashChunkSource.Factory chunkSourceFactory;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
-  private final DrmSessionManager<?> drmSessionManager;
+  private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final long livePresentationDelayMs;
   private final boolean livePresentationDelayOverridesManifest;
@@ -581,7 +604,7 @@ public final class DashMediaSource extends BaseMediaSource {
       @Nullable ParsingLoadable.Parser<? extends DashManifest> manifestParser,
       DashChunkSource.Factory chunkSourceFactory,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
-      DrmSessionManager<?> drmSessionManager,
+      DrmSessionManager drmSessionManager,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
       long livePresentationDelayMs,
       boolean livePresentationDelayOverridesManifest,
@@ -791,15 +814,18 @@ public final class DashMediaSource extends BaseMediaSource {
     manifestLoadPending &= manifest.dynamic;
     manifestLoadStartTimestampMs = elapsedRealtimeMs - loadDurationMs;
     manifestLoadEndTimestampMs = elapsedRealtimeMs;
-    if (manifest.location != null) {
-      synchronized (manifestUriLock) {
-        // This condition checks that replaceManifestUri wasn't called between the start and end of
-        // this load. If it was, we ignore the manifest location and prefer the manual replacement.
-        @SuppressWarnings("ReferenceEquality")
-        boolean isSameUriInstance = loadable.dataSpec.uri == manifestUri;
-        if (isSameUriInstance) {
-          manifestUri = manifest.location;
-        }
+
+    synchronized (manifestUriLock) {
+      // Checks whether replaceManifestUri(Uri) was called to manually replace the URI between the
+      // start and end of this load. If it was then isSameUriInstance evaluates to false, and we
+      // prefer the manual replacement to one derived from the previous request.
+      @SuppressWarnings("ReferenceEquality")
+      boolean isSameUriInstance = loadable.dataSpec.uri == manifestUri;
+      if (isSameUriInstance) {
+        // Replace the manifest URI with one specified by a manifest Location element (if present),
+        // or with the final (possibly redirected) URI. This follows the recommendation in
+        // DASH-IF-IOP 4.3, section 3.2.15.3. See: https://dashif.org/docs/DASH-IF-IOP-v4.3.pdf.
+        manifestUri = manifest.location != null ? manifest.location : loadable.getUri();
       }
     }
 

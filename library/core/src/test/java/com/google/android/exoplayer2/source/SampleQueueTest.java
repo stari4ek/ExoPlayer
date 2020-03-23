@@ -35,11 +35,11 @@ import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.drm.DrmSession;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
-import com.google.android.exoplayer2.drm.ExoMediaCrypto;
 import com.google.android.exoplayer2.extractor.TrackOutput;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DefaultAllocator;
+import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import java.io.IOException;
 import java.util.Arrays;
@@ -123,8 +123,9 @@ public final class SampleQueueTest {
       new TrackOutput.CryptoData(C.CRYPTO_MODE_AES_CTR, new byte[16], 0, 0);
 
   private Allocator allocator;
-  private DrmSessionManager<ExoMediaCrypto> mockDrmSessionManager;
-  private DrmSession<ExoMediaCrypto> mockDrmSession;
+  private DrmSessionManager mockDrmSessionManager;
+  private DrmSession mockDrmSession;
+  private MediaSourceEventDispatcher eventDispatcher;
   private SampleQueue sampleQueue;
   private FormatHolder formatHolder;
   private DecoderInputBuffer inputBuffer;
@@ -133,12 +134,13 @@ public final class SampleQueueTest {
   @SuppressWarnings("unchecked")
   public void setUp() {
     allocator = new DefaultAllocator(false, ALLOCATION_SIZE);
-    mockDrmSessionManager =
-        (DrmSessionManager<ExoMediaCrypto>) Mockito.mock(DrmSessionManager.class);
-    mockDrmSession = (DrmSession<ExoMediaCrypto>) Mockito.mock(DrmSession.class);
-    when(mockDrmSessionManager.acquireSession(ArgumentMatchers.any(), ArgumentMatchers.any()))
+    mockDrmSessionManager = Mockito.mock(DrmSessionManager.class);
+    mockDrmSession = Mockito.mock(DrmSession.class);
+    when(mockDrmSessionManager.acquireSession(
+            ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
         .thenReturn(mockDrmSession);
-    sampleQueue = new SampleQueue(allocator, mockDrmSessionManager);
+    eventDispatcher = new MediaSourceEventDispatcher();
+    sampleQueue = new SampleQueue(allocator, mockDrmSessionManager, eventDispatcher);
     formatHolder = new FormatHolder();
     inputBuffer = new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_NORMAL);
   }
@@ -355,7 +357,7 @@ public final class SampleQueueTest {
   public void isReadyReturnsTrueForClearSampleAndPlayClearSamplesWithoutKeysIsTrue() {
     when(mockDrmSession.playClearSamplesWithoutKeys()).thenReturn(true);
     // We recreate the queue to ensure the mock DRM session manager flags are taken into account.
-    sampleQueue = new SampleQueue(allocator, mockDrmSessionManager);
+    sampleQueue = new SampleQueue(allocator, mockDrmSessionManager, eventDispatcher);
     writeTestDataWithEncryptedSections();
     assertThat(sampleQueue.isReady(/* loadingFinished= */ false)).isTrue();
   }
@@ -414,8 +416,7 @@ public final class SampleQueueTest {
   @SuppressWarnings("unchecked")
   public void allowPlaceholderSessionPopulatesDrmSession() {
     when(mockDrmSession.getState()).thenReturn(DrmSession.STATE_OPENED_WITH_KEYS);
-    DrmSession<ExoMediaCrypto> mockPlaceholderDrmSession =
-        (DrmSession<ExoMediaCrypto>) Mockito.mock(DrmSession.class);
+    DrmSession mockPlaceholderDrmSession = Mockito.mock(DrmSession.class);
     when(mockPlaceholderDrmSession.getState()).thenReturn(DrmSession.STATE_OPENED_WITH_KEYS);
     when(mockDrmSessionManager.acquirePlaceholderSession(
             ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
@@ -461,8 +462,7 @@ public final class SampleQueueTest {
   @SuppressWarnings("unchecked")
   public void trailingCryptoInfoInitializationVectorBytesZeroed() {
     when(mockDrmSession.getState()).thenReturn(DrmSession.STATE_OPENED_WITH_KEYS);
-    DrmSession<ExoMediaCrypto> mockPlaceholderDrmSession =
-        (DrmSession<ExoMediaCrypto>) Mockito.mock(DrmSession.class);
+    DrmSession mockPlaceholderDrmSession = Mockito.mock(DrmSession.class);
     when(mockPlaceholderDrmSession.getState()).thenReturn(DrmSession.STATE_OPENED_WITH_KEYS);
     when(mockDrmSessionManager.acquirePlaceholderSession(
             ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
@@ -535,7 +535,7 @@ public final class SampleQueueTest {
   public void allowPlayClearSamplesWithoutKeysReadsClearSamples() {
     when(mockDrmSession.playClearSamplesWithoutKeys()).thenReturn(true);
     // We recreate the queue to ensure the mock DRM session manager flags are taken into account.
-    sampleQueue = new SampleQueue(allocator, mockDrmSessionManager);
+    sampleQueue = new SampleQueue(allocator, mockDrmSessionManager, eventDispatcher);
     when(mockDrmSession.getState()).thenReturn(DrmSession.STATE_OPENED);
     writeTestDataWithEncryptedSections();
 
@@ -925,7 +925,7 @@ public final class SampleQueueTest {
   public void adjustUpstreamFormat() {
     String label = "label";
     sampleQueue =
-        new SampleQueue(allocator, mockDrmSessionManager) {
+        new SampleQueue(allocator, mockDrmSessionManager, eventDispatcher) {
           @Override
           public Format getAdjustedUpstreamFormat(Format format) {
             return super.getAdjustedUpstreamFormat(copyWithLabel(format, label));
@@ -941,7 +941,7 @@ public final class SampleQueueTest {
   public void invalidateUpstreamFormatAdjustment() {
     AtomicReference<String> label = new AtomicReference<>("label1");
     sampleQueue =
-        new SampleQueue(allocator, mockDrmSessionManager) {
+        new SampleQueue(allocator, mockDrmSessionManager, eventDispatcher) {
           @Override
           public Format getAdjustedUpstreamFormat(Format format) {
             return super.getAdjustedUpstreamFormat(copyWithLabel(format, label.get()));

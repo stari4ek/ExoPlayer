@@ -15,11 +15,15 @@
  */
 package com.google.android.exoplayer2.metadata.id3;
 
+import static com.google.android.exoplayer2.testutil.TestUtil.createByteArray;
+import static com.google.android.exoplayer2.testutil.TestUtil.createMetadataInputBuffer;
 import static com.google.common.truth.Truth.assertThat;
+import static org.junit.Assert.assertThrows;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.metadata.Metadata;
+import com.google.android.exoplayer2.metadata.MetadataInputBuffer;
 import com.google.android.exoplayer2.util.Assertions;
 import java.nio.charset.Charset;
 import java.util.Arrays;
@@ -35,7 +39,7 @@ public final class Id3DecoderTest {
   private static final int ID3_TEXT_ENCODING_UTF_8 = 3;
 
   @Test
-  public void testDecodeTxxxFrame() {
+  public void decodeTxxxFrame() {
     byte[] rawId3 = buildSingleFrameTag("TXXX", new byte[] {3, 0, 109, 100, 105, 97, 108, 111, 103,
         95, 86, 73, 78, 68, 73, 67, 79, 49, 53, 50, 55, 54, 54, 52, 95, 115, 116, 97, 114, 116, 0});
     Id3Decoder decoder = new Id3Decoder();
@@ -62,7 +66,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodeTextInformationFrame() {
+  public void decodeTextInformationFrame() {
     byte[] rawId3 = buildSingleFrameTag("TIT2", new byte[] {3, 72, 101, 108, 108, 111, 32, 87, 111,
         114, 108, 100, 0});
     Id3Decoder decoder = new Id3Decoder();
@@ -89,7 +93,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodeWxxxFrame() {
+  public void decodeWxxxFrame() {
     byte[] rawId3 = buildSingleFrameTag("WXXX", new byte[] {ID3_TEXT_ENCODING_UTF_8, 116, 101, 115,
         116, 0, 104, 116, 116, 112, 115, 58, 47, 47, 116, 101, 115, 116, 46, 99, 111, 109, 47, 97,
         98, 99, 63, 100, 101, 102});
@@ -117,7 +121,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodeUrlLinkFrame() {
+  public void decodeUrlLinkFrame() {
     byte[] rawId3 = buildSingleFrameTag("WCOM", new byte[] {104, 116, 116, 112, 115, 58, 47, 47,
         116, 101, 115, 116, 46, 99, 111, 109, 47, 97, 98, 99, 63, 100, 101, 102});
     Id3Decoder decoder = new Id3Decoder();
@@ -139,7 +143,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodePrivFrame() {
+  public void decodePrivFrame() {
     byte[] rawId3 = buildSingleFrameTag("PRIV", new byte[] {116, 101, 115, 116, 0, 1, 2, 3, 4});
     Id3Decoder decoder = new Id3Decoder();
     Metadata metadata = decoder.decode(rawId3, rawId3.length);
@@ -158,7 +162,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodeApicFrame() {
+  public void decodeApicFrame() {
     byte[] rawId3 = buildSingleFrameTag("APIC", new byte[] {3, 105, 109, 97, 103, 101, 47, 106, 112,
         101, 103, 0, 16, 72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 0, 1, 2, 3, 4, 5, 6, 7,
         8, 9, 0});
@@ -174,7 +178,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodeCommentFrame() {
+  public void decodeCommentFrame() {
     byte[] rawId3 = buildSingleFrameTag("COMM", new byte[] {ID3_TEXT_ENCODING_UTF_8, 101, 110, 103,
         100, 101, 115, 99, 114, 105, 112, 116, 105, 111, 110, 0, 116, 101, 120, 116, 0});
     Id3Decoder decoder = new Id3Decoder();
@@ -201,7 +205,7 @@ public final class Id3DecoderTest {
   }
 
   @Test
-  public void testDecodeMultiFrames() {
+  public void decodeMultiFrames() {
     byte[] rawId3 =
         buildMultiFramesTag(
             new FrameSpec(
@@ -231,6 +235,34 @@ public final class Id3DecoderTest {
     assertThat(apicFrame.description).isEqualTo("Hello World");
     assertThat(apicFrame.pictureData).hasLength(10);
     assertThat(apicFrame.pictureData).isEqualTo(new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 0});
+  }
+
+  @Test
+  public void decodeFailsIfPositionNonZero() {
+    Id3Decoder decoder = new Id3Decoder();
+    MetadataInputBuffer buffer = createMetadataInputBuffer(createByteArray(1, 2, 3));
+    buffer.data.position(1);
+
+    assertThrows(IllegalArgumentException.class, () -> decoder.decode(buffer));
+  }
+
+  @Test
+  public void decodeFailsIfBufferHasNoArray() {
+    Id3Decoder decoder = new Id3Decoder();
+    MetadataInputBuffer buffer = createMetadataInputBuffer(createByteArray(1, 2, 3));
+    buffer.data = buffer.data.asReadOnlyBuffer();
+
+    assertThrows(IllegalArgumentException.class, () -> decoder.decode(buffer));
+  }
+
+  @Test
+  public void decodeFailsIfArrayOffsetNonZero() {
+    Id3Decoder decoder = new Id3Decoder();
+    MetadataInputBuffer buffer = createMetadataInputBuffer(createByteArray(1, 2, 3));
+    buffer.data.position(1);
+    buffer.data = buffer.data.slice();
+
+    assertThrows(IllegalArgumentException.class, () -> decoder.decode(buffer));
   }
 
   public static byte[] buildSingleFrameTag(String frameId, byte[] frameData) {

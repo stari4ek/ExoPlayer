@@ -53,6 +53,7 @@ import com.google.android.exoplayer2.upstream.Loader;
 import com.google.android.exoplayer2.upstream.Loader.LoadErrorAction;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Log;
+import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
@@ -122,7 +123,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   private final HlsChunkSource chunkSource;
   private final Allocator allocator;
   @Nullable private final Format muxedAudioFormat;
-  private final DrmSessionManager<?> drmSessionManager;
+  private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final Loader loader;
   private final EventDispatcher eventDispatcher;
@@ -198,7 +199,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
       Allocator allocator,
       long positionUs,
       @Nullable Format muxedAudioFormat,
-      DrmSessionManager<?> drmSessionManager,
+      DrmSessionManager drmSessionManager,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
       EventDispatcher eventDispatcher,
       @HlsMediaSource.MetadataType int metadataType) {
@@ -916,7 +917,8 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
     boolean isAudioVideo = type == C.TRACK_TYPE_AUDIO || type == C.TRACK_TYPE_VIDEO;
     FormatAdjustingSampleQueue trackOutput =
-        new FormatAdjustingSampleQueue(allocator, drmSessionManager, overridingDrmInitData);
+        new FormatAdjustingSampleQueue(
+            allocator, drmSessionManager, eventDispatcher, overridingDrmInitData);
     if (isAudioVideo) {
       trackOutput.setDrmInitData(drmInitData);
     }
@@ -1356,9 +1358,10 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
     public FormatAdjustingSampleQueue(
         Allocator allocator,
-        DrmSessionManager<?> drmSessionManager,
+        DrmSessionManager drmSessionManager,
+        MediaSourceEventDispatcher eventDispatcher,
         Map<String, DrmInitData> overridingDrmInitData) {
-      super(allocator, drmSessionManager);
+      super(allocator, drmSessionManager, eventDispatcher);
       this.overridingDrmInitData = overridingDrmInitData;
     }
 
@@ -1469,7 +1472,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
     @Override
     public int sampleData(DataReader input, int length, boolean allowEndOfInput)
-        throws IOException, InterruptedException {
+        throws IOException {
       ensureBufferCapacity(bufferPosition + length);
       int numBytesRead = input.read(buffer, bufferPosition, length);
       if (numBytesRead == C.RESULT_END_OF_INPUT) {

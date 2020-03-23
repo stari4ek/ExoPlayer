@@ -51,11 +51,13 @@ import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /** A {@link MediaPeriod} that extracts data using an {@link Extractor}. */
@@ -95,7 +97,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   private final Uri uri;
   private final DataSource dataSource;
-  private final DrmSessionManager<?> drmSessionManager;
+  private final DrmSessionManager drmSessionManager;
   private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final EventDispatcher eventDispatcher;
   private final Listener listener;
@@ -110,23 +112,24 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   private final Handler handler;
 
   @Nullable private Callback callback;
-  @Nullable private SeekMap seekMap;
   @Nullable private IcyHeaders icyHeaders;
   private SampleQueue[] sampleQueues;
   private TrackId[] sampleQueueTrackIds;
   private boolean sampleQueuesBuilt;
 
-  private @MonotonicNonNull PreparedState preparedState;
+  private boolean prepared;
   private boolean haveAudioVideoTracks;
+  private @MonotonicNonNull TrackState trackState;
+  private @MonotonicNonNull SeekMap seekMap;
+  private long durationUs;
+  private boolean isLive;
   private int dataType;
 
   private boolean seenFirstTrackSelection;
   private boolean notifyDiscontinuity;
   private boolean notifiedReadingStarted;
   private int enabledTrackCount;
-  private long durationUs;
   private long length;
-  private boolean isLive;
 
   private long lastSeekPositionUs;
   private long pendingResetPositionUs;
@@ -158,7 +161,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       Uri uri,
       DataSource dataSource,
       Extractor[] extractors,
-      DrmSessionManager<?> drmSessionManager,
+      DrmSessionManager drmSessionManager,
       LoadErrorHandlingPolicy loadErrorHandlingPolicy,
       EventDispatcher eventDispatcher,
       Listener listener,
@@ -196,7 +199,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   public void release() {
-    if (preparedState != null) {
+    if (prepared) {
       // Discard as much as we can synchronously. We only do this if we're prepared, since otherwise
       // sampleQueues may still be being modified by the loading thread.
       for (SampleQueue sampleQueue : sampleQueues) {
@@ -228,14 +231,15 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   @Override
   public void maybeThrowPrepareError() throws IOException {
     maybeThrowError();
-    if (loadingFinished && preparedState == null) {
+    if (loadingFinished && !prepared) {
       throw new ParserException("Loading finished before preparation is complete.");
     }
   }
 
   @Override
   public TrackGroupArray getTrackGroups() {
-    return Assertions.checkNotNull(preparedState).tracks;
+    assertPrepared();
+    return trackState.tracks;
   }
 
   @Override
@@ -245,8 +249,9 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       @NullableType SampleStream[] streams,
       boolean[] streamResetFlags,
       long positionUs) {
-    TrackGroupArray tracks = Assertions.checkNotNull(preparedState).tracks;
-    boolean[] trackEnabledStates = preparedState.trackEnabledStates;
+    assertPrepared();
+    TrackGroupArray tracks = trackState.tracks;
+    boolean[] trackEnabledStates = trackState.trackEnabledStates;
     int oldEnabledTrackCount = enabledTrackCount;
     // Deselect old tracks.
     for (int i = 0; i < selections.length; i++) {
@@ -315,10 +320,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   @Override
   public void discardBuffer(long positionUs, boolean toKeyframe) {
+    assertPrepared();
     if (isPendingReset()) {
       return;
     }
-    boolean[] trackEnabledStates = Assertions.checkNotNull(preparedState).trackEnabledStates;
+    boolean[] trackEnabledStates = trackState.trackEnabledStates;
     int trackCount = sampleQueues.length;
     for (int i = 0; i < trackCount; i++) {
       sampleQueues[i].discardTo(positionUs, toKeyframe, trackEnabledStates[i]);
@@ -335,7 +341,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     if (loadingFinished
         || loader.hasFatalError()
         || pendingDeferredRetry
-        || (preparedState != null && enabledTrackCount == 0)) {
+        || (prepared && enabledTrackCount == 0)) {
       return false;
     }
     boolean continuedLoading = loadCondition.open();
@@ -372,8 +378,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   @Override
   public long getBufferedPositionUs() {
-    boolean[] trackIsAudioVideoFlags =
-        Assertions.checkNotNull(preparedState).trackIsAudioVideoFlags;
+    assertPrepared();
+    boolean[] trackIsAudioVideoFlags = trackState.trackIsAudioVideoFlags;
     if (loadingFinished) {
       return C.TIME_END_OF_SOURCE;
     } else if (isPendingReset()) {
@@ -399,8 +405,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   @Override
   public long seekToUs(long positionUs) {
-    SeekMap seekMap = Assertions.checkNotNull(preparedState).seekMap;
-    boolean[] trackIsAudioVideoFlags = preparedState.trackIsAudioVideoFlags;
+    assertPrepared();
+    boolean[] trackIsAudioVideoFlags = trackState.trackIsAudioVideoFlags;
     // Treat all seeks into non-seekable media as being to t=0.
     positionUs = seekMap.isSeekable() ? positionUs : 0;
 
@@ -435,7 +441,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   @Override
   public long getAdjustedSeekPositionUs(long positionUs, SeekParameters seekParameters) {
-    SeekMap seekMap = Assertions.checkNotNull(preparedState).seekMap;
+    assertPrepared();
     if (!seekMap.isSeekable()) {
       // Treat all seeks into non-seekable media as being to t=0.
       return 0;
@@ -497,10 +503,10 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   private void maybeNotifyDownstreamFormat(int track) {
-    boolean[] trackNotifiedDownstreamFormats =
-        Assertions.checkNotNull(preparedState).trackNotifiedDownstreamFormats;
+    assertPrepared();
+    boolean[] trackNotifiedDownstreamFormats = trackState.trackNotifiedDownstreamFormats;
     if (!trackNotifiedDownstreamFormats[track]) {
-      Format trackFormat = preparedState.tracks.get(track).getFormat(/* index= */ 0);
+      Format trackFormat = trackState.tracks.get(track).getFormat(/* index= */ 0);
       eventDispatcher.downstreamFormatChanged(
           MimeTypes.getTrackType(trackFormat.sampleMimeType),
           trackFormat,
@@ -512,8 +518,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   private void maybeStartDeferredRetry(int track) {
-    boolean[] trackIsAudioVideoFlags =
-        Assertions.checkNotNull(preparedState).trackIsAudioVideoFlags;
+    assertPrepared();
+    boolean[] trackIsAudioVideoFlags = trackState.trackIsAudioVideoFlags;
     if (!pendingDeferredRetry
         || !trackIsAudioVideoFlags[track]
         || sampleQueues[track].isReady(/* loadingFinished= */ false)) {
@@ -674,7 +680,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
         return sampleQueues[i];
       }
     }
-    SampleQueue trackOutput = new SampleQueue(allocator, drmSessionManager);
+    SampleQueue trackOutput = new SampleQueue(allocator, drmSessionManager, eventDispatcher);
     trackOutput.setUpstreamFormatChangeListener(this);
     @NullableType
     TrackId[] sampleQueueTrackIds = Arrays.copyOf(this.sampleQueueTrackIds, trackCount + 1);
@@ -687,12 +693,9 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   private void setSeekMap(SeekMap seekMap) {
-    this.seekMap = icyHeaders == null ? seekMap : new Unseekable(/* durationUs */ C.TIME_UNSET);
-    if (preparedState == null) {
+    this.seekMap = icyHeaders == null ? seekMap : new Unseekable(/* durationUs= */ C.TIME_UNSET);
+    if (!prepared) {
       maybeFinishPrepare();
-    } else {
-      preparedState =
-          new PreparedState(seekMap, preparedState.tracks, preparedState.trackIsAudioVideoFlags);
     }
     durationUs = seekMap.getDurationUs();
     isLive = length == C.LENGTH_UNSET && seekMap.getDurationUs() == C.TIME_UNSET;
@@ -701,8 +704,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   }
 
   private void maybeFinishPrepare() {
-    SeekMap seekMap = this.seekMap;
-    if (released || preparedState != null || !sampleQueuesBuilt || seekMap == null) {
+    if (released || prepared || !sampleQueuesBuilt || seekMap == null) {
       return;
     }
     for (SampleQueue sampleQueue : sampleQueues) {
@@ -743,8 +745,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       }
       trackArray[i] = new TrackGroup(trackFormat);
     }
-    preparedState =
-        new PreparedState(seekMap, new TrackGroupArray(trackArray), trackIsAudioVideoFlags);
+    trackState = new TrackState(new TrackGroupArray(trackArray), trackIsAudioVideoFlags);
+    prepared = true;
     Assertions.checkNotNull(callback).onPrepared(this);
   }
 
@@ -758,8 +760,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     ExtractingLoadable loadable =
         new ExtractingLoadable(
             uri, dataSource, progressiveMediaExtractor, /* extractorOutput= */ this, loadCondition);
-    if (preparedState != null) {
-      SeekMap seekMap = preparedState.seekMap;
+    if (prepared) {
       Assertions.checkState(isPendingReset());
       if (durationUs != C.TIME_UNSET && pendingResetPositionUs > durationUs) {
         loadingFinished = true;
@@ -767,7 +768,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
         return;
       }
       loadable.setLoadPosition(
-          seekMap.getSeekPoints(pendingResetPositionUs).first.position, pendingResetPositionUs);
+          Assertions.checkNotNull(seekMap).getSeekPoints(pendingResetPositionUs).first.position,
+          pendingResetPositionUs);
       pendingResetPositionUs = C.TIME_UNSET;
     }
     extractedSamplesCountAtStartOfLoad = getExtractedSamplesCount();
@@ -802,7 +804,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       // request data starting from the point it left off.
       extractedSamplesCountAtStartOfLoad = currentExtractedSampleCount;
       return true;
-    } else if (preparedState != null && !suppressRead()) {
+    } else if (prepared && !suppressRead()) {
       // We're playing a stream of unknown length and duration. Assume it's live, and therefore that
       // the data at the uri is a continuously shifting window of the latest available media. For
       // this case there's no way to continue loading from where a previous load finished, so it's
@@ -819,7 +821,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       // because there's no buffered data to be read. This case also covers an on-demand stream with
       // unknown length that has yet to be prepared. This case cannot be disambiguated from the live
       // stream case, so we have no option but to load from the start.
-      notifyDiscontinuity = preparedState != null;
+      notifyDiscontinuity = prepared;
       lastSeekPositionUs = 0;
       extractedSamplesCountAtStartOfLoad = 0;
       for (SampleQueue sampleQueue : sampleQueues) {
@@ -872,6 +874,13 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
   private boolean isPendingReset() {
     return pendingResetPositionUs != C.TIME_UNSET;
+  }
+
+  @EnsuresNonNull({"trackState", "seekMap"})
+  private void assertPrepared() {
+    Assertions.checkState(prepared);
+    Assertions.checkNotNull(trackState);
+    Assertions.checkNotNull(seekMap);
   }
 
   private final class SampleStreamImpl implements SampleStream {
@@ -950,7 +959,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     }
 
     @Override
-    public void load() throws IOException, InterruptedException {
+    public void load() throws IOException {
       int result = Extractor.RESULT_CONTINUE;
       while (result == Extractor.RESULT_CONTINUE && !loadCanceled) {
         try {
@@ -967,7 +976,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
             icyTrackOutput = icyTrack();
             icyTrackOutput.format(ICY_FORMAT);
           }
-          progressiveMediaExtractor.init(extractorDataSource, position, length, extractorOutput);
+          progressiveMediaExtractor.init(
+              extractorDataSource, uri, position, length, extractorOutput);
 
           if (icyHeaders != null) {
             progressiveMediaExtractor.disableSeekingOnMp3Streams();
@@ -978,7 +988,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
             pendingExtractorSeek = false;
           }
           while (result == Extractor.RESULT_CONTINUE && !loadCanceled) {
-            loadCondition.block();
+            try {
+              loadCondition.block();
+            } catch (InterruptedException e) {
+              throw new InterruptedIOException();
+            }
             result = progressiveMediaExtractor.read(positionHolder);
             long currentInputPosition = progressiveMediaExtractor.getCurrentInputPosition();
             if (currentInputPosition > position + continueLoadingCheckIntervalBytes) {
@@ -1037,18 +1051,15 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     }
   }
 
-  /** Stores state that is initialized when preparation completes. */
-  private static final class PreparedState {
+  /** Stores track state. */
+  private static final class TrackState {
 
-    public final SeekMap seekMap;
     public final TrackGroupArray tracks;
     public final boolean[] trackIsAudioVideoFlags;
     public final boolean[] trackEnabledStates;
     public final boolean[] trackNotifiedDownstreamFormats;
 
-    public PreparedState(
-        SeekMap seekMap, TrackGroupArray tracks, boolean[] trackIsAudioVideoFlags) {
-      this.seekMap = seekMap;
+    public TrackState(TrackGroupArray tracks, boolean[] trackIsAudioVideoFlags) {
       this.tracks = tracks;
       this.trackIsAudioVideoFlags = trackIsAudioVideoFlags;
       this.trackEnabledStates = new boolean[tracks.length];

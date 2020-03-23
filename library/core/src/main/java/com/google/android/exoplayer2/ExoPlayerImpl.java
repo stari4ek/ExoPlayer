@@ -25,6 +25,7 @@ import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.analytics.AnalyticsCollector;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
+import com.google.android.exoplayer2.source.MediaSourceFactory;
 import com.google.android.exoplayer2.source.ShuffleOrder;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
@@ -69,18 +70,21 @@ import java.util.concurrent.TimeoutException;
   private final ArrayDeque<Runnable> pendingListenerNotifications;
   private final List<Playlist.MediaSourceHolder> mediaSourceHolders;
   private final boolean useLazyPreparation;
+  private final MediaSourceFactory mediaSourceFactory;
 
-  private boolean playWhenReady;
-  @PlaybackSuppressionReason private int playbackSuppressionReason;
   @RepeatMode private int repeatMode;
   private boolean shuffleModeEnabled;
   private int pendingOperationAcks;
   private boolean hasPendingSeek;
+  private boolean hasPendingDiscontinuity;
+  @DiscontinuityReason private int pendingDiscontinuityReason;
+  @PlayWhenReadyChangeReason private int pendingPlayWhenReadyChangeReason;
   private boolean foregroundMode;
-  private int pendingSetPlaybackParametersAcks;
-  private PlaybackParameters playbackParameters;
+  private int pendingSetPlaybackSpeedAcks;
+  private float playbackSpeed;
   private SeekParameters seekParameters;
   private ShuffleOrder shuffleOrder;
+  private boolean pauseAtEndOfMediaItems;
 
   // Playback information when there is no pending seek/set source operation.
   private PlaybackInfo playbackInfo;
@@ -93,15 +97,16 @@ import java.util.concurrent.TimeoutException;
   /**
    * Constructs an instance. Must be called from a thread that has an associated {@link Looper}.
    *
-   * @param renderers The {@link Renderer}s that will be used by the instance.
-   * @param trackSelector The {@link TrackSelector} that will be used by the instance.
-   * @param loadControl The {@link LoadControl} that will be used by the instance.
-   * @param bandwidthMeter The {@link BandwidthMeter} that will be used by the instance.
-   * @param analyticsCollector The {@link AnalyticsCollector} that will be used by the instance.
+   * @param renderers The {@link Renderer}s.
+   * @param trackSelector The {@link TrackSelector}.
+   * @param mediaSourceFactory The {@link MediaSourceFactory}.
+   * @param loadControl The {@link LoadControl}.
+   * @param bandwidthMeter The {@link BandwidthMeter}.
+   * @param analyticsCollector The {@link AnalyticsCollector}.
    * @param useLazyPreparation Whether playlist items are prepared lazily. If false, all manifest
    *     loads and other initial preparation steps happen immediately. If true, these initial
    *     preparations are triggered only when the player starts buffering the media.
-   * @param clock The {@link Clock} that will be used by the instance.
+   * @param clock The {@link Clock}.
    * @param looper The {@link Looper} which must be used for all calls to the player and which is
    *     used to call listeners on.
    */
@@ -109,6 +114,7 @@ import java.util.concurrent.TimeoutException;
   public ExoPlayerImpl(
       Renderer[] renderers,
       TrackSelector trackSelector,
+      MediaSourceFactory mediaSourceFactory,
       LoadControl loadControl,
       BandwidthMeter bandwidthMeter,
       @Nullable AnalyticsCollector analyticsCollector,
@@ -120,10 +126,9 @@ import java.util.concurrent.TimeoutException;
     Assertions.checkState(renderers.length > 0);
     this.renderers = Assertions.checkNotNull(renderers);
     this.trackSelector = Assertions.checkNotNull(trackSelector);
+    this.mediaSourceFactory = mediaSourceFactory;
     this.useLazyPreparation = useLazyPreparation;
-    playWhenReady = false;
     repeatMode = Player.REPEAT_MODE_OFF;
-    shuffleModeEnabled = false;
     listeners = new CopyOnWriteArrayList<>();
     mediaSourceHolders = new ArrayList<>();
     shuffleOrder = new ShuffleOrder.DefaultShuffleOrder(/* length= */ 0);
@@ -133,9 +138,8 @@ import java.util.concurrent.TimeoutException;
             new TrackSelection[renderers.length],
             null);
     period = new Timeline.Period();
-    playbackParameters = PlaybackParameters.DEFAULT;
+    playbackSpeed = Player.DEFAULT_PLAYBACK_SPEED;
     seekParameters = SeekParameters.DEFAULT;
-    playbackSuppressionReason = PLAYBACK_SUPPRESSION_REASON_NONE;
     maskingWindowIndex = C.INDEX_UNSET;
     eventHandler =
         new Handler(looper) {
@@ -156,7 +160,6 @@ import java.util.concurrent.TimeoutException;
             emptyTrackSelectorResult,
             loadControl,
             bandwidthMeter,
-            playWhenReady,
             repeatMode,
             shuffleModeEnabled,
             analyticsCollector,
@@ -177,6 +180,16 @@ import java.util.concurrent.TimeoutException;
    */
   public void experimental_setReleaseTimeoutMs(long timeoutMs) {
     internalPlayer.experimental_setReleaseTimeoutMs(timeoutMs);
+  }
+
+  /**
+   * Configures the player to throw when it detects it's stuck buffering.
+   *
+   * <p>This method is experimental, and will be renamed or removed in a future release. It should
+   * only be called before the player is used.
+   */
+  public void experimental_throwWhenStuckBuffering() {
+    internalPlayer.experimental_throwWhenStuckBuffering();
   }
 
   @Override
@@ -237,7 +250,7 @@ import java.util.concurrent.TimeoutException;
   @Override
   @PlaybackSuppressionReason
   public int getPlaybackSuppressionReason() {
-    return playbackSuppressionReason;
+    return playbackInfo.playbackSuppressionReason;
   }
 
   @Deprecated
@@ -283,6 +296,7 @@ import java.util.concurrent.TimeoutException;
         /* positionDiscontinuity= */ false,
         /* ignored */ DISCONTINUITY_REASON_INTERNAL,
         /* ignored */ TIMELINE_CHANGE_REASON_SOURCE_UPDATE,
+        /* ignored */ PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
         /* seekProcessed= */ false);
   }
 
@@ -308,6 +322,37 @@ import java.util.concurrent.TimeoutException;
   }
 
   @Override
+  public void setMediaItem(MediaItem mediaItem) {
+    setMediaItems(Collections.singletonList(mediaItem));
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem, long startPositionMs) {
+    setMediaItems(Collections.singletonList(mediaItem), /* startWindowIndex= */ 0, startPositionMs);
+  }
+
+  @Override
+  public void setMediaItem(MediaItem mediaItem, boolean resetPosition) {
+    setMediaItems(Collections.singletonList(mediaItem), resetPosition);
+  }
+
+  @Override
+  public void setMediaItems(List<MediaItem> mediaItems) {
+    setMediaItems(mediaItems, /* resetPosition= */ true);
+  }
+
+  @Override
+  public void setMediaItems(List<MediaItem> mediaItems, boolean resetPosition) {
+    setMediaSources(createMediaSources(mediaItems), resetPosition);
+  }
+
+  @Override
+  public void setMediaItems(
+      List<MediaItem> mediaItems, int startWindowIndex, long startPositionMs) {
+    setMediaSources(createMediaSources(mediaItems), startWindowIndex, startPositionMs);
+  }
+
+  @Override
   public void setMediaSource(MediaSource mediaSource) {
     setMediaSources(Collections.singletonList(mediaSource));
   }
@@ -330,7 +375,7 @@ import java.util.concurrent.TimeoutException;
 
   @Override
   public void setMediaSources(List<MediaSource> mediaSources, boolean resetPosition) {
-    setMediaItemsInternal(
+    setMediaSourcesInternal(
         mediaSources,
         /* startWindowIndex= */ C.INDEX_UNSET,
         /* startPositionMs= */ C.TIME_UNSET,
@@ -340,8 +385,28 @@ import java.util.concurrent.TimeoutException;
   @Override
   public void setMediaSources(
       List<MediaSource> mediaSources, int startWindowIndex, long startPositionMs) {
-    setMediaItemsInternal(
+    setMediaSourcesInternal(
         mediaSources, startWindowIndex, startPositionMs, /* resetToDefaultPosition= */ false);
+  }
+
+  @Override
+  public void addMediaItem(int index, MediaItem mediaItem) {
+    addMediaItems(index, Collections.singletonList(mediaItem));
+  }
+
+  @Override
+  public void addMediaItem(MediaItem mediaItem) {
+    addMediaItems(Collections.singletonList(mediaItem));
+  }
+
+  @Override
+  public void addMediaItems(List<MediaItem> mediaItems) {
+    addMediaItems(/* index= */ mediaSourceHolders.size(), mediaItems);
+  }
+
+  @Override
+  public void addMediaItems(int index, List<MediaItem> mediaItems) {
+    addMediaSources(index, createMediaSources(mediaItems));
   }
 
   @Override
@@ -421,9 +486,10 @@ import java.util.concurrent.TimeoutException;
 
   @Override
   public void setShuffleOrder(ShuffleOrder shuffleOrder) {
+    Timeline timeline = maskTimeline();
+    maskWithCurrentPosition();
     pendingOperationAcks++;
     this.shuffleOrder = shuffleOrder;
-    Timeline timeline = maskTimeline();
     internalPlayer.setShuffleOrder(shuffleOrder);
     notifyListeners(
         listener -> listener.onTimelineChanged(timeline, TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED));
@@ -437,46 +503,57 @@ import java.util.concurrent.TimeoutException;
         PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST);
   }
 
+  @Override
+  public void setPauseAtEndOfMediaItems(boolean pauseAtEndOfMediaItems) {
+    if (this.pauseAtEndOfMediaItems == pauseAtEndOfMediaItems) {
+      return;
+    }
+    this.pauseAtEndOfMediaItems = pauseAtEndOfMediaItems;
+    internalPlayer.setPauseAtEndOfWindow(pauseAtEndOfMediaItems);
+  }
+
+  @Override
+  public boolean getPauseAtEndOfMediaItems() {
+    return pauseAtEndOfMediaItems;
+  }
+
   @SuppressWarnings("deprecation")
   public void setPlayWhenReady(
       boolean playWhenReady,
       @PlaybackSuppressionReason int playbackSuppressionReason,
       @PlayWhenReadyChangeReason int playWhenReadyChangeReason) {
     boolean oldIsPlaying = isPlaying();
-    boolean oldInternalPlayWhenReady =
-        this.playWhenReady && this.playbackSuppressionReason == PLAYBACK_SUPPRESSION_REASON_NONE;
-    boolean internalPlayWhenReady =
-        playWhenReady && playbackSuppressionReason == PLAYBACK_SUPPRESSION_REASON_NONE;
-    if (oldInternalPlayWhenReady != internalPlayWhenReady) {
-      internalPlayer.setPlayWhenReady(internalPlayWhenReady);
+    boolean playWhenReadyChanged = playbackInfo.playWhenReady != playWhenReady;
+    boolean suppressionReasonChanged =
+        playbackInfo.playbackSuppressionReason != playbackSuppressionReason;
+    if (!playWhenReadyChanged && !suppressionReasonChanged) {
+      return;
     }
-    boolean playWhenReadyChanged = this.playWhenReady != playWhenReady;
-    boolean suppressionReasonChanged = this.playbackSuppressionReason != playbackSuppressionReason;
-    this.playWhenReady = playWhenReady;
-    this.playbackSuppressionReason = playbackSuppressionReason;
+    maskWithCurrentPosition();
+    pendingOperationAcks++;
+    playbackInfo = playbackInfo.copyWithPlayWhenReady(playWhenReady, playbackSuppressionReason);
+    internalPlayer.setPlayWhenReady(playWhenReady, playbackSuppressionReason);
     boolean isPlaying = isPlaying();
     boolean isPlayingChanged = oldIsPlaying != isPlaying;
-    if (playWhenReadyChanged || suppressionReasonChanged || isPlayingChanged) {
-      int playbackState = playbackInfo.playbackState;
-      notifyListeners(
-          listener -> {
-            if (playWhenReadyChanged) {
-              listener.onPlayerStateChanged(playWhenReady, playbackState);
-              listener.onPlayWhenReadyChanged(playWhenReady, playWhenReadyChangeReason);
-            }
-            if (suppressionReasonChanged) {
-              listener.onPlaybackSuppressionReasonChanged(playbackSuppressionReason);
-            }
-            if (isPlayingChanged) {
-              listener.onIsPlayingChanged(isPlaying);
-            }
-          });
-    }
+    int playbackState = playbackInfo.playbackState;
+    notifyListeners(
+        listener -> {
+          if (playWhenReadyChanged) {
+            listener.onPlayerStateChanged(playWhenReady, playbackState);
+            listener.onPlayWhenReadyChanged(playWhenReady, playWhenReadyChangeReason);
+          }
+          if (suppressionReasonChanged) {
+            listener.onPlaybackSuppressionReasonChanged(playbackSuppressionReason);
+          }
+          if (isPlayingChanged) {
+            listener.onIsPlayingChanged(isPlaying);
+          }
+        });
   }
 
   @Override
   public boolean getPlayWhenReady() {
-    return playWhenReady;
+    return playbackInfo.playWhenReady;
   }
 
   @Override
@@ -539,24 +616,44 @@ import java.util.concurrent.TimeoutException;
     notifyListeners(listener -> listener.onPositionDiscontinuity(DISCONTINUITY_REASON_SEEK));
   }
 
+  /** @deprecated Use {@link #setPlaybackSpeed(float)} instead. */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   public void setPlaybackParameters(@Nullable PlaybackParameters playbackParameters) {
-    if (playbackParameters == null) {
-      playbackParameters = PlaybackParameters.DEFAULT;
-    }
-    if (this.playbackParameters.equals(playbackParameters)) {
+    setPlaybackSpeed(
+        playbackParameters != null ? playbackParameters.speed : Player.DEFAULT_PLAYBACK_SPEED);
+  }
+
+  /** @deprecated Use {@link #getPlaybackSpeed()} instead. */
+  @SuppressWarnings("deprecation")
+  @Deprecated
+  @Override
+  public PlaybackParameters getPlaybackParameters() {
+    return new PlaybackParameters(playbackSpeed);
+  }
+
+  @SuppressWarnings("deprecation")
+  @Override
+  public void setPlaybackSpeed(float playbackSpeed) {
+    Assertions.checkState(playbackSpeed > 0);
+    if (this.playbackSpeed == playbackSpeed) {
       return;
     }
-    pendingSetPlaybackParametersAcks++;
-    this.playbackParameters = playbackParameters;
-    internalPlayer.setPlaybackParameters(playbackParameters);
-    PlaybackParameters playbackParametersToNotify = playbackParameters;
-    notifyListeners(listener -> listener.onPlaybackParametersChanged(playbackParametersToNotify));
+    pendingSetPlaybackSpeedAcks++;
+    this.playbackSpeed = playbackSpeed;
+    PlaybackParameters playbackParameters = new PlaybackParameters(playbackSpeed);
+    internalPlayer.setPlaybackSpeed(playbackSpeed);
+    notifyListeners(
+        listener -> {
+          listener.onPlaybackParametersChanged(playbackParameters);
+          listener.onPlaybackSpeedChanged(playbackSpeed);
+        });
   }
 
   @Override
-  public PlaybackParameters getPlaybackParameters() {
-    return playbackParameters;
+  public float getPlaybackSpeed() {
+    return playbackSpeed;
   }
 
   @Override
@@ -601,6 +698,7 @@ import java.util.concurrent.TimeoutException;
         /* positionDiscontinuity= */ false,
         /* ignored */ DISCONTINUITY_REASON_INTERNAL,
         TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED,
+        /* ignored */ PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
         /* seekProcessed= */ false);
   }
 
@@ -763,17 +861,12 @@ import java.util.concurrent.TimeoutException;
 
   // Not private so it can be called from an inner class without going through a thunk method.
   /* package */ void handleEvent(Message msg) {
-
     switch (msg.what) {
       case ExoPlayerImplInternal.MSG_PLAYBACK_INFO_CHANGED:
-        handlePlaybackInfo(
-            /* playbackInfo= */ (PlaybackInfo) msg.obj,
-            /* operationAcks= */ msg.arg1,
-            /* positionDiscontinuity= */ msg.arg2 != C.INDEX_UNSET,
-            /* positionDiscontinuityReason= */ msg.arg2);
+        handlePlaybackInfo((ExoPlayerImplInternal.PlaybackInfoUpdate) msg.obj);
         break;
-      case ExoPlayerImplInternal.MSG_PLAYBACK_PARAMETERS_CHANGED:
-        handlePlaybackParameters((PlaybackParameters) msg.obj, /* operationAck= */ msg.arg1 != 0);
+      case ExoPlayerImplInternal.MSG_PLAYBACK_SPEED_CHANGED:
+        handlePlaybackSpeed((Float) msg.obj, /* operationAck= */ msg.arg1 != 0);
         break;
       default:
         throw new IllegalStateException();
@@ -789,37 +882,56 @@ import java.util.concurrent.TimeoutException;
     }
   }
 
-  private void handlePlaybackParameters(
-      PlaybackParameters playbackParameters, boolean operationAck) {
-    if (operationAck) {
-      pendingSetPlaybackParametersAcks--;
+  private List<MediaSource> createMediaSources(List<MediaItem> mediaItems) {
+    List<MediaSource> mediaSources = new ArrayList<>();
+    for (int i = 0; i < mediaItems.size(); i++) {
+      mediaSources.add(mediaSourceFactory.createMediaSource(mediaItems.get(i)));
     }
-    if (pendingSetPlaybackParametersAcks == 0) {
-      if (!this.playbackParameters.equals(playbackParameters)) {
-        this.playbackParameters = playbackParameters;
-        notifyListeners(listener -> listener.onPlaybackParametersChanged(playbackParameters));
+    return mediaSources;
+  }
+
+  @SuppressWarnings("deprecation")
+  private void handlePlaybackSpeed(float playbackSpeed, boolean operationAck) {
+    if (operationAck) {
+      pendingSetPlaybackSpeedAcks--;
+    }
+    if (pendingSetPlaybackSpeedAcks == 0) {
+      if (this.playbackSpeed != playbackSpeed) {
+        this.playbackSpeed = playbackSpeed;
+        notifyListeners(
+            listener -> {
+              listener.onPlaybackParametersChanged(new PlaybackParameters(playbackSpeed));
+              listener.onPlaybackSpeedChanged(playbackSpeed);
+            });
       }
     }
   }
 
-  private void handlePlaybackInfo(
-      PlaybackInfo playbackInfo,
-      int operationAcks,
-      boolean positionDiscontinuity,
-      @DiscontinuityReason int positionDiscontinuityReason) {
-    pendingOperationAcks -= operationAcks;
+  private void handlePlaybackInfo(ExoPlayerImplInternal.PlaybackInfoUpdate playbackInfoUpdate) {
+    pendingOperationAcks -= playbackInfoUpdate.operationAcks;
+    if (playbackInfoUpdate.positionDiscontinuity) {
+      hasPendingDiscontinuity = true;
+      pendingDiscontinuityReason = playbackInfoUpdate.discontinuityReason;
+    }
+    if (playbackInfoUpdate.hasPlayWhenReadyChangeReason) {
+      pendingPlayWhenReadyChangeReason = playbackInfoUpdate.playWhenReadyChangeReason;
+    }
     if (pendingOperationAcks == 0) {
-      if (!this.playbackInfo.timeline.isEmpty() && playbackInfo.timeline.isEmpty()) {
+      if (!this.playbackInfo.timeline.isEmpty()
+          && playbackInfoUpdate.playbackInfo.timeline.isEmpty()) {
         // Update the masking variables, which are used when the timeline becomes empty.
         resetMaskingPosition();
       }
       boolean seekProcessed = hasPendingSeek;
+      boolean positionDiscontinuity = hasPendingDiscontinuity;
       hasPendingSeek = false;
+      hasPendingDiscontinuity = false;
       updatePlaybackInfo(
-          playbackInfo,
+          playbackInfoUpdate.playbackInfo,
           positionDiscontinuity,
-          positionDiscontinuityReason,
+          pendingDiscontinuityReason,
           TIMELINE_CHANGE_REASON_SOURCE_UPDATE,
+          pendingPlayWhenReadyChangeReason,
           seekProcessed);
     }
   }
@@ -832,9 +944,7 @@ import java.util.concurrent.TimeoutException;
           /* fromIndex= */ 0, /* toIndexExclusive= */ mediaSourceHolders.size());
       resetMaskingPosition();
     } else {
-      maskingWindowIndex = getCurrentWindowIndex();
-      maskingPeriodIndex = getCurrentPeriodIndex();
-      maskingWindowPositionMs = getCurrentPosition();
+      maskWithCurrentPosition();
     }
     Timeline timeline = playbackInfo.timeline;
     MediaPeriodId mediaPeriodId = playbackInfo.periodId;
@@ -856,6 +966,8 @@ import java.util.concurrent.TimeoutException;
         clearPlaylist ? TrackGroupArray.EMPTY : playbackInfo.trackGroups,
         clearPlaylist ? emptyTrackSelectorResult : playbackInfo.trackSelectorResult,
         mediaPeriodId,
+        playbackInfo.playWhenReady,
+        playbackInfo.playbackSuppressionReason,
         positionUs,
         /* totalBufferedDurationUs= */ 0,
         positionUs);
@@ -866,12 +978,11 @@ import java.util.concurrent.TimeoutException;
       boolean positionDiscontinuity,
       @DiscontinuityReason int positionDiscontinuityReason,
       @TimelineChangeReason int timelineChangeReason,
+      @PlayWhenReadyChangeReason int playWhenReadyChangeReason,
       boolean seekProcessed) {
-    boolean previousIsPlaying = isPlaying();
     // Assign playback info immediately such that all getters return the right values.
     PlaybackInfo previousPlaybackInfo = this.playbackInfo;
     this.playbackInfo = playbackInfo;
-    boolean isPlaying = isPlaying();
     notifyListeners(
         new PlaybackInfoUpdate(
             playbackInfo,
@@ -881,13 +992,12 @@ import java.util.concurrent.TimeoutException;
             positionDiscontinuity,
             positionDiscontinuityReason,
             timelineChangeReason,
-            seekProcessed,
-            playWhenReady,
-            /* isPlayingChanged= */ previousIsPlaying != isPlaying));
+            playWhenReadyChangeReason,
+            seekProcessed));
   }
 
   @SuppressWarnings("deprecation")
-  private void setMediaItemsInternal(
+  private void setMediaSourcesInternal(
       List<MediaSource> mediaItems,
       int startWindowIndex,
       long startPositionMs,
@@ -1085,6 +1195,12 @@ import java.util.concurrent.TimeoutException;
     }
   }
 
+  private void maskWithCurrentPosition() {
+    maskingWindowIndex = getCurrentWindowIndexInternal();
+    maskingPeriodIndex = getCurrentPeriodIndex();
+    maskingWindowPositionMs = getCurrentPosition();
+  }
+
   private void maskWithDefaultPosition(Timeline timeline) {
     if (timeline.isEmpty()) {
       resetMaskingPosition();
@@ -1136,16 +1252,18 @@ import java.util.concurrent.TimeoutException;
     private final CopyOnWriteArrayList<ListenerHolder> listenerSnapshot;
     private final TrackSelector trackSelector;
     private final boolean positionDiscontinuity;
-    private final @Player.DiscontinuityReason int positionDiscontinuityReason;
-    private final int timelineChangeReason;
+    @DiscontinuityReason private final int positionDiscontinuityReason;
+    @TimelineChangeReason private final int timelineChangeReason;
+    @PlayWhenReadyChangeReason private final int playWhenReadyChangeReason;
     private final boolean seekProcessed;
     private final boolean playbackStateChanged;
     private final boolean playbackErrorChanged;
     private final boolean timelineChanged;
     private final boolean isLoadingChanged;
     private final boolean trackSelectorResultChanged;
-    private final boolean playWhenReady;
     private final boolean isPlayingChanged;
+    private final boolean playWhenReadyChanged;
+    private final boolean playbackSuppressionReasonChanged;
 
     public PlaybackInfoUpdate(
         PlaybackInfo playbackInfo,
@@ -1155,18 +1273,16 @@ import java.util.concurrent.TimeoutException;
         boolean positionDiscontinuity,
         @DiscontinuityReason int positionDiscontinuityReason,
         @TimelineChangeReason int timelineChangeReason,
-        boolean seekProcessed,
-        boolean playWhenReady,
-        boolean isPlayingChanged) {
+        @PlayWhenReadyChangeReason int playWhenReadyChangeReason,
+        boolean seekProcessed) {
       this.playbackInfo = playbackInfo;
       this.listenerSnapshot = new CopyOnWriteArrayList<>(listeners);
       this.trackSelector = trackSelector;
       this.positionDiscontinuity = positionDiscontinuity;
       this.positionDiscontinuityReason = positionDiscontinuityReason;
       this.timelineChangeReason = timelineChangeReason;
+      this.playWhenReadyChangeReason = playWhenReadyChangeReason;
       this.seekProcessed = seekProcessed;
-      this.playWhenReady = playWhenReady;
-      this.isPlayingChanged = isPlayingChanged;
       playbackStateChanged = previousPlaybackInfo.playbackState != playbackInfo.playbackState;
       playbackErrorChanged =
           previousPlaybackInfo.playbackError != playbackInfo.playbackError
@@ -1175,6 +1291,10 @@ import java.util.concurrent.TimeoutException;
       timelineChanged = !previousPlaybackInfo.timeline.equals(playbackInfo.timeline);
       trackSelectorResultChanged =
           previousPlaybackInfo.trackSelectorResult != playbackInfo.trackSelectorResult;
+      playWhenReadyChanged = previousPlaybackInfo.playWhenReady != playbackInfo.playWhenReady;
+      playbackSuppressionReasonChanged =
+          previousPlaybackInfo.playbackSuppressionReason != playbackInfo.playbackSuppressionReason;
+      isPlayingChanged = isPlaying(previousPlaybackInfo) != isPlaying(playbackInfo);
     }
 
     @SuppressWarnings("deprecation")
@@ -1203,28 +1323,47 @@ import java.util.concurrent.TimeoutException;
       }
       if (isLoadingChanged) {
         invokeAll(
+            listenerSnapshot, listener -> listener.onIsLoadingChanged(playbackInfo.isLoading));
+      }
+      if (playbackStateChanged || playWhenReadyChanged) {
+        invokeAll(
             listenerSnapshot,
-            listener -> {
-              listener.onIsLoadingChanged(playbackInfo.isLoading);
-            });
+            listener ->
+                listener.onPlayerStateChanged(
+                    playbackInfo.playWhenReady, playbackInfo.playbackState));
       }
       if (playbackStateChanged) {
         invokeAll(
             listenerSnapshot,
-            listener -> {
-              listener.onPlayerStateChanged(playWhenReady, playbackInfo.playbackState);
-              listener.onPlaybackStateChanged(playbackInfo.playbackState);
-            });
+            listener -> listener.onPlaybackStateChanged(playbackInfo.playbackState));
       }
-      if (isPlayingChanged) {
+      if (playWhenReadyChanged) {
         invokeAll(
             listenerSnapshot,
             listener ->
-                listener.onIsPlayingChanged(playbackInfo.playbackState == Player.STATE_READY));
+                listener.onPlayWhenReadyChanged(
+                    playbackInfo.playWhenReady, playWhenReadyChangeReason));
+      }
+      if (playbackSuppressionReasonChanged) {
+        invokeAll(
+            listenerSnapshot,
+            listener ->
+                listener.onPlaybackSuppressionReasonChanged(
+                    playbackInfo.playbackSuppressionReason));
+      }
+      if (isPlayingChanged) {
+        invokeAll(
+            listenerSnapshot, listener -> listener.onIsPlayingChanged(isPlaying(playbackInfo)));
       }
       if (seekProcessed) {
         invokeAll(listenerSnapshot, EventListener::onSeekProcessed);
       }
+    }
+
+    private static boolean isPlaying(PlaybackInfo playbackInfo) {
+      return playbackInfo.playbackState == Player.STATE_READY
+          && playbackInfo.playWhenReady
+          && playbackInfo.playbackSuppressionReason == PLAYBACK_SUPPRESSION_REASON_NONE;
     }
   }
 
