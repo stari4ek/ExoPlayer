@@ -28,6 +28,10 @@
     *   Add `ExoPlayer.setPauseAtEndOfMediaItems` to let the player pause at the
         end of each media item
         ([#5660](https://github.com/google/ExoPlayer/issues/5660)).
+    *   Split `setPlaybackParameter` into `setPlaybackSpeed` and
+        `AudioComponent.setSkipSilenceEnabled` with callbacks
+        `onPlaybackSpeedChanged` and
+        `AudioListener.onSkipSilenceEnabledChanged`.
     *   Make `MediaSourceEventListener.LoadEventInfo` and
         `MediaSourceEventListener.MediaLoadData` top-level classes.
     *   Rename `MediaCodecRenderer.onOutputFormatChanged` to
@@ -56,6 +60,12 @@
     *   `SimpleDecoderVideoRenderer` and `SimpleDecoderAudioRenderer` renamed to
         `DecoderVideoRenderer` and `DecoderAudioRenderer` respectively, and
         generalized to work with `Decoder` rather than `SimpleDecoder`.
+*   Audio:
+    *   Enable playback speed adjustment and silence skipping for floating point
+        PCM audio, via resampling to 16-bit integer PCM. To output the original
+        floating point audio without adjustment, pass `enableFloatOutput=true`
+        to the `DefaultAudioSink` constructor
+        ([#7134](https://github.com/google/ExoPlayer/issues/7134)).
 *   Text:
     *   Parse `<ruby>` and `<rt>` tags in WebVTT subtitles (rendering is coming
         later).
@@ -75,6 +85,8 @@
         ([#6885](https://github.com/google/ExoPlayer/issues/6885)).
     *   Parse `tts:ruby` and `tts:rubyPosition` properties in TTML subtitles
         (rendering is coming later).
+    *   Allow missing hours in SubRip (.srt) timecodes
+        ([#7122](https://github.com/google/ExoPlayer/issues/7122)).
 *   DRM:
     *   Add support for attaching DRM sessions to clear content in the demo app.
     *   Remove `DrmSessionManager` references from all renderers.
@@ -97,6 +109,8 @@
     costly on large files.
 *   MP4: Store the Android capture frame rate only in `Format.metadata`.
     `Format.frameRate` now stores the calculated frame rate.
+*   WAV: Fix failure to play WAV files that contain trailing non-media bytes
+    ([#7129](https://github.com/google/ExoPlayer/issues/7129))
 *   Testing
     *   Upgrade Truth dependency from 0.44 to 1.0.
     *   Upgrade to JUnit 4.13-rc-2.
