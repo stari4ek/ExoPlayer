@@ -152,7 +152,7 @@ public final class OfflineLicenseHelper {
       MediaSourceEventDispatcher eventDispatcher) {
     this.drmSessionManager = defaultDrmSessionManager;
     this.eventDispatcher = eventDispatcher;
-    handlerThread = new HandlerThread("OfflineLicenseHelper");
+    handlerThread = new HandlerThread("ExoPlayer:OfflineLicenseHelper");
     handlerThread.start();
     conditionVariable = new ConditionVariable();
     DrmSessionEventListener eventListener =
@@ -177,7 +177,8 @@ public final class OfflineLicenseHelper {
             conditionVariable.open();
           }
         };
-    drmSessionManager.addListener(new Handler(handlerThread.getLooper()), eventListener);
+    eventDispatcher.addEventListener(
+        new Handler(handlerThread.getLooper()), eventListener, DrmSessionEventListener.class);
   }
 
   /**
