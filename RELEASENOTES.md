@@ -60,12 +60,9 @@
     *   `SimpleDecoderVideoRenderer` and `SimpleDecoderAudioRenderer` renamed to
         `DecoderVideoRenderer` and `DecoderAudioRenderer` respectively, and
         generalized to work with `Decoder` rather than `SimpleDecoder`.
-*   Audio:
-    *   Enable playback speed adjustment and silence skipping for floating point
-        PCM audio, via resampling to 16-bit integer PCM. To output the original
-        floating point audio without adjustment, pass `enableFloatOutput=true`
-        to the `DefaultAudioSink` constructor
-        ([#7134](https://github.com/google/ExoPlayer/issues/7134)).
+    *   Add media item based playlist API to Player.
+    *   Update `CachedContentIndex` to use `SecureRandom` for generating the
+        initialization vector used to encrypt the cache contents.
 *   Text:
     *   Parse `<ruby>` and `<rt>` tags in WebVTT subtitles (rendering is coming
         later).
@@ -80,13 +77,8 @@
         [background](https://www.w3.org/TR/webvtt1/#default-text-background)
         colors ([PR #4178](https://github.com/google/ExoPlayer/pull/4178),
         [issue #6581](https://github.com/google/ExoPlayer/issues/6581)).
-    *   Catch-and-log all fatal exceptions in `TextRenderer` instead of
-        re-throwing, allowing playback to continue even if subtitles fail
-        ([#6885](https://github.com/google/ExoPlayer/issues/6885)).
     *   Parse `tts:ruby` and `tts:rubyPosition` properties in TTML subtitles
         (rendering is coming later).
-    *   Allow missing hours in SubRip (.srt) timecodes
-        ([#7122](https://github.com/google/ExoPlayer/issues/7122)).
 *   DRM:
     *   Add support for attaching DRM sessions to clear content in the demo app.
     *   Remove `DrmSessionManager` references from all renderers.
@@ -98,10 +90,6 @@
     *   Remove generics from DRM components.
 *   Downloads: Merge downloads in `SegmentDownloader` to improve overall
     download speed ([#5978](https://github.com/google/ExoPlayer/issues/5978)).
-*   DASH:
-    *   Update the manifest URI to avoid repeated HTTP redirects
-        ([#6907](https://github.com/google/ExoPlayer/issues/6907)).
-    *   Parse period `AssetIdentifier` elements.
 *   MP3: Add `IndexSeeker` for accurate seeks in VBR streams
     ([#6787](https://github.com/google/ExoPlayer/issues/6787)). This seeker is
     enabled by passing `FLAG_ENABLE_INDEX_SEEKING` to the `Mp3Extractor`. It may
@@ -109,8 +97,6 @@
     costly on large files.
 *   MP4: Store the Android capture frame rate only in `Format.metadata`.
     `Format.frameRate` now stores the calculated frame rate.
-*   WAV: Fix failure to play WAV files that contain trailing non-media bytes
-    ([#7129](https://github.com/google/ExoPlayer/issues/7129))
 *   Testing
     *   Upgrade Truth dependency from 0.44 to 1.0.
     *   Upgrade to JUnit 4.13-rc-2.
@@ -118,17 +104,47 @@
     *   Add `showScrubber` and `hideScrubber` methods to DefaultTimeBar.
     *   Move logic of prev, next, fast forward and rewind to ControlDispatcher
         ([#6926](https://github.com/google/ExoPlayer/issues/6926)).
-    *   Add an option to set whether to use the orientation sensor for rotation
-        in spherical playbacks
-        ([#6761](https://github.com/google/ExoPlayer/issues/6761)).
-*   Demo apps: Add
-    [GL demo app](https://github.com/google/ExoPlayer/tree/dev-v2/demos/gl) to
-    show how to render video to a `GLSurfaceView` while applying a GL shader.
-    ([#6920](https://github.com/google/ExoPlayer/issues/6920)).
 *   Metadata: Add minimal DVB Application Information Table (AIT) support
     ([#6922](https://github.com/google/ExoPlayer/pull/6922)).
-*   The demo app startup selected item is the last played one.
-*   Add support for x86_64 for the ffmpeg extension.
+*   Cast extension: Implement playlist API and deprecate the old queue
+    manipulation API.
+*   Demo app: Retain previous position in list of samples.
+
+### 2.11.4 (2020-04-01) ###
+
+* Text:
+  * Catch and log exceptions in `TextRenderer` rather than re-throwing. This
+    allows playback to continue even if subtitle decoding fails
+    ([#6885](https://github.com/google/ExoPlayer/issues/6885)).
+  * Allow missing hours and milliseconds in SubRip (.srt) timecodes
+    ([#7122](https://github.com/google/ExoPlayer/issues/7122)).
+* Audio:
+  * Workaround issue that could cause slower than realtime playback of AAC on
+    Android 10 ([#6671](https://github.com/google/ExoPlayer/issues/6671).
+  * Enable playback speed adjustment and silence skipping for floating point PCM
+    audio, via resampling to 16-bit integer PCM. To output the original floating
+    point audio without adjustment, pass `enableFloatOutput=true` to the
+    `DefaultAudioSink` constructor
+    ([#7134](https://github.com/google/ExoPlayer/issues/7134)).
+  * Fix playback of WAV files with trailing non-media bytes
+    ([#7129](https://github.com/google/ExoPlayer/issues/7129)).
+  * Fix playback of ADTS files with mid-stream ID3 metadata.
+* DRM:
+  * Fix playback of Widevine protected content that only provides V1 PSSH atoms
+    on API levels 21 and 22.
+  * Fix playback of PlayReady content on Fire TV Stick (Gen 2).
+* DASH:
+  * Update the manifest URI to avoid repeated HTTP redirects
+    ([#6907](https://github.com/google/ExoPlayer/issues/6907)).
+  * Parse period `AssetIdentifier` elements.
+* UI: Add an option to set whether to use the orientation sensor for rotation
+  in spherical playbacks
+  ([#6761](https://github.com/google/ExoPlayer/issues/6761)).
+* Analytics: Fix `PlaybackStatsListener` behavior when not keeping history
+  ([#7160](https://github.com/google/ExoPlayer/issues/7160)).
+* FFmpeg extension: Add support for `x86_64` architecture.
+* Opus extension: Fix parsing of negative gain values
+  ([#7046](https://github.com/google/ExoPlayer/issues/7046)).
 
 ### 2.11.3 (2020-02-19) ###
 

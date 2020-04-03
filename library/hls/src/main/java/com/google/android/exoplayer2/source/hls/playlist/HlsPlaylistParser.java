@@ -890,6 +890,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     return Integer.parseInt(parseStringAttr(line, pattern, Collections.emptyMap()));
   }
 
+  // incompatible types in argument.
+  @SuppressWarnings("nullness:argument.type.incompatible")
   private static int parseOptionalIntAttr(String line, Pattern pattern, int defaultValue) {
     Matcher matcher = pattern.matcher(line);
     if (matcher.find()) {
@@ -922,6 +924,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     return parseOptionalStringAttr(line, pattern, null, variableDefinitions);
   }
 
+  // incompatible types in return.
+  @SuppressWarnings("nullness:return.type.incompatible")
   private static @PolyNull String parseOptionalStringAttr(
       String line,
       Pattern pattern,
@@ -952,6 +956,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     return stringWithReplacements.toString();
   }
 
+  // dereference of possibly-null reference matcher.group(1)
+  @SuppressWarnings("nullness:dereference.of.nullable")
   private static boolean parseOptionalBooleanAttribute(
       String line, Pattern pattern, boolean defaultValue) {
     Matcher matcher = pattern.matcher(line);

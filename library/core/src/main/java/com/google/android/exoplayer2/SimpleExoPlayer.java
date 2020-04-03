@@ -445,8 +445,8 @@ public class SimpleExoPlayer extends BasePlayer
             clock,
             looper);
     analyticsCollector.setPlayer(player);
-    addListener(analyticsCollector);
-    addListener(componentListener);
+    player.addListener(analyticsCollector);
+    player.addListener(componentListener);
     videoDebugListeners.add(analyticsCollector);
     videoListeners.add(analyticsCollector);
     audioDebugListeners.add(analyticsCollector);
@@ -482,6 +482,13 @@ public class SimpleExoPlayer extends BasePlayer
   @Nullable
   public MetadataComponent getMetadataComponent() {
     return this;
+  }
+
+  @Override
+  @Nullable
+  public DeviceComponent getDeviceComponent() {
+    // TODO(b/145595776): Return this after implementing DeviceComponent.
+    return null;
   }
 
   /**

@@ -75,7 +75,6 @@ import java.util.concurrent.TimeoutException;
   @RepeatMode private int repeatMode;
   private boolean shuffleModeEnabled;
   private int pendingOperationAcks;
-  private boolean hasPendingSeek;
   private boolean hasPendingDiscontinuity;
   @DiscontinuityReason private int pendingDiscontinuityReason;
   @PlayWhenReadyChangeReason private int pendingPlayWhenReadyChangeReason;
@@ -217,6 +216,12 @@ import java.util.concurrent.TimeoutException;
   }
 
   @Override
+  @Nullable
+  public DeviceComponent getDeviceComponent() {
+    return null;
+  }
+
+  @Override
   public Looper getPlaybackLooper() {
     return internalPlayer.getPlaybackLooper();
   }
@@ -322,31 +327,6 @@ import java.util.concurrent.TimeoutException;
   }
 
   @Override
-  public void setMediaItem(MediaItem mediaItem) {
-    setMediaItems(Collections.singletonList(mediaItem));
-  }
-
-  @Override
-  public void setMediaItem(MediaItem mediaItem, long startPositionMs) {
-    setMediaItems(Collections.singletonList(mediaItem), /* startWindowIndex= */ 0, startPositionMs);
-  }
-
-  @Override
-  public void setMediaItem(MediaItem mediaItem, boolean resetPosition) {
-    setMediaItems(Collections.singletonList(mediaItem), resetPosition);
-  }
-
-  @Override
-  public void setMediaItems(List<MediaItem> mediaItems) {
-    setMediaItems(mediaItems, /* resetPosition= */ true);
-  }
-
-  @Override
-  public void setMediaItems(List<MediaItem> mediaItems, boolean resetPosition) {
-    setMediaSources(createMediaSources(mediaItems), resetPosition);
-  }
-
-  @Override
   public void setMediaItems(
       List<MediaItem> mediaItems, int startWindowIndex, long startPositionMs) {
     setMediaSources(createMediaSources(mediaItems), startWindowIndex, startPositionMs);
@@ -387,16 +367,6 @@ import java.util.concurrent.TimeoutException;
       List<MediaSource> mediaSources, int startWindowIndex, long startPositionMs) {
     setMediaSourcesInternal(
         mediaSources, startWindowIndex, startPositionMs, /* resetToDefaultPosition= */ false);
-  }
-
-  @Override
-  public void addMediaItem(int index, MediaItem mediaItem) {
-    addMediaItems(index, Collections.singletonList(mediaItem));
-  }
-
-  @Override
-  public void addMediaItem(MediaItem mediaItem) {
-    addMediaItems(Collections.singletonList(mediaItem));
   }
 
   @Override
@@ -445,20 +415,9 @@ import java.util.concurrent.TimeoutException;
   }
 
   @Override
-  public void removeMediaItem(int index) {
-    removeMediaItemsInternal(/* fromIndex= */ index, /* toIndex= */ index + 1);
-  }
-
-  @Override
   public void removeMediaItems(int fromIndex, int toIndex) {
     Assertions.checkArgument(toIndex > fromIndex);
     removeMediaItemsInternal(fromIndex, toIndex);
-  }
-
-  @Override
-  public void moveMediaItem(int currentIndex, int newIndex) {
-    Assertions.checkArgument(currentIndex != newIndex);
-    moveMediaItems(/* fromIndex= */ currentIndex, /* toIndex= */ currentIndex + 1, newIndex);
   }
 
   @Override
@@ -598,7 +557,6 @@ import java.util.concurrent.TimeoutException;
     if (windowIndex < 0 || (!timeline.isEmpty() && windowIndex >= timeline.getWindowCount())) {
       throw new IllegalSeekPositionException(timeline, windowIndex, positionMs);
     }
-    hasPendingSeek = true;
     pendingOperationAcks++;
     if (isPlayingAd()) {
       // TODO: Investigate adding support for seeking during ads. This is complicated to do in
@@ -626,7 +584,7 @@ import java.util.concurrent.TimeoutException;
         /* positionDiscontinuityReason= */ DISCONTINUITY_REASON_SEEK,
         /* ignored */ TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED,
         /* ignored */ PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
-        /* seekProcessed= */ false);
+        /* seekProcessed= */ true);
   }
 
   /** @deprecated Use {@link #setPlaybackSpeed(float)} instead. */
@@ -935,9 +893,7 @@ import java.util.concurrent.TimeoutException;
         // Update the masking variables, which are used when the timeline becomes empty.
         resetMaskingPosition();
       }
-      boolean seekProcessed = hasPendingSeek;
       boolean positionDiscontinuity = hasPendingDiscontinuity;
-      hasPendingSeek = false;
       hasPendingDiscontinuity = false;
       updatePlaybackInfo(
           playbackInfoUpdate.playbackInfo,
@@ -945,7 +901,7 @@ import java.util.concurrent.TimeoutException;
           pendingDiscontinuityReason,
           TIMELINE_CHANGE_REASON_SOURCE_UPDATE,
           pendingPlayWhenReadyChangeReason,
-          seekProcessed);
+          /* seekProcessed= */ false);
     }
   }
 

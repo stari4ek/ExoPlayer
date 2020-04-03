@@ -21,13 +21,18 @@ import static com.google.android.exoplayer2.ui.SubtitleView.DEFAULT_TEXT_SIZE_FR
 
 import android.content.Context;
 import android.graphics.Color;
+import android.text.Layout;
 import android.util.AttributeSet;
+import android.util.Base64;
 import android.view.MotionEvent;
 import android.view.ViewGroup;
 import android.webkit.WebView;
 import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.text.CaptionStyleCompat;
 import com.google.android.exoplayer2.text.Cue;
+import com.google.android.exoplayer2.util.Util;
+import java.nio.charset.Charset;
 import java.util.Collections;
 import java.util.List;
 
@@ -148,18 +153,147 @@ import java.util.List;
   }
 
   private void updateWebView() {
-    StringBuilder cueText = new StringBuilder();
+    StringBuilder html = new StringBuilder();
+    html.append("<html><body>")
+        .append("<div style=\"")
+        .append("-webkit-user-select:none;")
+        .append("position:fixed;")
+        .append("top:0;")
+        .append("bottom:0;")
+        .append("left:0;")
+        .append("right:0;")
+        .append("font-size:20px;")
+        .append("color:red;")
+        .append("\">");
+
     for (int i = 0; i < cues.size(); i++) {
-      if (i > 0) {
-        cueText.append("<br>");
+      float horizontalPositionPercent;
+      int horizontalTranslatePercent;
+      Cue cue = cues.get(i);
+      if (cue.position != Cue.DIMEN_UNSET) {
+        horizontalPositionPercent = cue.position * 100;
+        horizontalTranslatePercent = translatePercentFromAnchorType(cue.positionAnchor);
+      } else {
+        horizontalPositionPercent = 50;
+        horizontalTranslatePercent = -50;
       }
-      cueText.append(SpannedToHtmlConverter.convert(cues.get(i).text));
+
+      float verticalPositionPercent;
+      int verticalTranslatePercent;
+      if (cue.line != Cue.DIMEN_UNSET) {
+        verticalTranslatePercent = translatePercentFromAnchorType(cue.lineAnchor);
+        switch (cue.lineType) {
+          case Cue.LINE_TYPE_FRACTION:
+            verticalPositionPercent = cue.line * 100;
+            break;
+          case Cue.LINE_TYPE_NUMBER:
+            if (cue.line >= 0) {
+              verticalPositionPercent = 0;
+              verticalTranslatePercent += Math.round(cue.line) * 100;
+            } else {
+              verticalPositionPercent = 100;
+              verticalTranslatePercent += Math.round(cue.line + 1) * 100;
+            }
+            break;
+          case Cue.TYPE_UNSET:
+          default:
+            verticalPositionPercent = 0;
+            break;
+        }
+      } else {
+        verticalPositionPercent = 100;
+        verticalTranslatePercent = -100;
+      }
+
+      String width =
+          cue.size != Cue.DIMEN_UNSET
+              ? Util.formatInvariant("%.2f%%", cue.size * 100)
+              : "fit-content";
+
+      String textAlign = convertAlignmentToCss(cue.textAlignment);
+
+      String writingMode = convertVerticalTypeToCss(cue.verticalType);
+
+      // All measurements are done orthogonally for vertical text (i.e. from left of screen instead
+      // of top, or vice versa). So flip the position & translation values.
+      if (cue.verticalType == Cue.VERTICAL_TYPE_LR || cue.verticalType == Cue.VERTICAL_TYPE_RL) {
+        float tmpFloat = horizontalPositionPercent;
+        horizontalPositionPercent = verticalPositionPercent;
+        verticalPositionPercent = tmpFloat;
+        int tmpInt = horizontalTranslatePercent;
+        horizontalTranslatePercent = verticalTranslatePercent;
+        verticalTranslatePercent = tmpInt;
+      }
+
+      html.append(
+              Util.formatInvariant(
+                  "<div style=\""
+                      + "position:relative;"
+                      + "left:%.2f%%;"
+                      + "top:%.2f%%;"
+                      + "width:%s;"
+                      + "text-align:%s;"
+                      + "writing-mode:%s;"
+                      + "transform:translate(%s%%,%s%%);"
+                      + "\">",
+                  horizontalPositionPercent,
+                  verticalPositionPercent,
+                  width,
+                  textAlign,
+                  writingMode,
+                  horizontalTranslatePercent,
+                  verticalTranslatePercent))
+          .append(SpannedToHtmlConverter.convert(cue.text))
+          .append("</div>");
     }
+
+    html.append("</div></body></html>");
+
     webView.loadData(
-        "<html><body><p style=\"color:red;font-size:20px;height:150px;-webkit-user-select:none;\">"
-            + cueText
-            + "</p></body></html>",
+        Base64.encodeToString(
+            html.toString().getBytes(Charset.forName(C.UTF8_NAME)), Base64.NO_PADDING),
         "text/html",
-        /* encoding= */ null);
+        "base64");
+  }
+
+  private String convertVerticalTypeToCss(@Cue.VerticalType int verticalType) {
+    switch (verticalType) {
+      case Cue.VERTICAL_TYPE_LR:
+        return "vertical-lr";
+      case Cue.VERTICAL_TYPE_RL:
+        return "vertical-rl";
+      case Cue.TYPE_UNSET:
+      default:
+        return "horizontal-tb";
+    }
+  }
+
+  private String convertAlignmentToCss(@Nullable Layout.Alignment alignment) {
+    if (alignment == null) {
+      return "unset";
+    }
+    switch (alignment) {
+      case ALIGN_NORMAL:
+        return "start";
+      case ALIGN_CENTER:
+        return "center";
+      case ALIGN_OPPOSITE:
+        return "end";
+      default:
+        return "unset";
+    }
+  }
+
+  private static int translatePercentFromAnchorType(@Cue.AnchorType int anchorType) {
+    switch (anchorType) {
+      case Cue.TYPE_UNSET:
+      case Cue.ANCHOR_TYPE_START:
+        return 0;
+      case Cue.ANCHOR_TYPE_MIDDLE:
+        return -50;
+      case Cue.ANCHOR_TYPE_END:
+        return -100;
+    }
+    throw new IllegalArgumentException();
   }
 }

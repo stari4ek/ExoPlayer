@@ -147,6 +147,16 @@ public class SpannedToHtmlConverterTest {
   }
 
   @Test
+  public void convert_convertsNonAsciiCharactersToAmpersandCodes() {
+    String html =
+        SpannedToHtmlConverter.convert(
+            new SpannableString("Strìng with 優しいの non-ASCII characters"));
+
+    assertThat(html)
+        .isEqualTo("Str&#236;ng with &#20778;&#12375;&#12356;&#12398; non-ASCII characters");
+  }
+
+  @Test
   public void convert_ignoresUnrecognisedSpan() {
     SpannableString spanned = new SpannableString("String with unrecognised span");
     spanned.setSpan(
@@ -194,5 +204,24 @@ public class SpannedToHtmlConverterTest {
     String html = SpannedToHtmlConverter.convert(spanned);
 
     assertThat(html).isEqualTo("String with <i>italic and <b>bold</b></i> section");
+  }
+
+  @Test
+  public void convert_overlappingSpans_producesInvalidHtml() {
+    SpannableString spanned = new SpannableString("String with italic and bold section");
+    spanned.setSpan(
+        new StyleSpan(Typeface.ITALIC),
+        0,
+        "String with italic and bold".length(),
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    spanned.setSpan(
+        new StyleSpan(Typeface.BOLD),
+        "String with italic ".length(),
+        "String with italic and bold section".length(),
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+    String html = SpannedToHtmlConverter.convert(spanned);
+
+    assertThat(html).isEqualTo("<i>String with italic <b>and bold</i> section</b>");
   }
 }
