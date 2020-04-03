@@ -58,10 +58,12 @@ public final class PassthroughSectionPayloadReader implements SectionPayloadRead
 
     // TVIRL: Workaround https://github.com/google/ExoPlayer/issues/7177
     // There is a chance we won't get any samples. Do not block preparations.
-    output.format(
-        new Format.Builder()
-            .setSampleMimeType(mimeType)
-            .build());
+
+    // Prefer FLAG_IGNORE_SPLICE_INFO_STREAM + FLAG_IGNORE_AIT_STREAM atm.
+    // output.format(
+    //    new Format.Builder()
+    //        .setSampleMimeType(mimeType)
+    //        .build());
     // TVIRL
   }
 

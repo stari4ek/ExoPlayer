@@ -53,7 +53,9 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         FLAG_DETECT_ACCESS_UNITS,
         FLAG_IGNORE_SPLICE_INFO_STREAM,
         FLAG_OVERRIDE_CAPTION_DESCRIPTORS,
-        FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS
+        FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS,
+        // TVIRL
+        FLAG_IGNORE_AIT_STREAM
       })
   public @interface Flags {}
 
@@ -97,6 +99,10 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
    * not be detected, as they share the same elementary stream type as HDMV DTS.
    */
   public static final int FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS = 1 << 6;
+
+  // TVIRL
+  public static final int FLAG_IGNORE_AIT_STREAM = 1 << 12;
+  // !TVIRL
 
   private static final int DESCRIPTOR_TAG_CAPTION_SERVICE = 0x86;
 
@@ -181,7 +187,12 @@ public final class DefaultTsPayloadReaderFactory implements TsPayloadReader.Fact
         return new PesReader(
             new DvbSubtitleReader(esInfo.dvbSubtitleInfos));
       case TsExtractor.TS_STREAM_TYPE_AIT:
-        return new SectionReader(new PassthroughSectionPayloadReader(MimeTypes.APPLICATION_AIT));
+        // TVIRL
+        //return new SectionReader(new PassthroughSectionPayloadReader(MimeTypes.APPLICATION_AIT));
+        return isSet(FLAG_IGNORE_AIT_STREAM) ?
+            null
+            : new SectionReader(new PassthroughSectionPayloadReader(MimeTypes.APPLICATION_AIT));
+        // !TVIRL
       default:
         return null;
     }
