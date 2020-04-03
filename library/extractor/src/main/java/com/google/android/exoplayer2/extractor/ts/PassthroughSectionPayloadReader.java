@@ -55,6 +55,14 @@ public final class PassthroughSectionPayloadReader implements SectionPayloadRead
     this.timestampAdjuster = timestampAdjuster;
     idGenerator.generateNewId();
     output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_METADATA);
+
+    // TVIRL: Workaround https://github.com/google/ExoPlayer/issues/7177
+    // There is a chance we won't get any samples. Do not block preparations.
+    output.format(
+        new Format.Builder()
+            .setSampleMimeType(mimeType)
+            .build());
+    // TVIRL
   }
 
   @Override
