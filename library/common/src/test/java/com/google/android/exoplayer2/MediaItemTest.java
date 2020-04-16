@@ -24,6 +24,7 @@ import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.util.MimeTypes;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -97,6 +98,8 @@ public class MediaItemTest {
             .setDrmLicenseUri(licenseUri)
             .setDrmLicenseRequestHeaders(requestHeaders)
             .setDrmMultiSession(/* multiSession= */ true)
+            .setDrmPlayClearContentWithoutKey(true)
+            .setDrmSessionForClearTypes(Collections.singletonList(C.TRACK_TYPE_AUDIO))
             .build();
 
     assertThat(mediaItem.playbackProperties.drmConfiguration).isNotNull();
@@ -105,6 +108,25 @@ public class MediaItemTest {
     assertThat(mediaItem.playbackProperties.drmConfiguration.requestHeaders)
         .isEqualTo(requestHeaders);
     assertThat(mediaItem.playbackProperties.drmConfiguration.multiSession).isTrue();
+    assertThat(mediaItem.playbackProperties.drmConfiguration.playClearContentWithoutKey).isTrue();
+    assertThat(mediaItem.playbackProperties.drmConfiguration.sessionForClearTypes)
+        .containsExactly(C.TRACK_TYPE_AUDIO);
+  }
+
+  @Test
+  public void builderSetDrmSessionForClearPeriods_setsAudioAndVideoTracks() {
+    Uri licenseUri = Uri.parse(URI_STRING);
+    MediaItem mediaItem =
+        new MediaItem.Builder()
+            .setSourceUri(URI_STRING)
+            .setDrmUuid(C.WIDEVINE_UUID)
+            .setDrmLicenseUri(licenseUri)
+            .setDrmSessionForClearTypes(Arrays.asList(C.TRACK_TYPE_AUDIO))
+            .setDrmSessionForClearPeriods(true)
+            .build();
+
+    assertThat(mediaItem.playbackProperties.drmConfiguration.sessionForClearTypes)
+        .containsExactly(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO);
   }
 
   @Test
@@ -163,6 +185,77 @@ public class MediaItemTest {
     MediaItem mediaItem = new MediaItem.Builder().setSourceUri(URI_STRING).setTag(tag).build();
 
     assertThat(mediaItem.playbackProperties.tag).isEqualTo(tag);
+  }
+
+  @Test
+  public void builderSetStartPositionMs_setsStartPositionMs() {
+    MediaItem mediaItem =
+        new MediaItem.Builder().setSourceUri(URI_STRING).setClipStartPositionMs(1000L).build();
+
+    assertThat(mediaItem.clippingProperties.startPositionMs).isEqualTo(1000L);
+  }
+
+  @Test
+  public void builderSetStartPositionMs_zeroByDefault() {
+    MediaItem mediaItem = new MediaItem.Builder().setSourceUri(URI_STRING).build();
+
+    assertThat(mediaItem.clippingProperties.startPositionMs).isEqualTo(0);
+  }
+
+  @Test
+  public void builderSetStartPositionMs_negativeValue_throws() {
+    MediaItem.Builder builder = new MediaItem.Builder();
+
+    assertThrows(IllegalArgumentException.class, () -> builder.setClipStartPositionMs(-1));
+  }
+
+  @Test
+  public void builderSetEndPositionMs_setsEndPositionMs() {
+    MediaItem mediaItem =
+        new MediaItem.Builder().setSourceUri(URI_STRING).setClipEndPositionMs(1000L).build();
+
+    assertThat(mediaItem.clippingProperties.endPositionMs).isEqualTo(1000L);
+  }
+
+  @Test
+  public void builderSetEndPositionMs_timeEndOfSourceByDefault() {
+    MediaItem mediaItem = new MediaItem.Builder().setSourceUri(URI_STRING).build();
+
+    assertThat(mediaItem.clippingProperties.endPositionMs).isEqualTo(C.TIME_END_OF_SOURCE);
+  }
+
+  @Test
+  public void builderSetEndPositionMs_timeEndOfSource_setsEndPositionMs() {
+    MediaItem mediaItem =
+        new MediaItem.Builder()
+            .setSourceUri(URI_STRING)
+            .setClipEndPositionMs(1000)
+            .setClipEndPositionMs(C.TIME_END_OF_SOURCE)
+            .build();
+
+    assertThat(mediaItem.clippingProperties.endPositionMs).isEqualTo(C.TIME_END_OF_SOURCE);
+  }
+
+  @Test
+  public void builderSetEndPositionMs_negativeValue_throws() {
+    MediaItem.Builder builder = new MediaItem.Builder();
+
+    assertThrows(IllegalArgumentException.class, () -> builder.setClipEndPositionMs(-1));
+  }
+
+  @Test
+  public void builderSetClippingFlags_setsClippingFlags() {
+    MediaItem mediaItem =
+        new MediaItem.Builder()
+            .setSourceUri(URI_STRING)
+            .setClipRelativeToDefaultPosition(true)
+            .setClipRelativeToLiveWindow(true)
+            .setClipStartsAtKeyFrame(true)
+            .build();
+
+    assertThat(mediaItem.clippingProperties.relativeToDefaultPosition).isTrue();
+    assertThat(mediaItem.clippingProperties.relativeToLiveWindow).isTrue();
+    assertThat(mediaItem.clippingProperties.startsAtKeyFrame).isTrue();
   }
 
   @Test
