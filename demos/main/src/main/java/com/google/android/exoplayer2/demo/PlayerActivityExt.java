@@ -1,24 +1,17 @@
 package com.google.android.exoplayer2.demo;
 
 
-import static com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory.*;
+import static com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES;
+import static com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS;
 
-import android.media.MediaDrm;
-import android.net.Uri;
-import androidx.annotation.Nullable;
-import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.MediaItem;
-import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
-import com.google.android.exoplayer2.offline.DownloadHelper;
-import com.google.android.exoplayer2.offline.DownloadRequest;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 import com.google.android.exoplayer2.source.hls.DefaultHlsExtractorFactory;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
-import com.google.android.exoplayer2.upstream.HttpDataSource;
+import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
-import com.google.android.exoplayer2.util.Util;
 
 /**
  * TVirl: add own functionality
@@ -26,24 +19,24 @@ import com.google.android.exoplayer2.util.Util;
 public class PlayerActivityExt extends PlayerActivity {
 
     @Override
-    MediaSource createLeafMediaSource(Sample.UriSample parameters) {
+    MediaSource createLeafMediaSource(MediaItem mediaItem) {
 
         final int tsFlags = FLAG_ALLOW_NON_IDR_KEYFRAMES | FLAG_DETECT_ACCESS_UNITS;
 
-        final String mime = Sample.inferAdaptiveStreamMimeType(parameters.uri, parameters.extension);
-        if (MimeTypes.APPLICATION_M3U8.equals(mime)) {
+        Assertions.checkNotNull(mediaItem.playbackProperties);
+        if (MimeTypes.APPLICATION_M3U8.equals(mediaItem.playbackProperties.mimeType)) {
             return new HlsMediaSource.Factory(dataSourceFactory)
                 .setExtractorFactory(
                     new DefaultHlsExtractorFactory(tsFlags, true)
                 )
-                .createMediaSource(parameters.uri);
-        } else if (mime == null) {
+                .createMediaSource(mediaItem);
+        } else if (mediaItem.playbackProperties.mimeType == null) {
             return new ProgressiveMediaSource.Factory(dataSourceFactory,
                 new DefaultExtractorsFactory()
                     .setTsExtractorFlags(tsFlags))
-                .createMediaSource(parameters.uri);
+                .createMediaSource(mediaItem);
         } else {
-            return super.createLeafMediaSource(parameters);
+            return super.createLeafMediaSource(mediaItem);
         }
     }
 }

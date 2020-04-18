@@ -497,7 +497,18 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
           }
           break;
         case TYPE_SUBTITLES:
-          formatBuilder.setSampleMimeType(MimeTypes.TEXT_VTT).setMetadata(metadata);
+          sampleMimeType = null;
+          variant = getVariantWithSubtitleGroup(variants, groupId);
+          if (variant != null) {
+            @Nullable
+            String codecs = Util.getCodecsOfType(variant.format.codecs, C.TRACK_TYPE_TEXT);
+            formatBuilder.setCodecs(codecs);
+            sampleMimeType = MimeTypes.getMediaMimeType(codecs);
+          }
+          if (sampleMimeType == null) {
+            sampleMimeType = MimeTypes.TEXT_VTT;
+          }
+          formatBuilder.setSampleMimeType(sampleMimeType).setMetadata(metadata);
           subtitles.add(new Rendition(uri, formatBuilder.build(), groupId, name));
           break;
         case TYPE_CLOSED_CAPTIONS:
@@ -560,6 +571,17 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
     for (int i = 0; i < variants.size(); i++) {
       Variant variant = variants.get(i);
       if (groupId.equals(variant.videoGroupId)) {
+        return variant;
+      }
+    }
+    return null;
+  }
+
+  @Nullable
+  private static Variant getVariantWithSubtitleGroup(ArrayList<Variant> variants, String groupId) {
+    for (int i = 0; i < variants.size(); i++) {
+      Variant variant = variants.get(i);
+      if (groupId.equals(variant.subtitleGroupId)) {
         return variant;
       }
     }
@@ -893,7 +915,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
   private static int parseOptionalIntAttr(String line, Pattern pattern, int defaultValue) {
     Matcher matcher = pattern.matcher(line);
     if (matcher.find()) {
-      return Integer.parseInt(matcher.group(1));
+      return Integer.parseInt(Assertions.checkNotNull(matcher.group(1)));
     }
     return defaultValue;
   }
@@ -928,7 +950,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       @PolyNull String defaultValue,
       Map<String, String> variableDefinitions) {
     Matcher matcher = pattern.matcher(line);
-    String value = matcher.find() ? matcher.group(1) : defaultValue;
+    @PolyNull
+    String value = matcher.find() ? Assertions.checkNotNull(matcher.group(1)) : defaultValue;
     return variableDefinitions.isEmpty() || value == null
         ? value
         : replaceVariableReferences(value, variableDefinitions);
@@ -956,7 +979,7 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
       String line, Pattern pattern, boolean defaultValue) {
     Matcher matcher = pattern.matcher(line);
     if (matcher.find()) {
-      return matcher.group(1).equals(BOOLEAN_TRUE);
+      return BOOLEAN_TRUE.equals(matcher.group(1));
     }
     return defaultValue;
   }

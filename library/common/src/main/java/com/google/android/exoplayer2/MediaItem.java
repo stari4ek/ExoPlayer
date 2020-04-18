@@ -21,6 +21,7 @@ import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -56,18 +57,29 @@ public final class MediaItem {
     @Nullable private String mediaId;
     @Nullable private Uri sourceUri;
     @Nullable private String mimeType;
+    private long clipStartPositionMs;
+    private long clipEndPositionMs;
+    private boolean clipRelativeToLiveWindow;
+    private boolean clipRelativeToDefaultPosition;
+    private boolean clipStartsAtKeyFrame;
     @Nullable private Uri drmLicenseUri;
     private Map<String, String> drmLicenseRequestHeaders;
     @Nullable private UUID drmUuid;
     private boolean drmMultiSession;
+    private boolean drmPlayClearContentWithoutKey;
+    private List<Integer> drmSessionForClearTypes;
     private List<StreamKey> streamKeys;
+    private List<Subtitle> subtitles;
     @Nullable private Object tag;
     @Nullable private MediaMetadata mediaMetadata;
 
     /** Creates a builder. */
     public Builder() {
       streamKeys = Collections.emptyList();
+      subtitles = Collections.emptyList();
+      drmSessionForClearTypes = Collections.emptyList();
       drmLicenseRequestHeaders = Collections.emptyMap();
+      clipEndPositionMs = C.TIME_END_OF_SOURCE;
     }
 
     /**
@@ -112,6 +124,55 @@ public final class MediaItem {
     }
 
     /**
+     * Sets the optional start position in milliseconds which must be a value larger than or equal
+     * to zero (Default: 0).
+     */
+    public Builder setClipStartPositionMs(long startPositionMs) {
+      Assertions.checkArgument(startPositionMs >= 0);
+      this.clipStartPositionMs = startPositionMs;
+      return this;
+    }
+
+    /**
+     * Sets the optional end position in milliseconds which must be a value larger than or equal to
+     * zero, or {@link C#TIME_END_OF_SOURCE} to end when playback reaches the end of media (Default:
+     * {@link C#TIME_END_OF_SOURCE}).
+     */
+    public Builder setClipEndPositionMs(long endPositionMs) {
+      Assertions.checkArgument(endPositionMs == C.TIME_END_OF_SOURCE || endPositionMs >= 0);
+      this.clipEndPositionMs = endPositionMs;
+      return this;
+    }
+
+    /**
+     * Sets whether the start/end positions should move with the live window for live streams. If
+     * {@code false}, live streams end when playback reaches the end position in live window seen
+     * when the media is first loaded (Default: {@code false}).
+     */
+    public Builder setClipRelativeToLiveWindow(boolean relativeToLiveWindow) {
+      this.clipRelativeToLiveWindow = relativeToLiveWindow;
+      return this;
+    }
+
+    /**
+     * Sets whether the start position and the end position are relative to the default position in
+     * the window (Default: {@code false}).
+     */
+    public Builder setClipRelativeToDefaultPosition(boolean relativeToDefaultPosition) {
+      this.clipRelativeToDefaultPosition = relativeToDefaultPosition;
+      return this;
+    }
+
+    /**
+     * Sets whether the start point is guaranteed to be a key frame. If {@code false}, the playback
+     * transition into the clip may not be seamless (Default: {@code false}).
+     */
+    public Builder setClipStartsAtKeyFrame(boolean startsAtKeyFrame) {
+      this.clipStartsAtKeyFrame = startsAtKeyFrame;
+      return this;
+    }
+
+    /**
      * Sets the optional license server {@link Uri}. If a license uri is set, the {@link
      * DrmConfiguration#uuid} needs to be specified as well.
      *
@@ -138,13 +199,15 @@ public final class MediaItem {
     /**
      * Sets the optional request headers attached to the drm license request.
      *
+     * <p>{@code null} or an empty {@link Map} can be used for a reset.
+     *
      * <p>If no valid drm configuration is specified, the drm license request headers are ignored.
      */
     public Builder setDrmLicenseRequestHeaders(
-        @Nullable Map<String, String> drmLicenseRequestHeaders) {
+        @Nullable Map<String, String> licenseRequestHeaders) {
       this.drmLicenseRequestHeaders =
-          drmLicenseRequestHeaders != null && !drmLicenseRequestHeaders.isEmpty()
-              ? drmLicenseRequestHeaders
+          licenseRequestHeaders != null && !licenseRequestHeaders.isEmpty()
+              ? Collections.unmodifiableMap(new HashMap<>(licenseRequestHeaders))
               : Collections.emptyMap();
       return this;
     }
@@ -173,8 +236,54 @@ public final class MediaItem {
     }
 
     /**
+     * Sets whether clear samples within protected content should be played when keys for the
+     * encrypted part of the content have yet to be loaded.
+     */
+    public Builder setDrmPlayClearContentWithoutKey(boolean playClearContentWithoutKey) {
+      this.drmPlayClearContentWithoutKey = playClearContentWithoutKey;
+      return this;
+    }
+
+    /**
+     * Sets whether a drm session should be used for clear tracks of type {@link C#TRACK_TYPE_VIDEO}
+     * and {@link C#TRACK_TYPE_AUDIO}.
+     *
+     * <p>This method overrides what has been set by previously calling {@link
+     * #setDrmSessionForClearTypes(List)}.
+     */
+    public Builder setDrmSessionForClearPeriods(boolean sessionForClearPeriods) {
+      this.setDrmSessionForClearTypes(
+          sessionForClearPeriods
+              ? Arrays.asList(C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO)
+              : Collections.emptyList());
+      return this;
+    }
+
+    /**
+     * Sets a list of {@link C}{@code .TRACK_TYPE_*} constants for which to use a drm session even
+     * when the tracks are in the clear.
+     *
+     * <p>For the common case of using a drm session for {@link C#TRACK_TYPE_VIDEO} and {@link
+     * C#TRACK_TYPE_AUDIO} the {@link #setDrmSessionForClearPeriods(boolean)} can be used.
+     *
+     * <p>This method overrides what has been set by previously calling {@link
+     * #setDrmSessionForClearPeriods(boolean)}.
+     *
+     * <p>{@code null} or an empty {@link List} can be used for a reset.
+     */
+    public Builder setDrmSessionForClearTypes(@Nullable List<Integer> sessionForClearTypes) {
+      this.drmSessionForClearTypes =
+          sessionForClearTypes != null && !sessionForClearTypes.isEmpty()
+              ? Collections.unmodifiableList(new ArrayList<>(sessionForClearTypes))
+              : Collections.emptyList();
+      return this;
+    }
+
+    /**
      * Sets the optional stream keys by which the manifest is filtered (only used for adaptive
      * streams).
+     *
+     * <p>{@code null} or an empty {@link List} can be used for a reset.
      *
      * <p>If a {@link PlaybackProperties#sourceUri} is set, the stream keys are used to create a
      * {@link PlaybackProperties} object. Otherwise it will be ignored.
@@ -188,8 +297,24 @@ public final class MediaItem {
     }
 
     /**
+     * Sets the optional subtitles.
+     *
+     * <p>{@code null} or an empty {@link List} can be used for a reset.
+     *
+     * <p>If a {@link PlaybackProperties#sourceUri} is set, the subtitles are used to create a
+     * {@link PlaybackProperties} object. Otherwise it will be ignored.
+     */
+    public Builder setSubtitles(@Nullable List<Subtitle> subtitles) {
+      this.subtitles =
+          subtitles != null && !subtitles.isEmpty()
+              ? Collections.unmodifiableList(new ArrayList<>(subtitles))
+              : Collections.emptyList();
+      return this;
+    }
+
+    /**
      * Sets the optional tag for custom attributes. The tag for the media source which will be
-     * published in the {@link com.google.android.exoplayer2.Timeline} of the source as {@link
+     * published in the {@code com.google.android.exoplayer2.Timeline} of the source as {@code
      * com.google.android.exoplayer2.Timeline.Window#tag}.
      *
      * <p>If a {@link PlaybackProperties#sourceUri} is set, the tag is used to create a {@link
@@ -219,14 +344,26 @@ public final class MediaItem {
                 mimeType,
                 drmUuid != null
                     ? new DrmConfiguration(
-                        drmUuid, drmLicenseUri, drmLicenseRequestHeaders, drmMultiSession)
+                        drmUuid,
+                        drmLicenseUri,
+                        drmLicenseRequestHeaders,
+                        drmMultiSession,
+                        drmPlayClearContentWithoutKey,
+                        drmSessionForClearTypes)
                     : null,
                 streamKeys,
+                subtitles,
                 tag);
         mediaId = mediaId != null ? mediaId : sourceUri.toString();
       }
       return new MediaItem(
           Assertions.checkNotNull(mediaId),
+          new ClippingProperties(
+              clipStartPositionMs,
+              clipEndPositionMs,
+              clipRelativeToLiveWindow,
+              clipRelativeToDefaultPosition,
+              clipStartsAtKeyFrame),
           playbackProperties,
           mediaMetadata != null ? mediaMetadata : new MediaMetadata.Builder().build());
     }
@@ -250,15 +387,28 @@ public final class MediaItem {
     /** Whether the drm configuration is multi session enabled. */
     public final boolean multiSession;
 
+    /**
+     * Whether clear samples within protected content should be played when keys for the encrypted
+     * part of the content have yet to be loaded.
+     */
+    public final boolean playClearContentWithoutKey;
+
+    /** The types of clear tracks for which to use a drm session. */
+    public final List<Integer> sessionForClearTypes;
+
     private DrmConfiguration(
         UUID uuid,
         @Nullable Uri licenseUri,
         Map<String, String> requestHeaders,
-        boolean multiSession) {
+        boolean multiSession,
+        boolean playClearContentWithoutKey,
+        List<Integer> drmSessionForClearTypes) {
       this.uuid = uuid;
       this.licenseUri = licenseUri;
-      this.requestHeaders = Collections.unmodifiableMap(new HashMap<>(requestHeaders));
+      this.requestHeaders = requestHeaders;
       this.multiSession = multiSession;
+      this.playClearContentWithoutKey = playClearContentWithoutKey;
+      this.sessionForClearTypes = drmSessionForClearTypes;
     }
 
     @Override
@@ -266,7 +416,7 @@ public final class MediaItem {
       if (this == obj) {
         return true;
       }
-      if (obj == null || getClass() != obj.getClass()) {
+      if (!(obj instanceof DrmConfiguration)) {
         return false;
       }
 
@@ -274,7 +424,9 @@ public final class MediaItem {
       return uuid.equals(other.uuid)
           && Util.areEqual(licenseUri, other.licenseUri)
           && Util.areEqual(requestHeaders, other.requestHeaders)
-          && multiSession == other.multiSession;
+          && multiSession == other.multiSession
+          && playClearContentWithoutKey == other.playClearContentWithoutKey
+          && sessionForClearTypes.equals(other.sessionForClearTypes);
     }
 
     @Override
@@ -283,6 +435,8 @@ public final class MediaItem {
       result = 31 * result + (licenseUri != null ? licenseUri.hashCode() : 0);
       result = 31 * result + requestHeaders.hashCode();
       result = 31 * result + (multiSession ? 1 : 0);
+      result = 31 * result + (playClearContentWithoutKey ? 1 : 0);
+      result = 31 * result + sessionForClearTypes.hashCode();
       return result;
     }
   }
@@ -307,9 +461,12 @@ public final class MediaItem {
     /** Optional stream keys by which the manifest is filtered. */
     public final List<StreamKey> streamKeys;
 
+    /** Optional subtitles to be sideloaded. */
+    public final List<Subtitle> subtitles;
+
     /**
      * Optional tag for custom attributes. The tag for the media source which will be published in
-     * the {@link com.google.android.exoplayer2.Timeline} of the source as {@link
+     * the {@code com.google.android.exoplayer2.Timeline} of the source as {@code
      * com.google.android.exoplayer2.Timeline.Window#tag}.
      */
     @Nullable public final Object tag;
@@ -319,11 +476,13 @@ public final class MediaItem {
         @Nullable String mimeType,
         @Nullable DrmConfiguration drmConfiguration,
         List<StreamKey> streamKeys,
+        List<Subtitle> subtitles,
         @Nullable Object tag) {
       this.sourceUri = sourceUri;
       this.mimeType = mimeType;
       this.drmConfiguration = drmConfiguration;
       this.streamKeys = streamKeys;
+      this.subtitles = subtitles;
       this.tag = tag;
     }
 
@@ -332,7 +491,7 @@ public final class MediaItem {
       if (this == obj) {
         return true;
       }
-      if (obj == null || getClass() != obj.getClass()) {
+      if (!(obj instanceof PlaybackProperties)) {
         return false;
       }
       PlaybackProperties other = (PlaybackProperties) obj;
@@ -340,7 +499,8 @@ public final class MediaItem {
       return sourceUri.equals(other.sourceUri)
           && Util.areEqual(mimeType, other.mimeType)
           && Util.areEqual(drmConfiguration, other.drmConfiguration)
-          && Util.areEqual(streamKeys, other.streamKeys)
+          && streamKeys.equals(other.streamKeys)
+          && subtitles.equals(other.subtitles)
           && Util.areEqual(tag, other.tag);
     }
 
@@ -350,7 +510,143 @@ public final class MediaItem {
       result = 31 * result + (mimeType == null ? 0 : mimeType.hashCode());
       result = 31 * result + (drmConfiguration == null ? 0 : drmConfiguration.hashCode());
       result = 31 * result + streamKeys.hashCode();
+      result = 31 * result + subtitles.hashCode();
       result = 31 * result + (tag == null ? 0 : tag.hashCode());
+      return result;
+    }
+  }
+
+  /** Properties for a text track. */
+  public static final class Subtitle {
+
+    /** The {@link Uri} to the subtitle file. */
+    public final Uri uri;
+    /** The MIME type. */
+    public final String mimeType;
+    /** The language. */
+    @Nullable public final String language;
+    /** The selection flags. */
+    @C.SelectionFlags public final int selectionFlags;
+
+    /**
+     * Creates an instance.
+     *
+     * @param uri The {@link Uri uri} to the subtitle file.
+     * @param mimeType The mime type.
+     * @param language The optional language.
+     */
+    public Subtitle(Uri uri, String mimeType, @Nullable String language) {
+      this(uri, mimeType, language, /* selectionFlags= */ 0);
+    }
+
+    /**
+     * Creates an instance with the given selection flags.
+     *
+     * @param uri The {@link Uri uri} to the subtitle file.
+     * @param mimeType The mime type.
+     * @param language The optional language.
+     * @param selectionFlags The selection flags.
+     */
+    public Subtitle(
+        Uri uri, String mimeType, @Nullable String language, @C.SelectionFlags int selectionFlags) {
+      this.uri = uri;
+      this.mimeType = mimeType;
+      this.language = language;
+      this.selectionFlags = selectionFlags;
+    }
+
+    @Override
+    public boolean equals(@Nullable Object obj) {
+      if (this == obj) {
+        return true;
+      }
+      if (!(obj instanceof Subtitle)) {
+        return false;
+      }
+
+      Subtitle other = (Subtitle) obj;
+
+      return uri.equals(other.uri)
+          && mimeType.equals(other.mimeType)
+          && Util.areEqual(language, other.language)
+          && selectionFlags == other.selectionFlags;
+    }
+
+    @Override
+    public int hashCode() {
+      int result = uri.hashCode();
+      result = 31 * result + mimeType.hashCode();
+      result = 31 * result + (language == null ? 0 : language.hashCode());
+      result = 31 * result + selectionFlags;
+      return result;
+    }
+  }
+
+  /** Optionally clips the media item to a custom start and end position. */
+  public static final class ClippingProperties {
+
+    /** The start position in milliseconds. This is a value larger than or equal to zero. */
+    public final long startPositionMs;
+
+    /**
+     * The end position in milliseconds. This is a value larger than or equal to zero or {@link
+     * C#TIME_END_OF_SOURCE} to play to the end of the stream.
+     */
+    public final long endPositionMs;
+
+    /**
+     * Whether the clipping of active media periods moves with a live window. If {@code false},
+     * playback ends when it reaches {@link #endPositionMs}.
+     */
+    public final boolean relativeToLiveWindow;
+
+    /**
+     * Whether {@link #startPositionMs} and {@link #endPositionMs} are relative to the default
+     * position.
+     */
+    public final boolean relativeToDefaultPosition;
+
+    /** Sets whether the start point is guaranteed to be a key frame. */
+    public final boolean startsAtKeyFrame;
+
+    private ClippingProperties(
+        long startPositionMs,
+        long endPositionMs,
+        boolean relativeToLiveWindow,
+        boolean relativeToDefaultPosition,
+        boolean startsAtKeyFrame) {
+      this.startPositionMs = startPositionMs;
+      this.endPositionMs = endPositionMs;
+      this.relativeToLiveWindow = relativeToLiveWindow;
+      this.relativeToDefaultPosition = relativeToDefaultPosition;
+      this.startsAtKeyFrame = startsAtKeyFrame;
+    }
+
+    @Override
+    public boolean equals(@Nullable Object obj) {
+      if (this == obj) {
+        return true;
+      }
+      if (!(obj instanceof ClippingProperties)) {
+        return false;
+      }
+
+      ClippingProperties other = (ClippingProperties) obj;
+
+      return startPositionMs == other.startPositionMs
+          && endPositionMs == other.endPositionMs
+          && relativeToLiveWindow == other.relativeToLiveWindow
+          && relativeToDefaultPosition == other.relativeToDefaultPosition
+          && startsAtKeyFrame == other.startsAtKeyFrame;
+    }
+
+    @Override
+    public int hashCode() {
+      int result = Long.valueOf(startPositionMs).hashCode();
+      result = 31 * result + Long.valueOf(endPositionMs).hashCode();
+      result = 31 * result + (relativeToLiveWindow ? 1 : 0);
+      result = 31 * result + (relativeToDefaultPosition ? 1 : 0);
+      result = 31 * result + (startsAtKeyFrame ? 1 : 0);
       return result;
     }
   }
@@ -364,27 +660,33 @@ public final class MediaItem {
   /** The media metadata. */
   public final MediaMetadata mediaMetadata;
 
+  /** The clipping properties. */
+  public final ClippingProperties clippingProperties;
+
   private MediaItem(
       String mediaId,
+      ClippingProperties clippingProperties,
       @Nullable PlaybackProperties playbackProperties,
       MediaMetadata mediaMetadata) {
     this.mediaId = mediaId;
     this.playbackProperties = playbackProperties;
     this.mediaMetadata = mediaMetadata;
+    this.clippingProperties = clippingProperties;
   }
 
   @Override
-  public boolean equals(@Nullable Object o) {
-    if (this == o) {
+  public boolean equals(@Nullable Object obj) {
+    if (this == obj) {
       return true;
     }
-    if (o == null || getClass() != o.getClass()) {
+    if (!(obj instanceof MediaItem)) {
       return false;
     }
 
-    MediaItem other = (MediaItem) o;
+    MediaItem other = (MediaItem) obj;
 
     return Util.areEqual(mediaId, other.mediaId)
+        && clippingProperties.equals(other.clippingProperties)
         && Util.areEqual(playbackProperties, other.playbackProperties)
         && Util.areEqual(mediaMetadata, other.mediaMetadata);
   }
@@ -393,6 +695,7 @@ public final class MediaItem {
   public int hashCode() {
     int result = mediaId.hashCode();
     result = 31 * result + (playbackProperties != null ? playbackProperties.hashCode() : 0);
+    result = 31 * result + clippingProperties.hashCode();
     result = 31 * result + mediaMetadata.hashCode();
     return result;
   }
