@@ -6,10 +6,12 @@ import static com.google.android.exoplayer2.extractor.ts.DefaultTsPayloadReaderF
 
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
+import com.google.android.exoplayer2.extractor.ts.TsExtractor;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 import com.google.android.exoplayer2.source.hls.DefaultHlsExtractorFactory;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
+import com.google.android.exoplayer2.source.hls.HlsSampleStreamWrapper;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
 
@@ -20,6 +22,9 @@ public class PlayerActivityExt extends PlayerActivity {
 
     @Override
     MediaSource createLeafMediaSource(MediaItem mediaItem) {
+
+        TsExtractor.HLS_MULTIPLE_TRACKS_ALLOWED = true;
+        HlsSampleStreamWrapper.disableMapping();
 
         final int tsFlags = FLAG_ALLOW_NON_IDR_KEYFRAMES | FLAG_DETECT_ACCESS_UNITS;
 
