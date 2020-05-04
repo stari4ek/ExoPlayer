@@ -18,7 +18,9 @@ package com.google.android.exoplayer2.source.hls;
 import android.net.Uri;
 import android.os.Handler;
 import android.util.SparseIntArray;
+
 import androidx.annotation.Nullable;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
@@ -57,6 +59,12 @@ import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
+
+import org.checkerframework.checker.nullness.compatqual.NullableType;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.RequiresNonNull;
+
 import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -66,10 +74,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.checkerframework.checker.nullness.compatqual.NullableType;
-import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /**
  * Loads {@link HlsMediaChunk}s obtained from a {@link HlsChunkSource}, and provides
@@ -108,13 +112,13 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
   // TVirl: https://github.com/google/ExoPlayer/issues/2014
   // private static final Set<Integer> MAPPABLE_TYPES =
-  private static Set<Integer> MAPPABLE_TYPES =
-      Collections.unmodifiableSet(
-          new HashSet<>(
-              Arrays.asList(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_METADATA)));
+  private static final Set<Integer> MAPPABLE_TYPES_DEFAULT = Collections.unmodifiableSet(
+      new HashSet<>(
+          Arrays.asList(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_METADATA)));
+    private static Set<Integer> MAPPABLE_TYPES = MAPPABLE_TYPES_DEFAULT;
 
-  public static void disableMapping() {
-    MAPPABLE_TYPES = Collections.emptySet();
+  public static void enableMapping(boolean enable) {
+    MAPPABLE_TYPES = enable ? MAPPABLE_TYPES_DEFAULT : Collections.emptySet();
   }
   // !TVirl
 
