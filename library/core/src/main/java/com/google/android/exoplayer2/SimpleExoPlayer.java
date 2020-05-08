@@ -1805,6 +1805,12 @@ public class SimpleExoPlayer extends BasePlayer
     streamVolumeManager.setMuted(muted);
   }
 
+  // TVirl: allow changing release timeout on-the-fly
+  public void experimental_setReleaseTimeoutMs(long releaseTimeoutMs) {
+    player.experimental_setReleaseTimeoutMs(releaseTimeoutMs);
+  }
+  // !TVirl
+
   // Internal methods.
 
   private void removeSurfaceCallbacks() {
