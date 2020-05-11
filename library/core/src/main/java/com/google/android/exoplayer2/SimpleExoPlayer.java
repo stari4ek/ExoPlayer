@@ -100,6 +100,7 @@ public class SimpleExoPlayer extends BasePlayer
     private AnalyticsCollector analyticsCollector;
     private Looper looper;
     private boolean useLazyPreparation;
+    private boolean throwWhenStuckBuffering;
     private boolean buildCalled;
 
     /**
@@ -295,6 +296,19 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     /**
+     * Sets whether the player should throw when it detects it's stuck buffering.
+     *
+     * <p>This method is experimental, and will be renamed or removed in a future release.
+     *
+     * @param throwWhenStuckBuffering Whether to throw when the player detects it's stuck buffering.
+     * @return This builder.
+     */
+    public Builder experimental_setThrowWhenStuckBuffering(boolean throwWhenStuckBuffering) {
+      this.throwWhenStuckBuffering = throwWhenStuckBuffering;
+      return this;
+    }
+
+    /**
      * Sets the {@link Clock} that will be used by the player. Should only be set for testing
      * purposes.
      *
@@ -322,11 +336,13 @@ public class SimpleExoPlayer extends BasePlayer
   }
 
   private static final String TAG = "SimpleExoPlayer";
+  private static final String WRONG_THREAD_ERROR_MESSAGE =
+      "Player is accessed on the wrong thread. See "
+          + "https://exoplayer.dev/issues/player-accessed-on-wrong-thread";
 
   protected final Renderer[] renderers;
 
   private final ExoPlayerImpl player;
-  private final Handler eventHandler;
   private final ComponentListener componentListener;
   private final CopyOnWriteArraySet<com.google.android.exoplayer2.video.VideoListener>
       videoListeners;
@@ -338,7 +354,6 @@ public class SimpleExoPlayer extends BasePlayer
   private final CopyOnWriteArraySet<AudioRendererEventListener> audioDebugListeners;
   private final BandwidthMeter bandwidthMeter;
   private final AnalyticsCollector analyticsCollector;
-
   private final AudioBecomingNoisyManager audioBecomingNoisyManager;
   private final AudioFocusManager audioFocusManager;
   private final StreamVolumeManager streamVolumeManager;
@@ -351,7 +366,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Nullable private VideoDecoderOutputBufferRenderer videoDecoderOutputBufferRenderer;
   @Nullable private Surface surface;
   private boolean ownsSurface;
-  private @C.VideoScalingMode int videoScalingMode;
+  @Renderer.VideoScalingMode private int videoScalingMode;
   @Nullable private SurfaceHolder surfaceHolder;
   @Nullable private TextureView textureView;
   private int surfaceWidth;
@@ -365,43 +380,15 @@ public class SimpleExoPlayer extends BasePlayer
   private List<Cue> currentCues;
   @Nullable private VideoFrameMetadataListener videoFrameMetadataListener;
   @Nullable private CameraMotionListener cameraMotionListener;
+  private boolean throwsWhenUsingWrongThread;
   private boolean hasNotifiedFullWrongThreadWarning;
   @Nullable private PriorityTaskManager priorityTaskManager;
   private boolean isPriorityTaskManagerRegistered;
   private boolean playerReleased;
   private DeviceInfo deviceInfo;
 
-  /** @param builder The {@link Builder} to obtain all construction parameters. */
-  protected SimpleExoPlayer(Builder builder) {
-    this(
-        builder.context,
-        builder.renderersFactory,
-        builder.trackSelector,
-        builder.mediaSourceFactory,
-        builder.loadControl,
-        builder.bandwidthMeter,
-        builder.analyticsCollector,
-        builder.useLazyPreparation,
-        builder.clock,
-        builder.looper);
-  }
-
-  /**
-   * @param context A {@link Context}.
-   * @param renderersFactory A factory for creating {@link Renderer}s to be used by the instance.
-   * @param trackSelector The {@link TrackSelector} that will be used by the instance.
-   * @param loadControl The {@link LoadControl} that will be used by the instance.
-   * @param bandwidthMeter The {@link BandwidthMeter} that will be used by the instance.
-   * @param analyticsCollector A factory for creating the {@link AnalyticsCollector} that will
-   *     collect and forward all player events.
-   * @param useLazyPreparation Whether playlist items are prepared lazily. If false, all manifest
-   *     loads and other initial preparation steps happen immediately. If true, these initial
-   *     preparations are triggered only when the player starts buffering the media.
-   * @param clock The {@link Clock} that will be used by the instance. Should always be {@link
-   *     Clock#DEFAULT}, unless the player is being used from a test.
-   * @param looper The {@link Looper} which must be used for all calls to the player and which is
-   *     used to call listeners on.
-   */
+  /** @deprecated Use the {@link Builder} and pass it to {@link #SimpleExoPlayer(Builder)}. */
+  @Deprecated
   protected SimpleExoPlayer(
       Context context,
       RenderersFactory renderersFactory,
@@ -412,9 +399,23 @@ public class SimpleExoPlayer extends BasePlayer
       AnalyticsCollector analyticsCollector,
       boolean useLazyPreparation,
       Clock clock,
-      Looper looper) {
-    this.bandwidthMeter = bandwidthMeter;
-    this.analyticsCollector = analyticsCollector;
+      Looper applicationLooper) {
+    this(
+        new Builder(context, renderersFactory)
+            .setTrackSelector(trackSelector)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
+            .setBandwidthMeter(bandwidthMeter)
+            .setAnalyticsCollector(analyticsCollector)
+            .setUseLazyPreparation(useLazyPreparation)
+            .setClock(clock)
+            .setLooper(applicationLooper));
+  }
+
+  /** @param builder The {@link Builder} to obtain all construction parameters. */
+  protected SimpleExoPlayer(Builder builder) {
+    bandwidthMeter = builder.bandwidthMeter;
+    analyticsCollector = builder.analyticsCollector;
     componentListener = new ComponentListener();
     videoListeners = new CopyOnWriteArraySet<>();
     audioListeners = new CopyOnWriteArraySet<>();
@@ -423,9 +424,9 @@ public class SimpleExoPlayer extends BasePlayer
     deviceListeners = new CopyOnWriteArraySet<>();
     videoDebugListeners = new CopyOnWriteArraySet<>();
     audioDebugListeners = new CopyOnWriteArraySet<>();
-    eventHandler = new Handler(looper);
+    Handler eventHandler = new Handler(builder.looper);
     renderers =
-        renderersFactory.createRenderers(
+        builder.renderersFactory.createRenderers(
             eventHandler,
             componentListener,
             componentListener,
@@ -443,14 +444,14 @@ public class SimpleExoPlayer extends BasePlayer
     player =
         new ExoPlayerImpl(
             renderers,
-            trackSelector,
-            mediaSourceFactory,
-            loadControl,
+            builder.trackSelector,
+            builder.mediaSourceFactory,
+            builder.loadControl,
             bandwidthMeter,
             analyticsCollector,
-            useLazyPreparation,
-            clock,
-            looper);
+            builder.useLazyPreparation,
+            builder.clock,
+            builder.looper);
     analyticsCollector.setPlayer(player);
     player.addListener(analyticsCollector);
     player.addListener(componentListener);
@@ -461,12 +462,15 @@ public class SimpleExoPlayer extends BasePlayer
     addMetadataOutput(analyticsCollector);
     bandwidthMeter.addEventListener(eventHandler, analyticsCollector);
     audioBecomingNoisyManager =
-        new AudioBecomingNoisyManager(context, eventHandler, componentListener);
-    audioFocusManager = new AudioFocusManager(context, eventHandler, componentListener);
-    streamVolumeManager = new StreamVolumeManager(context, eventHandler, componentListener);
-    wakeLockManager = new WakeLockManager(context);
-    wifiLockManager = new WifiLockManager(context);
+        new AudioBecomingNoisyManager(builder.context, eventHandler, componentListener);
+    audioFocusManager = new AudioFocusManager(builder.context, eventHandler, componentListener);
+    streamVolumeManager = new StreamVolumeManager(builder.context, eventHandler, componentListener);
+    wakeLockManager = new WakeLockManager(builder.context);
+    wifiLockManager = new WifiLockManager(builder.context);
     deviceInfo = createDeviceInfo(streamVolumeManager);
+    if (builder.throwWhenStuckBuffering) {
+      player.experimental_throwWhenStuckBuffering();
+    }
   }
 
   @Override
@@ -505,25 +509,18 @@ public class SimpleExoPlayer extends BasePlayer
    * <p>Note that the scaling mode only applies if a {@link MediaCodec}-based video {@link Renderer}
    * is enabled and if the output surface is owned by a {@link android.view.SurfaceView}.
    *
-   * @param videoScalingMode The video scaling mode.
+   * @param videoScalingMode The {@link Renderer.VideoScalingMode}.
    */
   @Override
-  public void setVideoScalingMode(@C.VideoScalingMode int videoScalingMode) {
+  public void setVideoScalingMode(@Renderer.VideoScalingMode int videoScalingMode) {
     verifyApplicationThread();
     this.videoScalingMode = videoScalingMode;
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_VIDEO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_SCALING_MODE)
-            .setPayload(videoScalingMode)
-            .send();
-      }
-    }
+    sendRendererMessage(C.TRACK_TYPE_VIDEO, Renderer.MSG_SET_SCALING_MODE, videoScalingMode);
   }
 
   @Override
-  public @C.VideoScalingMode int getVideoScalingMode() {
+  @Renderer.VideoScalingMode
+  public int getVideoScalingMode() {
     return videoScalingMode;
   }
 
@@ -662,11 +659,13 @@ public class SimpleExoPlayer extends BasePlayer
 
   @Override
   public void addAudioListener(AudioListener listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     audioListeners.add(listener);
   }
 
   @Override
   public void removeAudioListener(AudioListener listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     audioListeners.remove(listener);
   }
 
@@ -683,15 +682,7 @@ public class SimpleExoPlayer extends BasePlayer
     }
     if (!Util.areEqual(this.audioAttributes, audioAttributes)) {
       this.audioAttributes = audioAttributes;
-      for (Renderer renderer : renderers) {
-        if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-          player
-              .createMessage(renderer)
-              .setType(Renderer.MSG_SET_AUDIO_ATTRIBUTES)
-              .setPayload(audioAttributes)
-              .send();
-        }
-      }
+      sendRendererMessage(C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_AUDIO_ATTRIBUTES, audioAttributes);
       streamVolumeManager.setStreamType(Util.getStreamTypeForAudioUsage(audioAttributes.usage));
       for (AudioListener audioListener : audioListeners) {
         audioListener.onAudioAttributesChanged(audioAttributes);
@@ -718,15 +709,7 @@ public class SimpleExoPlayer extends BasePlayer
       return;
     }
     this.audioSessionId = audioSessionId;
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_AUDIO_SESSION_ID)
-            .setPayload(audioSessionId)
-            .send();
-      }
-    }
+    sendRendererMessage(C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_AUDIO_SESSION_ID, audioSessionId);
     if (audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
       notifyAudioSessionIdSet();
     }
@@ -740,15 +723,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void setAuxEffectInfo(AuxEffectInfo auxEffectInfo) {
     verifyApplicationThread();
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_AUX_EFFECT_INFO)
-            .setPayload(auxEffectInfo)
-            .send();
-      }
-    }
+    sendRendererMessage(C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_AUX_EFFECT_INFO, auxEffectInfo);
   }
 
   @Override
@@ -787,15 +762,8 @@ public class SimpleExoPlayer extends BasePlayer
       return;
     }
     this.skipSilenceEnabled = skipSilenceEnabled;
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_SKIP_SILENCE_ENABLED)
-            .setPayload(skipSilenceEnabled)
-            .send();
-      }
-    }
+    sendRendererMessage(
+        C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_SKIP_SILENCE_ENABLED, skipSilenceEnabled);
     notifySkipSilenceEnabledChanged();
   }
 
@@ -841,7 +809,7 @@ public class SimpleExoPlayer extends BasePlayer
    * @param listener The listener to be added.
    */
   public void addAnalyticsListener(AnalyticsListener listener) {
-    verifyApplicationThread();
+    // Don't verify application thread. We allow calls to this method from any thread.
     analyticsCollector.addListener(listener);
   }
 
@@ -851,7 +819,7 @@ public class SimpleExoPlayer extends BasePlayer
    * @param listener The listener to be removed.
    */
   public void removeAnalyticsListener(AnalyticsListener listener) {
-    verifyApplicationThread();
+    // Don't verify application thread. We allow calls to this method from any thread.
     analyticsCollector.removeListener(listener);
   }
 
@@ -940,11 +908,13 @@ public class SimpleExoPlayer extends BasePlayer
 
   @Override
   public void addVideoListener(com.google.android.exoplayer2.video.VideoListener listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     videoListeners.add(listener);
   }
 
   @Override
   public void removeVideoListener(com.google.android.exoplayer2.video.VideoListener listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     videoListeners.remove(listener);
   }
 
@@ -952,15 +922,8 @@ public class SimpleExoPlayer extends BasePlayer
   public void setVideoFrameMetadataListener(VideoFrameMetadataListener listener) {
     verifyApplicationThread();
     videoFrameMetadataListener = listener;
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_VIDEO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_VIDEO_FRAME_METADATA_LISTENER)
-            .setPayload(listener)
-            .send();
-      }
-    }
+    sendRendererMessage(
+        C.TRACK_TYPE_VIDEO, Renderer.MSG_SET_VIDEO_FRAME_METADATA_LISTENER, listener);
   }
 
   @Override
@@ -969,30 +932,16 @@ public class SimpleExoPlayer extends BasePlayer
     if (videoFrameMetadataListener != listener) {
       return;
     }
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_VIDEO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_VIDEO_FRAME_METADATA_LISTENER)
-            .setPayload(null)
-            .send();
-      }
-    }
+    sendRendererMessage(
+        C.TRACK_TYPE_VIDEO, Renderer.MSG_SET_VIDEO_FRAME_METADATA_LISTENER, /* payload= */ null);
   }
 
   @Override
   public void setCameraMotionListener(CameraMotionListener listener) {
     verifyApplicationThread();
     cameraMotionListener = listener;
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_CAMERA_MOTION) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_CAMERA_MOTION_LISTENER)
-            .setPayload(listener)
-            .send();
-      }
-    }
+    sendRendererMessage(
+        C.TRACK_TYPE_CAMERA_MOTION, Renderer.MSG_SET_CAMERA_MOTION_LISTENER, listener);
   }
 
   @Override
@@ -1001,20 +950,8 @@ public class SimpleExoPlayer extends BasePlayer
     if (cameraMotionListener != listener) {
       return;
     }
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_CAMERA_MOTION) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_CAMERA_MOTION_LISTENER)
-            .setPayload(null)
-            .send();
-      }
-    }
-  }
-
-  /** Returns whether skipping silences in the audio stream is enabled. */
-  public boolean isSkipSilenceEnabled() {
-    return skipSilenceEnabled;
+    sendRendererMessage(
+        C.TRACK_TYPE_CAMERA_MOTION, Renderer.MSG_SET_CAMERA_MOTION_LISTENER, /* payload= */ null);
   }
 
   /**
@@ -1047,15 +984,20 @@ public class SimpleExoPlayer extends BasePlayer
 
   @Override
   public void addTextOutput(TextOutput listener) {
-    if (!currentCues.isEmpty()) {
-      listener.onCues(currentCues);
-    }
+    // Don't verify application thread. We allow calls to this method from any thread.
     textOutputs.add(listener);
   }
 
   @Override
   public void removeTextOutput(TextOutput listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     textOutputs.remove(listener);
+  }
+
+  @Override
+  public List<Cue> getCurrentCues() {
+    verifyApplicationThread();
+    return currentCues;
   }
 
   /**
@@ -1085,11 +1027,13 @@ public class SimpleExoPlayer extends BasePlayer
 
   @Override
   public void addMetadataOutput(MetadataOutput listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     metadataOutputs.add(listener);
   }
 
   @Override
   public void removeMetadataOutput(MetadataOutput listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     metadataOutputs.remove(listener);
   }
 
@@ -1194,13 +1138,13 @@ public class SimpleExoPlayer extends BasePlayer
 
   @Override
   public void addListener(Player.EventListener listener) {
-    verifyApplicationThread();
+    // Don't verify application thread. We allow calls to this method from any thread.
     player.addListener(listener);
   }
 
   @Override
   public void removeListener(Player.EventListener listener) {
-    verifyApplicationThread();
+    // Don't verify application thread. We allow calls to this method from any thread.
     player.removeListener(listener);
   }
 
@@ -1755,11 +1699,13 @@ public class SimpleExoPlayer extends BasePlayer
 
   @Override
   public void addDeviceListener(DeviceListener listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     deviceListeners.add(listener);
   }
 
   @Override
   public void removeDeviceListener(DeviceListener listener) {
+    // Don't verify application thread. We allow calls to this method from any thread.
     deviceListeners.remove(listener);
   }
 
@@ -1804,6 +1750,19 @@ public class SimpleExoPlayer extends BasePlayer
     verifyApplicationThread();
     streamVolumeManager.setMuted(muted);
   }
+
+  /**
+   * Sets whether the player should throw an {@link IllegalStateException} when methods are called
+   * from a thread other than the one associated with {@link #getApplicationLooper()}.
+   *
+   * <p>The default is {@code false}, but will change to {@code true} in the future.
+   *
+   * @param throwsWhenUsingWrongThread Whether to throw when methods are called from a wrong thread.
+   */
+  public void setThrowsWhenUsingWrongThread(boolean throwsWhenUsingWrongThread) {
+    this.throwsWhenUsingWrongThread = throwsWhenUsingWrongThread;
+  }
+
 
   // TVirl: allow changing release timeout on-the-fly
   public void experimental_setReleaseTimeoutMs(long releaseTimeoutMs) {
@@ -1862,15 +1821,10 @@ public class SimpleExoPlayer extends BasePlayer
 
   private void setVideoDecoderOutputBufferRendererInternal(
       @Nullable VideoDecoderOutputBufferRenderer videoDecoderOutputBufferRenderer) {
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_VIDEO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_VIDEO_DECODER_OUTPUT_BUFFER_RENDERER)
-            .setPayload(videoDecoderOutputBufferRenderer)
-            .send();
-      }
-    }
+    sendRendererMessage(
+        C.TRACK_TYPE_VIDEO,
+        Renderer.MSG_SET_VIDEO_DECODER_OUTPUT_BUFFER_RENDERER,
+        videoDecoderOutputBufferRenderer);
     this.videoDecoderOutputBufferRenderer = videoDecoderOutputBufferRenderer;
   }
 
@@ -1886,15 +1840,7 @@ public class SimpleExoPlayer extends BasePlayer
 
   private void sendVolumeToRenderers() {
     float scaledVolume = audioVolume * audioFocusManager.getVolumeMultiplier();
-    for (Renderer renderer : renderers) {
-      if (renderer.getTrackType() == C.TRACK_TYPE_AUDIO) {
-        player
-            .createMessage(renderer)
-            .setType(Renderer.MSG_SET_VOLUME)
-            .setPayload(scaledVolume)
-            .send();
-      }
-    }
+    sendRendererMessage(C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_VOLUME, scaledVolume);
   }
 
   private void notifyAudioSessionIdSet() {
@@ -1957,12 +1903,22 @@ public class SimpleExoPlayer extends BasePlayer
 
   private void verifyApplicationThread() {
     if (Looper.myLooper() != getApplicationLooper()) {
+      if (throwsWhenUsingWrongThread) {
+        throw new IllegalStateException(WRONG_THREAD_ERROR_MESSAGE);
+      }
       Log.w(
           TAG,
-          "Player is accessed on the wrong thread. See "
-              + "https://exoplayer.dev/issues/player-accessed-on-wrong-thread",
+          WRONG_THREAD_ERROR_MESSAGE,
           hasNotifiedFullWrongThreadWarning ? null : new IllegalStateException());
       hasNotifiedFullWrongThreadWarning = true;
+    }
+  }
+
+  private void sendRendererMessage(int trackType, int messageType, @Nullable Object payload) {
+    for (Renderer renderer : renderers) {
+      if (renderer.getTrackType() == trackType) {
+        player.createMessage(renderer).setType(messageType).setPayload(payload).send();
+      }
     }
   }
 

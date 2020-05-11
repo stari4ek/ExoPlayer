@@ -40,6 +40,7 @@ import com.google.android.exoplayer2.scheduler.RequirementsWatcher;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSource.Factory;
 import com.google.android.exoplayer2.upstream.cache.Cache;
+import com.google.android.exoplayer2.upstream.cache.CacheDataSource;
 import com.google.android.exoplayer2.upstream.cache.CacheEvictor;
 import com.google.android.exoplayer2.upstream.cache.NoOpCacheEvictor;
 import com.google.android.exoplayer2.util.Assertions;
@@ -61,7 +62,9 @@ import java.util.concurrent.CopyOnWriteArraySet;
  *
  * <p>A download manager instance must be accessed only from the thread that created it, unless that
  * thread does not have a {@link Looper}. In that case, it must be accessed only from the
- * application's main thread. Registered listeners will be called on the same thread.
+ * application's main thread. Registered listeners will be called on the same thread. In all cases
+ * the `Looper` of the thread from which the manager must be accessed can be queried using {@link
+ * #getApplicationLooper()}.
  */
 public final class DownloadManager {
 
@@ -166,7 +169,7 @@ public final class DownloadManager {
 
   private final Context context;
   private final WritableDownloadIndex downloadIndex;
-  private final Handler mainHandler;
+  private final Handler applicationHandler;
   private final InternalHandler internalHandler;
   private final RequirementsWatcher.Listener requirementsListener;
   private final CopyOnWriteArraySet<Listener> listeners;
@@ -197,7 +200,10 @@ public final class DownloadManager {
     this(
         context,
         new DefaultDownloadIndex(databaseProvider),
-        new DefaultDownloaderFactory(new DownloaderConstructorHelper(cache, upstreamFactory)));
+        new DefaultDownloaderFactory(
+            new CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(upstreamFactory)));
   }
 
   /**
@@ -220,7 +226,7 @@ public final class DownloadManager {
 
     @SuppressWarnings("methodref.receiver.bound.invalid")
     Handler mainHandler = Util.createHandler(this::handleMainMessage);
-    this.mainHandler = mainHandler;
+    this.applicationHandler = mainHandler;
     HandlerThread internalThread = new HandlerThread("ExoPlayer:DownloadManager");
     internalThread.start();
     internalHandler =
@@ -244,6 +250,14 @@ public final class DownloadManager {
     internalHandler
         .obtainMessage(MSG_INITIALIZE, notMetRequirements, /* unused */ 0)
         .sendToTarget();
+  }
+
+  /**
+   * Returns the {@link Looper} associated with the application thread that's used to access the
+   * manager, and on which the manager will call its {@link Listener Listeners}.
+   */
+  public Looper getApplicationLooper() {
+    return applicationHandler.getLooper();
   }
 
   /** Returns whether the manager has completed initialization. */
@@ -484,7 +498,7 @@ public final class DownloadManager {
         // Restore the interrupted status.
         Thread.currentThread().interrupt();
       }
-      mainHandler.removeCallbacksAndMessages(/* token= */ null);
+      applicationHandler.removeCallbacksAndMessages(/* token= */ null);
       // Reset state.
       downloads = Collections.emptyList();
       pendingMessages = 0;
@@ -730,7 +744,7 @@ public final class DownloadManager {
           break;
         case MSG_CONTENT_LENGTH_CHANGED:
           task = (Task) message.obj;
-          onContentLengthChanged(task);
+          onContentLengthChanged(task, Util.toLong(message.arg1, message.arg2));
           return; // No need to post back to mainHandler.
         case MSG_UPDATE_PROGRESS:
           updateProgress();
@@ -1005,7 +1019,7 @@ public final class DownloadManager {
           // Cancel the downloading task.
           activeTask.cancel(/* released= */ false);
         }
-        // The activeTask is either a remove task, or a downloading task that we just cancelled. In
+        // The activeTask is either a remove task, or a downloading task that we just canceled. In
         // the latter case we need to wait for the task to stop before we start a remove task.
         return;
       }
@@ -1026,9 +1040,8 @@ public final class DownloadManager {
 
     // Task event processing.
 
-    private void onContentLengthChanged(Task task) {
+    private void onContentLengthChanged(Task task, long contentLength) {
       String downloadId = task.request.id;
-      long contentLength = task.contentLength;
       Download download =
           Assertions.checkNotNull(getDownload(downloadId, /* loadFromIndex= */ false));
       if (contentLength == download.contentLength || contentLength == C.LENGTH_UNSET) {
@@ -1271,7 +1284,6 @@ public final class DownloadManager {
       if (!isCanceled) {
         isCanceled = true;
         downloader.cancel();
-        interrupt();
       }
     }
 
@@ -1321,7 +1333,13 @@ public final class DownloadManager {
         this.contentLength = contentLength;
         @Nullable Handler internalHandler = this.internalHandler;
         if (internalHandler != null) {
-          internalHandler.obtainMessage(MSG_CONTENT_LENGTH_CHANGED, this).sendToTarget();
+          internalHandler
+              .obtainMessage(
+                  MSG_CONTENT_LENGTH_CHANGED,
+                  (int) (contentLength >> 32),
+                  (int) contentLength,
+                  this)
+              .sendToTarget();
         }
       }
     }

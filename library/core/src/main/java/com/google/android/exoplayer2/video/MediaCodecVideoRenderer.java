@@ -55,6 +55,7 @@ import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.TraceUtil;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoRendererEventListener.EventDispatcher;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
@@ -98,6 +99,24 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   /** Magic frame render timestamp that indicates the EOS in tunneling mode. */
   private static final long TUNNELING_EOS_PRESENTATION_TIME_US = Long.MAX_VALUE;
 
+  // TODO: Remove reflection once we target API level 30.
+  @Nullable private static final Method surfaceSetFrameRateMethod;
+
+  static {
+    @Nullable Method setFrameRateMethod = null;
+    if (Util.SDK_INT >= 30) {
+      try {
+        setFrameRateMethod = Surface.class.getMethod("setFrameRate", float.class, int.class);
+      } catch (NoSuchMethodException e) {
+        // Do nothing.
+      }
+    }
+    surfaceSetFrameRateMethod = setFrameRateMethod;
+  }
+  // TODO: Remove these constants and use those defined by Surface once we target API level 30.
+  private static final int SURFACE_FRAME_RATE_COMPATIBILITY_DEFAULT = 0;
+  private static final int SURFACE_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE = 1;
+
   private static boolean evaluatedDeviceNeedsSetOutputSurfaceWorkaround;
   private static boolean deviceNeedsSetOutputSurfaceWorkaround;
 
@@ -113,6 +132,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   private boolean codecHandlesHdr10PlusOutOfBandMetadata;
 
   private Surface surface;
+  private float surfaceFrameRate;
   private Surface dummySurface;
   @VideoScalingMode private int scalingMode;
   private boolean renderedFirstFrameAfterReset;
@@ -128,13 +148,14 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   private long totalVideoFrameProcessingOffsetUs;
   private int videoFrameProcessingOffsetCount;
 
-  private int pendingRotationDegrees;
-  private float pendingPixelWidthHeightRatio;
   @Nullable private MediaFormat currentMediaFormat;
+  private int mediaFormatWidth;
+  private int mediaFormatHeight;
   private int currentWidth;
   private int currentHeight;
   private int currentUnappliedRotationDegrees;
   private float currentPixelWidthHeightRatio;
+  private float currentFrameRate;
   private int reportedWidth;
   private int reportedHeight;
   private int reportedUnappliedRotationDegrees;
@@ -235,8 +256,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     currentWidth = Format.NO_VALUE;
     currentHeight = Format.NO_VALUE;
     currentPixelWidthHeightRatio = Format.NO_VALUE;
-    pendingPixelWidthHeightRatio = Format.NO_VALUE;
     scalingMode = VIDEO_SCALING_MODE_DEFAULT;
+    mediaFormatWidth = Format.NO_VALUE;
+    mediaFormatHeight = Format.NO_VALUE;
     clearReportedVideoSize();
   }
 
@@ -408,6 +430,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     lastRenderTimeUs = SystemClock.elapsedRealtime() * 1000;
     totalVideoFrameProcessingOffsetUs = 0;
     videoFrameProcessingOffsetCount = 0;
+    updateSurfaceFrameRate(/* isNewSurface= */ false);
   }
 
   @Override
@@ -415,6 +438,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     joiningDeadlineMs = C.TIME_UNSET;
     maybeNotifyDroppedFrames();
     maybeNotifyVideoFrameProcessingOffset();
+    clearSurfaceFrameRate();
     super.onStopped();
   }
 
@@ -479,7 +503,10 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     }
     // We only need to update the codec if the surface has changed.
     if (this.surface != surface) {
+      clearSurfaceFrameRate();
       this.surface = surface;
+      updateSurfaceFrameRate(/* isNewSurface= */ true);
+
       @State int state = getState();
       MediaCodec codec = getCodec();
       if (codec != null) {
@@ -487,7 +514,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
           setOutputSurfaceV23(codec, surface);
         } else {
           releaseCodec();
-          maybeInitCodec();
+          maybeInitCodecOrPassthrough();
         }
       }
       if (surface != null && surface != dummySurface) {
@@ -577,6 +604,12 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @Override
+  public void setOperatingRate(float operatingRate) throws ExoPlaybackException {
+    super.setOperatingRate(operatingRate);
+    updateSurfaceFrameRate(/* isNewSurface= */ false);
+  }
+
+  @Override
   protected float getCodecOperatingRateV23(
       float operatingRate, Format format, Format[] streamFormats) {
     // Use the highest known stream frame-rate up front, to avoid having to reconfigure the codec
@@ -603,10 +636,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   @Override
   protected void onInputFormatChanged(FormatHolder formatHolder) throws ExoPlaybackException {
     super.onInputFormatChanged(formatHolder);
-    Format newFormat = formatHolder.format;
-    eventDispatcher.inputFormatChanged(newFormat);
-    pendingPixelWidthHeightRatio = newFormat.pixelWidthHeightRatio;
-    pendingRotationDegrees = newFormat.rotationDegrees;
+    eventDispatcher.inputFormatChanged(formatHolder.format);
   }
 
   /**
@@ -637,20 +667,55 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
             && outputMediaFormat.containsKey(KEY_CROP_LEFT)
             && outputMediaFormat.containsKey(KEY_CROP_BOTTOM)
             && outputMediaFormat.containsKey(KEY_CROP_TOP);
-    int mediaFormatWidth =
+    mediaFormatWidth =
         hasCrop
             ? outputMediaFormat.getInteger(KEY_CROP_RIGHT)
                 - outputMediaFormat.getInteger(KEY_CROP_LEFT)
                 + 1
             : outputMediaFormat.getInteger(MediaFormat.KEY_WIDTH);
-    int mediaFormatHeight =
+    mediaFormatHeight =
         hasCrop
             ? outputMediaFormat.getInteger(KEY_CROP_BOTTOM)
                 - outputMediaFormat.getInteger(KEY_CROP_TOP)
                 + 1
             : outputMediaFormat.getInteger(MediaFormat.KEY_HEIGHT);
-    processOutputFormat(codec, mediaFormatWidth, mediaFormatHeight);
+
+    // Must be applied each time the output MediaFormat changes.
+    codec.setVideoScalingMode(scalingMode);
     maybeNotifyVideoFrameProcessingOffset();
+  }
+
+  @Override
+  protected void onOutputFormatChanged(Format outputFormat) {
+    configureOutput(outputFormat);
+  }
+
+  @Override
+  protected void configureOutput(Format outputFormat) {
+    if (tunneling) {
+      currentWidth = outputFormat.width;
+      currentHeight = outputFormat.height;
+    } else {
+      currentWidth = mediaFormatWidth;
+      currentHeight = mediaFormatHeight;
+    }
+    currentPixelWidthHeightRatio = outputFormat.pixelWidthHeightRatio;
+    if (Util.SDK_INT >= 21) {
+      // On API level 21 and above the decoder applies the rotation when rendering to the surface.
+      // Hence currentUnappliedRotation should always be 0. For 90 and 270 degree rotations, we need
+      // to flip the width, height and pixel aspect ratio to reflect the rotation that was applied.
+      if (outputFormat.rotationDegrees == 90 || outputFormat.rotationDegrees == 270) {
+        int rotatedHeight = currentWidth;
+        currentWidth = currentHeight;
+        currentHeight = rotatedHeight;
+        currentPixelWidthHeightRatio = 1 / currentPixelWidthHeightRatio;
+      }
+    } else {
+      // On API level 20 and below the decoder does not apply the rotation.
+      currentUnappliedRotationDegrees = outputFormat.rotationDegrees;
+    }
+    currentFrameRate = outputFormat.frameRate;
+    updateSurfaceFrameRate(/* isNewSurface= */ false);
   }
 
   @Override
@@ -688,7 +753,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   protected boolean processOutputBuffer(
       long positionUs,
       long elapsedRealtimeUs,
-      MediaCodec codec,
+      @Nullable MediaCodec codec,
       ByteBuffer buffer,
       int bufferIndex,
       int bufferFlags,
@@ -698,6 +763,8 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       boolean isLastBuffer,
       Format format)
       throws ExoPlaybackException {
+    Assertions.checkNotNull(codec); // Can not render video without codec
+
     if (initialPositionUs == C.TIME_UNSET) {
       initialPositionUs = positionUs;
     }
@@ -814,28 +881,6 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     return false;
   }
 
-  private void processOutputFormat(MediaCodec codec, int width, int height) {
-    currentWidth = width;
-    currentHeight = height;
-    currentPixelWidthHeightRatio = pendingPixelWidthHeightRatio;
-    if (Util.SDK_INT >= 21) {
-      // On API level 21 and above the decoder applies the rotation when rendering to the surface.
-      // Hence currentUnappliedRotation should always be 0. For 90 and 270 degree rotations, we need
-      // to flip the width, height and pixel aspect ratio to reflect the rotation that was applied.
-      if (pendingRotationDegrees == 90 || pendingRotationDegrees == 270) {
-        int rotatedHeight = currentWidth;
-        currentWidth = currentHeight;
-        currentHeight = rotatedHeight;
-        currentPixelWidthHeightRatio = 1 / currentPixelWidthHeightRatio;
-      }
-    } else {
-      // On API level 20 and below the decoder does not apply the rotation.
-      currentUnappliedRotationDegrees = pendingRotationDegrees;
-    }
-    // Must be applied each time the output MediaFormat changes.
-    codec.setVideoScalingMode(scalingMode);
-  }
-
   private void notifyFrameMetadataListener(
       long presentationTimeUs, long releaseTimeNs, Format format, MediaFormat mediaFormat) {
     if (frameMetadataListener != null) {
@@ -846,10 +891,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
 
   /** Called when a buffer was processed in tunneling mode. */
   protected void onProcessedTunneledBuffer(long presentationTimeUs) {
-    @Nullable Format format = updateOutputFormatForTime(presentationTimeUs);
-    if (format != null) {
-      processOutputFormat(getCodec(), format.width, format.height);
-    }
+    updateOutputFormatForTime(presentationTimeUs);
     maybeNotifyVideoSizeChanged();
     decoderCounters.renderedOutputBufferCount++;
     maybeNotifyRenderedFirstFrame();
@@ -1041,6 +1083,52 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     decoderCounters.renderedOutputBufferCount++;
     consecutiveDroppedFrameCount = 0;
     maybeNotifyRenderedFirstFrame();
+  }
+
+  /**
+   * Updates the frame-rate of the current {@link #surface} based on the renderer operating rate,
+   * frame-rate of the content, and whether the renderer is started.
+   *
+   * @param isNewSurface Whether the current {@link #surface} is new.
+   */
+  private void updateSurfaceFrameRate(boolean isNewSurface) {
+    if (Util.SDK_INT < 30 || surface == null || surface == dummySurface) {
+      return;
+    }
+    boolean shouldSetFrameRate = getState() == STATE_STARTED && currentFrameRate != Format.NO_VALUE;
+    float surfaceFrameRate = shouldSetFrameRate ? currentFrameRate * getOperatingRate() : 0;
+    // We always set the frame-rate if we have a new surface, since we have no way of knowing what
+    // it might have been set to previously.
+    if (this.surfaceFrameRate == surfaceFrameRate && !isNewSurface) {
+      return;
+    }
+    this.surfaceFrameRate = surfaceFrameRate;
+    setSurfaceFrameRateV30(surface, surfaceFrameRate);
+  }
+
+  /** Clears the frame-rate of the current {@link #surface}. */
+  private void clearSurfaceFrameRate() {
+    if (Util.SDK_INT < 30 || surface == null || surface == dummySurface || surfaceFrameRate == 0) {
+      return;
+    }
+    surfaceFrameRate = 0;
+    setSurfaceFrameRateV30(surface, /* frameRate= */ 0);
+  }
+
+  @RequiresApi(30)
+  private void setSurfaceFrameRateV30(Surface surface, float frameRate) {
+    if (surfaceSetFrameRateMethod == null) {
+      Log.e(TAG, "Failed to call Surface.setFrameRate (method does not exist)");
+    }
+    int compatibility =
+        frameRate == 0
+            ? SURFACE_FRAME_RATE_COMPATIBILITY_DEFAULT
+            : SURFACE_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE;
+    try {
+      surfaceSetFrameRateMethod.invoke(surface, frameRate, compatibility);
+    } catch (Exception e) {
+      Log.e(TAG, "Failed to call Surface.setFrameRate", e);
+    }
   }
 
   private boolean shouldUseDummySurface(MediaCodecInfo codecInfo) {

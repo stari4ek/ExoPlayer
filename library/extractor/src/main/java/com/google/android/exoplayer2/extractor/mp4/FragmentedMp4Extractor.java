@@ -965,20 +965,20 @@ public class FragmentedMp4Extractor implements Extractor {
 
     // Offset to the entire video timeline. In the presence of B-frames this is usually used to
     // ensure that the first frame's presentation timestamp is zero.
-    long edtsOffset = 0;
+    long edtsOffsetUs = 0;
 
     // Currently we only support a single edit that moves the entire media timeline (indicated by
     // duration == 0). Other uses of edit lists are uncommon and unsupported.
     if (track.editListDurations != null && track.editListDurations.length == 1
         && track.editListDurations[0] == 0) {
-      edtsOffset =
+      edtsOffsetUs =
           Util.scaleLargeTimestamp(
-              track.editListMediaTimes[0], C.MILLIS_PER_SECOND, track.timescale);
+              track.editListMediaTimes[0], C.MICROS_PER_SECOND, track.timescale);
     }
 
     int[] sampleSizeTable = fragment.sampleSizeTable;
-    int[] sampleCompositionTimeOffsetTable = fragment.sampleCompositionTimeOffsetTable;
-    long[] sampleDecodingTimeTable = fragment.sampleDecodingTimeTable;
+    int[] sampleCompositionTimeOffsetUsTable = fragment.sampleCompositionTimeOffsetUsTable;
+    long[] sampleDecodingTimeUsTable = fragment.sampleDecodingTimeUsTable;
     boolean[] sampleIsSyncFrameTable = fragment.sampleIsSyncFrameTable;
 
     boolean workaroundEveryVideoFrameIsSyncFrame = track.type == C.TRACK_TYPE_VIDEO
@@ -1002,13 +1002,13 @@ public class FragmentedMp4Extractor implements Extractor {
         // here, because unsigned integers will still be parsed correctly (unless their top bit is
         // set, which is never true in practice because sample offsets are always small).
         int sampleOffset = trun.readInt();
-        sampleCompositionTimeOffsetTable[i] =
-            (int) ((sampleOffset * C.MILLIS_PER_SECOND) / timescale);
+        sampleCompositionTimeOffsetUsTable[i] =
+            (int) ((sampleOffset * C.MICROS_PER_SECOND) / timescale);
       } else {
-        sampleCompositionTimeOffsetTable[i] = 0;
+        sampleCompositionTimeOffsetUsTable[i] = 0;
       }
-      sampleDecodingTimeTable[i] =
-          Util.scaleLargeTimestamp(cumulativeTime, C.MILLIS_PER_SECOND, timescale) - edtsOffset;
+      sampleDecodingTimeUsTable[i] =
+          Util.scaleLargeTimestamp(cumulativeTime, C.MICROS_PER_SECOND, timescale) - edtsOffsetUs;
       sampleSizeTable[i] = sampleSize;
       sampleIsSyncFrameTable[i] = ((sampleFlags >> 16) & 0x1) == 0
           && (!workaroundEveryVideoFrameIsSyncFrame || i == 0);
@@ -1297,7 +1297,7 @@ public class FragmentedMp4Extractor implements Extractor {
     Track track = currentTrackBundle.track;
     TrackOutput output = currentTrackBundle.output;
     int sampleIndex = currentTrackBundle.currentSampleIndex;
-    long sampleTimeUs = fragment.getSamplePresentationTime(sampleIndex) * 1000L;
+    long sampleTimeUs = fragment.getSamplePresentationTimeUs(sampleIndex);
     if (timestampAdjuster != null) {
       sampleTimeUs = timestampAdjuster.adjustSampleTimestamp(sampleTimeUs);
     }
@@ -1545,10 +1545,9 @@ public class FragmentedMp4Extractor implements Extractor {
      * @param timeUs The seek time, in microseconds.
      */
     public void seek(long timeUs) {
-      long timeMs = C.usToMs(timeUs);
       int searchIndex = currentSampleIndex;
       while (searchIndex < fragment.sampleCount
-          && fragment.getSamplePresentationTime(searchIndex) < timeMs) {
+          && fragment.getSamplePresentationTimeUs(searchIndex) < timeUs) {
         if (fragment.sampleIsSyncFrameTable[searchIndex]) {
           firstSampleToOutputIndex = searchIndex;
         }
@@ -1611,9 +1610,10 @@ public class FragmentedMp4Extractor implements Extractor {
       encryptionSignalByte.data[0] =
           (byte) (vectorSize | (writeSubsampleEncryptionData ? 0x80 : 0));
       encryptionSignalByte.setPosition(0);
-      output.sampleData(encryptionSignalByte, 1);
+      output.sampleData(encryptionSignalByte, 1, TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
       // Write the vector.
-      output.sampleData(initializationVectorData, vectorSize);
+      output.sampleData(
+          initializationVectorData, vectorSize, TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
 
       if (!writeSubsampleEncryptionData) {
         return 1 + vectorSize;
@@ -1630,12 +1630,15 @@ public class FragmentedMp4Extractor implements Extractor {
         // clearDataSize = clearHeaderSize (unsigned short)
         scratch.data[2] = (byte) ((clearHeaderSize >> 8) & 0xFF);
         scratch.data[3] = (byte) (clearHeaderSize & 0xFF);
-        // encryptedDataSize = sampleSize (unsigned short)
+        // encryptedDataSize = sampleSize (unsigned int)
         scratch.data[4] = (byte) ((sampleSize >> 24) & 0xFF);
         scratch.data[5] = (byte) ((sampleSize >> 16) & 0xFF);
         scratch.data[6] = (byte) ((sampleSize >> 8) & 0xFF);
         scratch.data[7] = (byte) (sampleSize & 0xFF);
-        output.sampleData(scratch, SINGLE_SUBSAMPLE_ENCRYPTION_DATA_LENGTH);
+        output.sampleData(
+            scratch,
+            SINGLE_SUBSAMPLE_ENCRYPTION_DATA_LENGTH,
+            TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
         return 1 + vectorSize + SINGLE_SUBSAMPLE_ENCRYPTION_DATA_LENGTH;
       }
 
@@ -1658,7 +1661,8 @@ public class FragmentedMp4Extractor implements Extractor {
         subsampleEncryptionData = scratch;
       }
 
-      output.sampleData(subsampleEncryptionData, subsampleDataLength);
+      output.sampleData(
+          subsampleEncryptionData, subsampleDataLength, TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
       return 1 + vectorSize + subsampleDataLength;
     }
 

@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2;
 
+import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
+
 import android.annotation.SuppressLint;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,6 +30,7 @@ import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.MediaSourceFactory;
 import com.google.android.exoplayer2.source.ShuffleOrder;
 import com.google.android.exoplayer2.source.TrackGroupArray;
+import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
@@ -62,7 +65,7 @@ import java.util.concurrent.TimeoutException;
 
   private final Renderer[] renderers;
   private final TrackSelector trackSelector;
-  private final Handler eventHandler;
+  private final Handler applicationHandler;
   private final ExoPlayerImplInternal internalPlayer;
   private final Handler internalPlayerHandler;
   private final CopyOnWriteArrayList<ListenerHolder> listeners;
@@ -84,6 +87,7 @@ import java.util.concurrent.TimeoutException;
   private SeekParameters seekParameters;
   private ShuffleOrder shuffleOrder;
   private boolean pauseAtEndOfMediaItems;
+  private boolean hasAdsMediaSource;
 
   // Playback information when there is no pending seek/set source operation.
   private PlaybackInfo playbackInfo;
@@ -106,8 +110,8 @@ import java.util.concurrent.TimeoutException;
    *     loads and other initial preparation steps happen immediately. If true, these initial
    *     preparations are triggered only when the player starts buffering the media.
    * @param clock The {@link Clock}.
-   * @param looper The {@link Looper} which must be used for all calls to the player and which is
-   *     used to call listeners on.
+   * @param applicationLooper The {@link Looper} that must be used for all calls to the player and
+   *     which is used to call listeners on.
    */
   @SuppressLint("HandlerLeak")
   public ExoPlayerImpl(
@@ -119,12 +123,12 @@ import java.util.concurrent.TimeoutException;
       @Nullable AnalyticsCollector analyticsCollector,
       boolean useLazyPreparation,
       Clock clock,
-      Looper looper) {
+      Looper applicationLooper) {
     Log.i(TAG, "Init " + Integer.toHexString(System.identityHashCode(this)) + " ["
         + ExoPlayerLibraryInfo.VERSION_SLASHY + "] [" + Util.DEVICE_DEBUG_INFO + "]");
     Assertions.checkState(renderers.length > 0);
-    this.renderers = Assertions.checkNotNull(renderers);
-    this.trackSelector = Assertions.checkNotNull(trackSelector);
+    this.renderers = checkNotNull(renderers);
+    this.trackSelector = checkNotNull(trackSelector);
     this.mediaSourceFactory = mediaSourceFactory;
     this.useLazyPreparation = useLazyPreparation;
     repeatMode = Player.REPEAT_MODE_OFF;
@@ -140,8 +144,8 @@ import java.util.concurrent.TimeoutException;
     playbackSpeed = Player.DEFAULT_PLAYBACK_SPEED;
     seekParameters = SeekParameters.DEFAULT;
     maskingWindowIndex = C.INDEX_UNSET;
-    eventHandler =
-        new Handler(looper) {
+    applicationHandler =
+        new Handler(applicationLooper) {
           @Override
           public void handleMessage(Message msg) {
             ExoPlayerImpl.this.handleEvent(msg);
@@ -162,7 +166,7 @@ import java.util.concurrent.TimeoutException;
             repeatMode,
             shuffleModeEnabled,
             analyticsCollector,
-            eventHandler,
+            applicationHandler,
             clock);
     internalPlayerHandler = new Handler(internalPlayer.getPlaybackLooper());
   }
@@ -228,7 +232,7 @@ import java.util.concurrent.TimeoutException;
 
   @Override
   public Looper getApplicationLooper() {
-    return eventHandler.getLooper();
+    return applicationHandler.getLooper();
   }
 
   @Override
@@ -397,9 +401,7 @@ import java.util.concurrent.TimeoutException;
   @Override
   public void addMediaSources(int index, List<MediaSource> mediaSources) {
     Assertions.checkArgument(index >= 0);
-    for (int i = 0; i < mediaSources.size(); i++) {
-      Assertions.checkArgument(mediaSources.get(i) != null);
-    }
+    validateMediaSources(mediaSources, /* mediaSourceReplacement= */ false);
     int currentWindowIndex = getCurrentWindowIndex();
     long currentPositionMs = getCurrentPosition();
     Timeline oldTimeline = getCurrentTimeline();
@@ -566,7 +568,7 @@ import java.util.concurrent.TimeoutException;
       // general because the midroll ad preceding the seek destination must be played before the
       // content position can be played, if a different ad is playing at the moment.
       Log.w(TAG, "seekTo ignored because an ad is playing");
-      eventHandler
+      applicationHandler
           .obtainMessage(
               ExoPlayerImplInternal.MSG_PLAYBACK_INFO_CHANGED,
               /* operationAcks */ 1,
@@ -688,7 +690,7 @@ import java.util.concurrent.TimeoutException;
                   ExoPlaybackException.createForUnexpected(
                       new RuntimeException(new TimeoutException("Player release timed out.")))));
     }
-    eventHandler.removeCallbacksAndMessages(null);
+    applicationHandler.removeCallbacksAndMessages(null);
     playbackInfo =
         getResetPlaybackInfo(
             /* clearPlaylist= */ false,
@@ -973,9 +975,7 @@ import java.util.concurrent.TimeoutException;
       int startWindowIndex,
       long startPositionMs,
       boolean resetToDefaultPosition) {
-    for (int i = 0; i < mediaSources.size(); i++) {
-      Assertions.checkArgument(mediaSources.get(i) != null);
-    }
+    validateMediaSources(mediaSources, /* mediaSourceReplacement= */ true);
     int currentWindowIndex = getCurrentWindowIndexInternal();
     long currentPositionMs = getCurrentPosition();
     pendingOperationAcks++;
@@ -1076,7 +1076,40 @@ import java.util.concurrent.TimeoutException;
       removed.add(mediaSourceHolders.remove(i));
     }
     shuffleOrder = shuffleOrder.cloneAndRemove(fromIndex, toIndexExclusive);
+    if (mediaSourceHolders.isEmpty()) {
+      hasAdsMediaSource = false;
+    }
     return removed;
+  }
+
+  /**
+   * Validates media sources before any modification of the existing list of media sources is made.
+   * This way we can throw an exception before changing the state of the player in case of a
+   * validation failure.
+   *
+   * @param mediaSources The media sources to set or add.
+   * @param mediaSourceReplacement Whether the given media sources will replace existing ones.
+   */
+  private void validateMediaSources(
+      List<MediaSource> mediaSources, boolean mediaSourceReplacement) {
+    if (hasAdsMediaSource && !mediaSourceReplacement && !mediaSources.isEmpty()) {
+      // Adding media sources to an ads media source is not allowed
+      // (see https://github.com/google/ExoPlayer/issues/3750).
+      throw new IllegalStateException();
+    }
+    int sizeAfterModification =
+        mediaSources.size() + (mediaSourceReplacement ? 0 : mediaSourceHolders.size());
+    for (int i = 0; i < mediaSources.size(); i++) {
+      MediaSource mediaSource = checkNotNull(mediaSources.get(i));
+      if (mediaSource instanceof AdsMediaSource) {
+        if (sizeAfterModification > 1) {
+          // Ads media sources only allowed with a single source
+          // (see https://github.com/google/ExoPlayer/issues/3750).
+          throw new IllegalArgumentException();
+        }
+        hasAdsMediaSource = true;
+      }
+    }
   }
 
   private PlaybackInfo maskTimeline() {

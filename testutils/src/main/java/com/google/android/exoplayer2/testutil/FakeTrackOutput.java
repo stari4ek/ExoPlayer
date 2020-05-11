@@ -35,11 +35,18 @@ import java.util.Collections;
 import java.util.List;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 
-/**
- * A fake {@link TrackOutput}.
- */
+/** A fake {@link TrackOutput}. */
 public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
 
+  public static final Factory DEFAULT_FACTORY =
+      (id, type) -> new FakeTrackOutput(/* deduplicateConsecutiveFormats= */ false);
+
+  /** Factory for {@link FakeTrackOutput} instances. */
+  public interface Factory {
+    FakeTrackOutput create(int id, int type);
+  }
+
+  private final boolean deduplicateConsecutiveFormats;
   private final ArrayList<DumpableSampleInfo> sampleInfos;
   private final ArrayList<Dumpable> dumpables;
 
@@ -49,7 +56,8 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
 
   @Nullable public Format lastFormat;
 
-  public FakeTrackOutput() {
+  public FakeTrackOutput(boolean deduplicateConsecutiveFormats) {
+    this.deduplicateConsecutiveFormats = deduplicateConsecutiveFormats;
     sampleInfos = new ArrayList<>();
     dumpables = new ArrayList<>();
     sampleData = Util.EMPTY_BYTE_ARRAY;
@@ -67,15 +75,27 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
 
   @Override
   public void format(Format format) {
-    Assertions.checkState(
-        receivedSampleInFormat,
-        "TrackOutput must receive at least one sampleMetadata() call between format() calls.");
+    if (!deduplicateConsecutiveFormats) {
+      Assertions.checkState(
+          receivedSampleInFormat,
+          "deduplicateConsecutiveFormats=false so TrackOutput must receive at least one"
+              + " sampleMetadata() call between format() calls.");
+    } else if (!receivedSampleInFormat) {
+      Dumpable dumpable = dumpables.remove(dumpables.size() - 1);
+      formatCount--;
+      Assertions.checkState(
+          dumpable instanceof DumpableFormat,
+          "receivedSampleInFormat=false so expected last dumpable to be a DumpableFormat. Found: "
+              + dumpable.getClass().getCanonicalName());
+    }
     receivedSampleInFormat = false;
     addFormat(format);
   }
 
   @Override
-  public int sampleData(DataReader input, int length, boolean allowEndOfInput) throws IOException {
+  public int sampleData(
+      DataReader input, int length, boolean allowEndOfInput, @SampleDataPart int sampleDataPart)
+      throws IOException {
     byte[] newData = new byte[length];
     int bytesAppended = input.read(newData, 0, length);
     if (bytesAppended == C.RESULT_END_OF_INPUT) {
@@ -90,7 +110,7 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
   }
 
   @Override
-  public void sampleData(ParsableByteArray data, int length) {
+  public void sampleData(ParsableByteArray data, int length, @SampleDataPart int sampleDataPart) {
     byte[] newData = new byte[length];
     data.readBytes(newData, 0, length);
     sampleData = TestUtil.joinByteArrays(sampleData, newData);
@@ -297,6 +317,7 @@ public final class FakeTrackOutput implements TrackOutput, Dumper.Dumpable {
       addIfNonDefault(dumper, "subsampleOffsetUs", format -> format.subsampleOffsetUs);
       addIfNonDefault(dumper, "selectionFlags", format -> format.selectionFlags);
       addIfNonDefault(dumper, "language", format -> format.language);
+      addIfNonDefault(dumper, "label", format -> format.label);
       if (format.drmInitData != null) {
         dumper.add("drmInitData", format.drmInitData.hashCode());
       }

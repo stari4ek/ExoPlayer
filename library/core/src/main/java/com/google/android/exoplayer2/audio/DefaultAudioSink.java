@@ -395,7 +395,7 @@ public final class DefaultAudioSink implements AudioSink {
   }
 
   @Override
-  public boolean supportsOutput(int channelCount, @C.Encoding int encoding) {
+  public boolean supportsOutput(int channelCount, int sampleRateHz, @C.Encoding int encoding) {
     if (Util.isEncodingLinearPcm(encoding)) {
       // AudioTrack supports 16-bit integer PCM output in all platform API versions, and float
       // output from platform API version 21 only. Other integer PCM encodings are resampled by this
@@ -446,7 +446,7 @@ public final class DefaultAudioSink implements AudioSink {
     @C.Encoding int encoding = inputEncoding;
     boolean useFloatOutput =
         enableFloatOutput
-            && supportsOutput(inputChannelCount, C.ENCODING_PCM_FLOAT)
+            && supportsOutput(inputChannelCount, inputSampleRate, C.ENCODING_PCM_FLOAT)
             && Util.isEncodingHighResolutionPcm(inputEncoding);
     AudioProcessor[] availableAudioProcessors =
         useFloatOutput ? toFloatPcmAvailableAudioProcessors : toIntPcmAvailableAudioProcessors;
@@ -1242,7 +1242,8 @@ public final class DefaultAudioSink implements AudioSink {
   private static int getFramesPerEncodedSample(@C.Encoding int encoding, ByteBuffer buffer) {
     switch (encoding) {
       case C.ENCODING_MP3:
-        return MpegAudioUtil.parseMpegAudioFrameSampleCount(buffer.get(buffer.position()));
+        int headerDataInBigEndian = Util.getBigEndianInt(buffer, buffer.position());
+        return MpegAudioUtil.parseMpegAudioFrameSampleCount(headerDataInBigEndian);
       case C.ENCODING_AAC_LC:
         return AacUtil.AAC_LC_AUDIO_SAMPLE_COUNT;
       case C.ENCODING_AAC_HE_V1:

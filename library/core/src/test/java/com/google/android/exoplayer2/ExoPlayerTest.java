@@ -19,6 +19,11 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.content.Context;
@@ -27,6 +32,8 @@ import android.graphics.SurfaceTexture;
 import android.media.AudioManager;
 import android.os.Looper;
 import android.view.Surface;
+import android.view.View;
+import android.view.ViewGroup;
 import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -48,6 +55,8 @@ import com.google.android.exoplayer2.source.SampleStream;
 import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.source.ads.AdPlaybackState;
+import com.google.android.exoplayer2.source.ads.AdsLoader;
+import com.google.android.exoplayer2.source.ads.AdsMediaSource;
 import com.google.android.exoplayer2.testutil.ActionSchedule;
 import com.google.android.exoplayer2.testutil.ActionSchedule.PlayerRunnable;
 import com.google.android.exoplayer2.testutil.ActionSchedule.PlayerTarget;
@@ -67,14 +76,17 @@ import com.google.android.exoplayer2.testutil.FakeTimeline;
 import com.google.android.exoplayer2.testutil.FakeTimeline.TimelineWindowDefinition;
 import com.google.android.exoplayer2.testutil.FakeTrackSelection;
 import com.google.android.exoplayer2.testutil.FakeTrackSelector;
+import com.google.android.exoplayer2.testutil.TestExoPlayer;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.upstream.Allocation;
 import com.google.android.exoplayer2.upstream.Allocator;
+import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory;
 import com.google.android.exoplayer2.upstream.Loader;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
+import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -2307,6 +2319,43 @@ public final class ExoPlayerTest {
   }
 
   @Test
+  public void sendMessages_withMediaRemoval_triggersCorrectMessagesAndDoesNotThrow()
+      throws Exception {
+    ExoPlayer player = new TestExoPlayer.Builder(context).build();
+    MediaSource mediaSource = new FakeMediaSource(new FakeTimeline(/* windowCount= */ 1));
+    player.addMediaSources(Arrays.asList(mediaSource, mediaSource));
+    player
+        .createMessage((messageType, payload) -> {})
+        .setPosition(/* windowIndex= */ 0, /* positionMs= */ 0)
+        .setDeleteAfterDelivery(false)
+        .send();
+    PlayerMessage.Target secondMediaItemTarget = mock(PlayerMessage.Target.class);
+    player
+        .createMessage(secondMediaItemTarget)
+        .setPosition(/* windowIndex= */ 1, /* positionMs= */ 0)
+        .setDeleteAfterDelivery(false)
+        .send();
+
+    // Play through media once to trigger all messages. This ensures any internally saved message
+    // indices are non-zero.
+    player.prepare();
+    player.play();
+    TestExoPlayer.runUntilPlaybackState(player, Player.STATE_ENDED);
+    verify(secondMediaItemTarget).handleMessage(anyInt(), any());
+
+    // Remove first item and play second item again to check if message is triggered again.
+    // After removal, any internally saved message indices are invalid and will throw
+    // IndexOutOfBoundsException if used without updating.
+    // See https://github.com/google/ExoPlayer/issues/7278.
+    player.removeMediaItem(/* index= */ 0);
+    player.seekTo(/* positionMs= */ 0);
+    TestExoPlayer.runUntilPlaybackState(player, Player.STATE_ENDED);
+
+    assertThat(player.getPlayerError()).isNull();
+    verify(secondMediaItemTarget, times(2)).handleMessage(anyInt(), any());
+  }
+
+  @Test
   public void setAndSwitchSurface() throws Exception {
     final List<Integer> rendererMessages = new ArrayList<>();
     Renderer videoRenderer =
@@ -2391,6 +2440,56 @@ public final class ExoPlayerTest {
         .isGreaterThan(mediaSource.getCreatedMediaPeriods().get(0).windowSequenceNumber);
     assertThat(mediaSource.getCreatedMediaPeriods().get(2).windowSequenceNumber)
         .isGreaterThan(mediaSource.getCreatedMediaPeriods().get(1).windowSequenceNumber);
+  }
+
+  @Test
+  public void timelineUpdateWithNewMidrollAdCuePoint_dropsPrebufferedPeriod() throws Exception {
+    Timeline timeline1 =
+        new FakeTimeline(new TimelineWindowDefinition(/* periodCount= */ 1, /* id= */ 0));
+    AdPlaybackState adPlaybackStateWithMidroll =
+        FakeTimeline.createAdPlaybackState(
+            /* adsPerAdGroup= */ 1,
+            /* adGroupTimesUs...= */ TimelineWindowDefinition
+                    .DEFAULT_WINDOW_OFFSET_IN_FIRST_PERIOD_US
+                + 5 * C.MICROS_PER_SECOND);
+    Timeline timeline2 =
+        new FakeTimeline(
+            new TimelineWindowDefinition(
+                /* periodCount= */ 1,
+                /* id= */ 0,
+                /* isSeekable= */ true,
+                /* isDynamic= */ false,
+                /* durationUs= */ 10_000_000,
+                adPlaybackStateWithMidroll));
+    FakeMediaSource mediaSource = new FakeMediaSource(timeline1, ExoPlayerTestRunner.VIDEO_FORMAT);
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder(TAG)
+            .pause()
+            .waitForPlaybackState(Player.STATE_READY)
+            .executeRunnable(() -> mediaSource.setNewSourceInfo(timeline2))
+            .waitForTimelineChanged(
+                timeline2, /* expectedReason= */ Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+            .play()
+            .build();
+    ExoPlayerTestRunner testRunner =
+        new ExoPlayerTestRunner.Builder(context)
+            .setMediaSources(mediaSource)
+            .setActionSchedule(actionSchedule)
+            .build()
+            .start()
+            .blockUntilEnded(TIMEOUT_MS);
+
+    testRunner.assertTimelineChangeReasonsEqual(
+        Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED,
+        Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE,
+        Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE);
+    testRunner.assertPlayedPeriodIndices(0);
+    assertThat(mediaSource.getCreatedMediaPeriods()).hasSize(4);
+    assertThat(mediaSource.getCreatedMediaPeriods().get(0).nextAdGroupIndex)
+        .isEqualTo(C.INDEX_UNSET);
+    assertThat(mediaSource.getCreatedMediaPeriods().get(1).nextAdGroupIndex).isEqualTo(0);
+    assertThat(mediaSource.getCreatedMediaPeriods().get(2).adGroupIndex).isEqualTo(0);
+    assertThat(mediaSource.getCreatedMediaPeriods().get(3).adGroupIndex).isEqualTo(C.INDEX_UNSET);
   }
 
   @Test
@@ -3500,11 +3599,12 @@ public final class ExoPlayerTest {
   // Disabled until the flag to throw exceptions for [internal: b/144538905] is enabled by default.
   @Ignore
   @Test
-  public void loadControlNeverWantsToLoad_throwsIllegalStateException() throws Exception {
+  public void loadControlNeverWantsToLoad_throwsIllegalStateException() {
     LoadControl neverLoadingLoadControl =
         new DefaultLoadControl() {
           @Override
-          public boolean shouldContinueLoading(long bufferedDurationUs, float playbackSpeed) {
+          public boolean shouldContinueLoading(
+              long playbackPositionUs, long bufferedDurationUs, float playbackSpeed) {
             return false;
           }
 
@@ -3540,11 +3640,86 @@ public final class ExoPlayerTest {
   }
 
   @Test
+  public void
+      nextLoadPositionExceedingLoadControlMaxBuffer_whileCurrentLoadInProgress_doesNotThrowException()
+          throws Exception {
+    long maxBufferUs = 2 * C.MICROS_PER_SECOND;
+    LoadControl loadControlWithMaxBufferUs =
+        new DefaultLoadControl() {
+          @Override
+          public boolean shouldContinueLoading(
+              long playbackPositionUs, long bufferedDurationUs, float playbackSpeed) {
+            return bufferedDurationUs < maxBufferUs;
+          }
+
+          @Override
+          public boolean shouldStartPlayback(
+              long bufferedDurationUs, float playbackSpeed, boolean rebuffering) {
+            return true;
+          }
+        };
+    MediaSource mediaSourceWithLoadInProgress =
+        new FakeMediaSource(
+            new FakeTimeline(/* windowCount= */ 1), ExoPlayerTestRunner.VIDEO_FORMAT) {
+          @Override
+          protected FakeMediaPeriod createFakeMediaPeriod(
+              MediaPeriodId id,
+              TrackGroupArray trackGroupArray,
+              Allocator allocator,
+              EventDispatcher eventDispatcher,
+              @Nullable TransferListener transferListener) {
+            return new FakeMediaPeriod(trackGroupArray, eventDispatcher) {
+              @Override
+              public long getBufferedPositionUs() {
+                // Pretend not to have buffered data yet.
+                return 0;
+              }
+
+              @Override
+              public long getNextLoadPositionUs() {
+                // Set next load position beyond the maxBufferUs configured in the LoadControl.
+                return Long.MAX_VALUE;
+              }
+
+              @Override
+              public boolean isLoading() {
+                return true;
+              }
+            };
+          }
+        };
+    FakeRenderer rendererWaitingForData =
+        new FakeRenderer(C.TRACK_TYPE_VIDEO) {
+          @Override
+          public boolean isReady() {
+            return false;
+          }
+        };
+
+    ExoPlayer player =
+        new TestExoPlayer.Builder(context)
+            .setRenderers(rendererWaitingForData)
+            .setLoadControl(loadControlWithMaxBufferUs)
+            .experimental_setThrowWhenStuckBuffering(true)
+            .build();
+    player.setMediaSource(mediaSourceWithLoadInProgress);
+    player.prepare();
+
+    // Wait until the MediaSource is prepared, i.e. returned its timeline, and at least one
+    // iteration of doSomeWork after this was run.
+    TestExoPlayer.runUntilTimelineChanged(player);
+    TestExoPlayer.runUntilPendingCommandsAreFullyHandled(player);
+
+    assertThat(player.getPlayerError()).isNull();
+  }
+
+  @Test
   public void loadControlNeverWantsToPlay_playbackDoesNotGetStuck() throws Exception {
     LoadControl neverLoadingOrPlayingLoadControl =
         new DefaultLoadControl() {
           @Override
-          public boolean shouldContinueLoading(long bufferedDurationUs, float playbackSpeed) {
+          public boolean shouldContinueLoading(
+              long playbackPositionUs, long bufferedDurationUs, float playbackSpeed) {
             return true;
           }
 
@@ -4303,6 +4478,121 @@ public final class ExoPlayerTest {
         .blockUntilEnded(TIMEOUT_MS);
 
     assertThat(positionAfterSetShuffleOrder.get()).isAtLeast(5000);
+  }
+
+  @Test
+  public void setMediaSources_secondAdMediaSource_throws() throws Exception {
+    AdsMediaSource adsMediaSource =
+        new AdsMediaSource(
+            new FakeMediaSource(new FakeTimeline(/* windowCount= */ 1)),
+            new DefaultDataSourceFactory(
+                context, Util.getUserAgent(context, ExoPlayerLibraryInfo.VERSION_SLASHY)),
+            new DummyAdsLoader(),
+            new DummyAdViewProvider());
+    Exception[] exception = {null};
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder(TAG)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    try {
+                      player.setMediaSource(adsMediaSource);
+                      player.addMediaSource(adsMediaSource);
+                    } catch (Exception e) {
+                      exception[0] = e;
+                    }
+                    player.prepare();
+                  }
+                })
+            .build();
+
+    new ExoPlayerTestRunner.Builder(context)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start(/* doPrepare= */ false)
+        .blockUntilActionScheduleFinished(TIMEOUT_MS)
+        .blockUntilEnded(TIMEOUT_MS);
+
+    assertThat(exception[0]).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  public void setMediaSources_multipleMediaSourcesWithAd_throws() throws Exception {
+    MediaSource mediaSource = new FakeMediaSource(new FakeTimeline(/* windowCount= */ 1));
+    AdsMediaSource adsMediaSource =
+        new AdsMediaSource(
+            mediaSource,
+            new DefaultDataSourceFactory(
+                context, Util.getUserAgent(context, ExoPlayerLibraryInfo.VERSION_SLASHY)),
+            new DummyAdsLoader(),
+            new DummyAdViewProvider());
+    final Exception[] exception = {null};
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder(TAG)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    try {
+                      List<MediaSource> sources = new ArrayList<>();
+                      sources.add(mediaSource);
+                      sources.add(adsMediaSource);
+                      player.setMediaSources(sources);
+                    } catch (Exception e) {
+                      exception[0] = e;
+                    }
+                    player.prepare();
+                  }
+                })
+            .build();
+
+    new ExoPlayerTestRunner.Builder(context)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start(/* doPrepare= */ false)
+        .blockUntilActionScheduleFinished(TIMEOUT_MS)
+        .blockUntilEnded(TIMEOUT_MS);
+
+    assertThat(exception[0]).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  public void setMediaSources_addingMediaSourcesWithAdToNonEmptyPlaylist_throws() throws Exception {
+    MediaSource mediaSource = new FakeMediaSource(new FakeTimeline(/* windowCount= */ 1));
+    AdsMediaSource adsMediaSource =
+        new AdsMediaSource(
+            mediaSource,
+            new DefaultDataSourceFactory(
+                context, Util.getUserAgent(context, ExoPlayerLibraryInfo.VERSION_SLASHY)),
+            new DummyAdsLoader(),
+            new DummyAdViewProvider());
+    final Exception[] exception = {null};
+    ActionSchedule actionSchedule =
+        new ActionSchedule.Builder(TAG)
+            .waitForPlaybackState(Player.STATE_READY)
+            .executeRunnable(
+                new PlayerRunnable() {
+                  @Override
+                  public void run(SimpleExoPlayer player) {
+                    try {
+                      player.addMediaSource(adsMediaSource);
+                    } catch (Exception e) {
+                      exception[0] = e;
+                    }
+                  }
+                })
+            .build();
+
+    new ExoPlayerTestRunner.Builder(context)
+        .setMediaSources(mediaSource)
+        .setActionSchedule(actionSchedule)
+        .build()
+        .start()
+        .blockUntilActionScheduleFinished(TIMEOUT_MS)
+        .blockUntilEnded(TIMEOUT_MS);
+
+    assertThat(exception[0]).isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
@@ -6418,6 +6708,40 @@ public final class ExoPlayerTest {
         IOException error,
         int errorCount) {
       return Loader.RETRY;
+    }
+  }
+
+  private static class DummyAdsLoader implements AdsLoader {
+
+    @Override
+    public void setPlayer(@Nullable Player player) {}
+
+    @Override
+    public void release() {}
+
+    @Override
+    public void setSupportedContentTypes(int... contentTypes) {}
+
+    @Override
+    public void start(AdsLoader.EventListener eventListener, AdViewProvider adViewProvider) {}
+
+    @Override
+    public void stop() {}
+
+    @Override
+    public void handlePrepareError(int adGroupIndex, int adIndexInAdGroup, IOException exception) {}
+  }
+
+  private static class DummyAdViewProvider implements AdsLoader.AdViewProvider {
+
+    @Override
+    public ViewGroup getAdViewGroup() {
+      return null;
+    }
+
+    @Override
+    public View[] getAdOverlayViews() {
+      return new View[0];
     }
   }
 }

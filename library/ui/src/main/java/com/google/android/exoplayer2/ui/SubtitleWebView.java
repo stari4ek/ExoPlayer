@@ -24,6 +24,7 @@ import android.graphics.Color;
 import android.text.Layout;
 import android.util.AttributeSet;
 import android.util.Base64;
+import android.util.DisplayMetrics;
 import android.view.MotionEvent;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
@@ -33,7 +34,7 @@ import com.google.android.exoplayer2.text.CaptionStyleCompat;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.util.Util;
 import java.nio.charset.Charset;
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -47,11 +48,19 @@ import java.util.List;
  */
 /* package */ final class SubtitleWebView extends FrameLayout implements SubtitleView.Output {
 
-  private final WebView webView;
+  /**
+   * A {@link SubtitleTextView} used for displaying bitmap cues.
+   *
+   * <p>There's no advantage to displaying bitmap cues in a {@link WebView}, so we re-use the
+   * existing logic.
+   */
+  private final SubtitleTextView subtitleTextView;
 
-  private List<Cue> cues;
-  @Cue.TextSizeType private int textSizeType;
-  private float textSize;
+  private final WebView webView;
+  private final List<Cue> cues;
+
+  @Cue.TextSizeType private int defaultTextSizeType;
+  private float defaultTextSize;
   private boolean applyEmbeddedStyles;
   private boolean applyEmbeddedFontSizes;
   private CaptionStyleCompat style;
@@ -63,14 +72,15 @@ import java.util.List;
 
   public SubtitleWebView(Context context, @Nullable AttributeSet attrs) {
     super(context, attrs);
-    cues = Collections.emptyList();
-    textSizeType = Cue.TEXT_SIZE_TYPE_FRACTIONAL;
-    textSize = DEFAULT_TEXT_SIZE_FRACTION;
+    cues = new ArrayList<>();
+    defaultTextSizeType = Cue.TEXT_SIZE_TYPE_FRACTIONAL;
+    defaultTextSize = DEFAULT_TEXT_SIZE_FRACTION;
     applyEmbeddedStyles = true;
     applyEmbeddedFontSizes = true;
     style = CaptionStyleCompat.DEFAULT;
     bottomPaddingFraction = DEFAULT_BOTTOM_PADDING_FRACTION;
 
+    subtitleTextView = new SubtitleTextView(context, attrs);
     webView =
         new WebView(context, attrs) {
           @Override
@@ -88,22 +98,37 @@ import java.util.List;
           }
         };
     webView.setBackgroundColor(Color.TRANSPARENT);
+
+    addView(subtitleTextView);
     addView(webView);
   }
 
   @Override
   public void onCues(List<Cue> cues) {
-    this.cues = cues;
+    List<Cue> bitmapCues = new ArrayList<>();
+    this.cues.clear();
+    for (int i = 0; i < cues.size(); i++) {
+      Cue cue = cues.get(i);
+      if (cue.bitmap != null) {
+        bitmapCues.add(cue);
+      } else {
+        this.cues.add(cue);
+      }
+    }
+    subtitleTextView.onCues(bitmapCues);
+    // Invalidate to trigger subtitleTextView to draw.
+    invalidate();
     updateWebView();
   }
 
   @Override
   public void setTextSize(@Cue.TextSizeType int textSizeType, float textSize) {
-    if (this.textSizeType == textSizeType && this.textSize == textSize) {
+    if (this.defaultTextSizeType == textSizeType && this.defaultTextSize == textSize) {
       return;
     }
-    this.textSizeType = textSizeType;
-    this.textSize = textSize;
+    this.defaultTextSizeType = textSizeType;
+    this.defaultTextSize = textSize;
+    invalidate();
     updateWebView();
   }
 
@@ -115,6 +140,7 @@ import java.util.List;
     }
     this.applyEmbeddedStyles = applyEmbeddedStyles;
     this.applyEmbeddedFontSizes = applyEmbeddedStyles;
+    invalidate();
     updateWebView();
   }
 
@@ -124,6 +150,7 @@ import java.util.List;
       return;
     }
     this.applyEmbeddedFontSizes = applyEmbeddedFontSizes;
+    invalidate();
     updateWebView();
   }
 
@@ -133,6 +160,7 @@ import java.util.List;
       return;
     }
     this.style = style;
+    invalidate();
     updateWebView();
   }
 
@@ -142,22 +170,39 @@ import java.util.List;
       return;
     }
     this.bottomPaddingFraction = bottomPaddingFraction;
+    invalidate();
     updateWebView();
+  }
+
+  /**
+   * Cleans up internal state, including calling {@link WebView#destroy()} on the delegate view.
+   *
+   * <p>This method may only be called after this view has been removed from the view system. No
+   * other methods may be called on this view after destroy.
+   */
+  public void destroy() {
+    cues.clear();
+    webView.destroy();
   }
 
   private void updateWebView() {
     StringBuilder html = new StringBuilder();
-    html.append("<html><body>")
-        .append("<div style=\"")
-        .append("-webkit-user-select:none;")
-        .append("position:fixed;")
-        .append("top:0;")
-        .append("bottom:0;")
-        .append("left:0;")
-        .append("right:0;")
-        .append("font-size:20px;")
-        .append("color:red;")
-        .append("\">");
+    html.append(
+        Util.formatInvariant(
+            "<html><body><div style=\""
+                + "-webkit-user-select:none;"
+                + "position:fixed;"
+                + "top:0;"
+                + "bottom:0;"
+                + "left:0;"
+                + "right:0;"
+                + "color:%s;"
+                + "font-size:%s;"
+                + "\">",
+            HtmlUtils.toCssRgba(style.foregroundColor),
+            convertTextSizeToCss(defaultTextSizeType, defaultTextSize)));
+
+    String backgroundColorCss = HtmlUtils.toCssRgba(style.backgroundColor);
 
     for (int i = 0; i < cues.size(); i++) {
       Cue cue = cues.get(i);
@@ -166,6 +211,7 @@ import java.util.List;
 
       float linePercent;
       int lineTranslatePercent;
+      @Cue.AnchorType int lineAnchor;
       if (cue.line != Cue.DIMEN_UNSET) {
         switch (cue.lineType) {
           case Cue.LINE_TYPE_NUMBER:
@@ -183,14 +229,17 @@ import java.util.List;
             linePercent = cue.line * 100;
             lineTranslatePercent = 0;
         }
+        lineAnchor = cue.lineAnchor;
       } else {
-        linePercent = 100;
+        linePercent = (1.0f - bottomPaddingFraction) * 100;
         lineTranslatePercent = 0;
+        // If Cue.line == DIMEN_UNSET then ignore Cue.lineAnchor and assume ANCHOR_TYPE_END.
+        lineAnchor = Cue.ANCHOR_TYPE_END;
       }
       int lineAnchorTranslatePercent =
           cue.verticalType == Cue.VERTICAL_TYPE_RL
-              ? -anchorTypeToTranslatePercent(cue.lineAnchor)
-              : anchorTypeToTranslatePercent(cue.lineAnchor);
+              ? -anchorTypeToTranslatePercent(lineAnchor)
+              : anchorTypeToTranslatePercent(lineAnchor);
 
       String size =
           cue.size != Cue.DIMEN_UNSET
@@ -198,8 +247,11 @@ import java.util.List;
               : "fit-content";
 
       String textAlign = convertAlignmentToCss(cue.textAlignment);
-
       String writingMode = convertVerticalTypeToCss(cue.verticalType);
+      String cueTextSizeCssPx = convertTextSizeToCss(cue.textSizeType, cue.textSize);
+      String windowCssColor =
+          HtmlUtils.toCssRgba(
+              cue.windowColorSet && applyEmbeddedStyles ? cue.windowColor : style.windowColor);
 
       String positionProperty;
       String lineProperty;
@@ -240,6 +292,8 @@ import java.util.List;
                       + "%s:%s;"
                       + "text-align:%s;"
                       + "writing-mode:%s;"
+                      + "font-size:%s;"
+                      + "background-color:%s;"
                       + "transform:translate(%s%%,%s%%);"
                       + "\">",
                   positionProperty,
@@ -250,9 +304,15 @@ import java.util.List;
                   size,
                   textAlign,
                   writingMode,
+                  cueTextSizeCssPx,
+                  windowCssColor,
                   horizontalTranslatePercent,
                   verticalTranslatePercent))
-          .append(SpannedToHtmlConverter.convert(cue.text))
+          .append(Util.formatInvariant("<span style=\"background-color:%s;\">", backgroundColorCss))
+          .append(
+              SpannedToHtmlConverter.convert(
+                  cue.text, getContext().getResources().getDisplayMetrics().density))
+          .append("</span>")
           .append("</div>");
     }
 
@@ -265,7 +325,27 @@ import java.util.List;
         "base64");
   }
 
-  private String convertVerticalTypeToCss(@Cue.VerticalType int verticalType) {
+  /**
+   * Converts a text size to a CSS px value.
+   *
+   * <p>First converts to Android px using {@link SubtitleViewUtils#resolveTextSize(int, float, int,
+   * int)}.
+   *
+   * <p>Then divides by {@link DisplayMetrics#density} to convert from Android px to dp because
+   * WebView treats one CSS px as one Android dp.
+   */
+  private String convertTextSizeToCss(@Cue.TextSizeType int type, float size) {
+    float sizePx =
+        SubtitleViewUtils.resolveTextSize(
+            type, size, getHeight(), getHeight() - getPaddingTop() - getPaddingBottom());
+    if (sizePx == Cue.DIMEN_UNSET) {
+      return "unset";
+    }
+    float sizeDp = sizePx / getContext().getResources().getDisplayMetrics().density;
+    return Util.formatInvariant("%.2fpx", sizeDp);
+  }
+
+  private static String convertVerticalTypeToCss(@Cue.VerticalType int verticalType) {
     switch (verticalType) {
       case Cue.VERTICAL_TYPE_LR:
         return "vertical-lr";
@@ -277,19 +357,18 @@ import java.util.List;
     }
   }
 
-  private String convertAlignmentToCss(@Nullable Layout.Alignment alignment) {
+  private static String convertAlignmentToCss(@Nullable Layout.Alignment alignment) {
     if (alignment == null) {
-      return "unset";
+      return "center";
     }
     switch (alignment) {
       case ALIGN_NORMAL:
         return "start";
-      case ALIGN_CENTER:
-        return "center";
       case ALIGN_OPPOSITE:
         return "end";
+      case ALIGN_CENTER:
       default:
-        return "unset";
+        return "center";
     }
   }
 

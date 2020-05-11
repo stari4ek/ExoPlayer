@@ -60,6 +60,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -93,7 +95,7 @@ public final class Util {
    * Like {@link android.os.Build.VERSION#SDK_INT}, but in a place where it can be conveniently
    * overridden for local testing.
    */
-  public static final int SDK_INT = Build.VERSION.SDK_INT;
+  public static final int SDK_INT = "R".equals(Build.VERSION.CODENAME) ? 30 : Build.VERSION.SDK_INT;
 
   /**
    * Like {@link Build#DEVICE}, but in a place where it can be conveniently overridden for local
@@ -211,7 +213,7 @@ public final class Util {
       if (mediaItem.playbackProperties == null) {
         continue;
       }
-      if (isLocalFileUri(mediaItem.playbackProperties.sourceUri)) {
+      if (isLocalFileUri(mediaItem.playbackProperties.uri)) {
         return requestExternalStoragePermission(activity);
       }
       for (int i = 0; i < mediaItem.playbackProperties.subtitles.size(); i++) {
@@ -239,7 +241,7 @@ public final class Util {
       if (mediaItem.playbackProperties == null) {
         continue;
       }
-      if (isTrafficRestricted(mediaItem.playbackProperties.sourceUri)) {
+      if (isTrafficRestricted(mediaItem.playbackProperties.uri)) {
         return false;
       }
       for (int i = 0; i < mediaItem.playbackProperties.subtitles.size(); i++) {
@@ -1667,6 +1669,29 @@ public final class Util {
   }
 
   /**
+   * Makes a best guess to infer the type from a {@link Uri} and MIME type.
+   *
+   * @param uri The {@link Uri}.
+   * @param mimeType If not null, used to infer the type.
+   * @return The content type.
+   */
+  public static int inferContentTypeWithMimeType(Uri uri, @Nullable String mimeType) {
+    if (mimeType == null) {
+      return Util.inferContentType(uri);
+    }
+    switch (mimeType) {
+      case MimeTypes.APPLICATION_MPD:
+        return C.TYPE_DASH;
+      case MimeTypes.APPLICATION_M3U8:
+        return C.TYPE_HLS;
+      case MimeTypes.APPLICATION_SS:
+        return C.TYPE_SS;
+      default:
+        return Util.inferContentType(uri);
+    }
+  }
+
+  /**
    * Returns the specified millisecond time formatted as a string.
    *
    * @param builder The builder that {@code formatter} will write to.
@@ -1857,6 +1882,21 @@ public final class Util {
       initialValue = CRC8_BYTES_MSBF[initialValue ^ (bytes[i] & 0xFF)];
     }
     return initialValue;
+  }
+
+  /**
+   * Absolute <i>get</i> method for reading an int value in {@link ByteOrder#BIG_ENDIAN} in a {@link
+   * ByteBuffer}. Same as {@link ByteBuffer#getInt(int)} except the buffer's order as returned by
+   * {@link ByteBuffer#order()} is ignored and {@link ByteOrder#BIG_ENDIAN} is used instead.
+   *
+   * @param buffer The buffer from which to read an int in big endian.
+   * @param index The index from which the bytes will be read.
+   * @return The int value at the given index with the buffer bytes ordered most significant to
+   *     least significant.
+   */
+  public static int getBigEndianInt(ByteBuffer buffer, int index) {
+    int value = buffer.getInt(index);
+    return buffer.order() == ByteOrder.BIG_ENDIAN ? value : Integer.reverseBytes(value);
   }
 
   /**
