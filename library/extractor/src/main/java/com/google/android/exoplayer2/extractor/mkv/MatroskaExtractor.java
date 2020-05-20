@@ -23,6 +23,7 @@ import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ParserException;
+import com.google.android.exoplayer2.audio.AacUtil;
 import com.google.android.exoplayer2.audio.Ac3Util;
 import com.google.android.exoplayer2.audio.MpegAudioUtil;
 import com.google.android.exoplayer2.drm.DrmInitData;
@@ -54,8 +55,10 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import org.checkerframework.checker.nullness.compatqual.NullableType;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -318,6 +321,18 @@ public class MatroskaExtractor implements Extractor {
    * Sub format for PCM.
    */
   private static final UUID WAVE_SUBFORMAT_PCM = new UUID(0x0100000000001000L, 0x800000AA00389B71L);
+
+  /** Some HTC devices signal rotation in track names. */
+  private static final Map<String, Integer> TRACK_NAME_TO_ROTATION_DEGREES;
+
+  static {
+    Map<String, Integer> trackNameToRotationDegrees = new HashMap<>();
+    trackNameToRotationDegrees.put("htc_video_rotA-000", 0);
+    trackNameToRotationDegrees.put("htc_video_rotA-090", 90);
+    trackNameToRotationDegrees.put("htc_video_rotA-180", 180);
+    trackNameToRotationDegrees.put("htc_video_rotA-270", 270);
+    TRACK_NAME_TO_ROTATION_DEGREES = Collections.unmodifiableMap(trackNameToRotationDegrees);
+  }
 
   private final EbmlReader reader;
   private final VarintReader varintReader;
@@ -1267,7 +1282,8 @@ public class MatroskaExtractor implements Extractor {
         } else {
           // Append supplemental data.
           int blockAdditionalSize = blockAdditionalData.limit();
-          track.output.sampleData(blockAdditionalData, blockAdditionalSize);
+          track.output.sampleData(
+              blockAdditionalData, blockAdditionalSize, TrackOutput.SAMPLE_DATA_PART_SUPPLEMENTAL);
           size += blockAdditionalSize;
         }
       }
@@ -1336,11 +1352,14 @@ public class MatroskaExtractor implements Extractor {
             // Write the signal byte, containing the IV size and the subsample encryption flag.
             scratch.data[0] = (byte) (ENCRYPTION_IV_SIZE | (hasSubsampleEncryption ? 0x80 : 0x00));
             scratch.setPosition(0);
-            output.sampleData(scratch, 1);
+            output.sampleData(scratch, 1, TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
             sampleBytesWritten++;
             // Write the IV.
             encryptionInitializationVector.setPosition(0);
-            output.sampleData(encryptionInitializationVector, ENCRYPTION_IV_SIZE);
+            output.sampleData(
+                encryptionInitializationVector,
+                ENCRYPTION_IV_SIZE,
+                TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
             sampleBytesWritten += ENCRYPTION_IV_SIZE;
           }
           if (hasSubsampleEncryption) {
@@ -1388,7 +1407,10 @@ public class MatroskaExtractor implements Extractor {
               encryptionSubsampleDataBuffer.putInt(0);
             }
             encryptionSubsampleData.reset(encryptionSubsampleDataBuffer.array(), subsampleDataSize);
-            output.sampleData(encryptionSubsampleData, subsampleDataSize);
+            output.sampleData(
+                encryptionSubsampleData,
+                subsampleDataSize,
+                TrackOutput.SAMPLE_DATA_PART_ENCRYPTION);
             sampleBytesWritten += subsampleDataSize;
           }
         }
@@ -1407,7 +1429,7 @@ public class MatroskaExtractor implements Extractor {
         scratch.data[1] = (byte) ((size >> 16) & 0xFF);
         scratch.data[2] = (byte) ((size >> 8) & 0xFF);
         scratch.data[3] = (byte) (size & 0xFF);
-        output.sampleData(scratch, 4);
+        output.sampleData(scratch, 4, TrackOutput.SAMPLE_DATA_PART_SUPPLEMENTAL);
         sampleBytesWritten += 4;
       }
 
@@ -1919,6 +1941,7 @@ public class MatroskaExtractor implements Extractor {
       int maxInputSize = Format.NO_VALUE;
       @C.PcmEncoding int pcmEncoding = Format.NO_VALUE;
       @Nullable List<byte[]> initializationData = null;
+      @Nullable String codecs = null;
       switch (codecId) {
         case CODEC_ID_VP8:
           mimeType = MimeTypes.VIDEO_VP8;
@@ -1980,6 +2003,12 @@ public class MatroskaExtractor implements Extractor {
         case CODEC_ID_AAC:
           mimeType = MimeTypes.AUDIO_AAC;
           initializationData = Collections.singletonList(codecPrivate);
+          AacUtil.Config aacConfig = AacUtil.parseAudioSpecificConfig(codecPrivate);
+          // Update sampleRate and channelCount from the AudioSpecificConfig initialization data,
+          // which is more reliable. See [Internal: b/10903778].
+          sampleRate = aacConfig.sampleRateHz;
+          channelCount = aacConfig.channelCount;
+          codecs = aacConfig.codecs;
           break;
         case CODEC_ID_MP2:
           mimeType = MimeTypes.AUDIO_MPEG_L2;
@@ -2088,15 +2117,9 @@ public class MatroskaExtractor implements Extractor {
           colorInfo = new ColorInfo(colorSpace, colorRange, colorTransfer, hdrStaticInfo);
         }
         int rotationDegrees = Format.NO_VALUE;
-        // Some HTC devices signal rotation in track names.
-        if ("htc_video_rotA-000".equals(name)) {
-          rotationDegrees = 0;
-        } else if ("htc_video_rotA-090".equals(name)) {
-          rotationDegrees = 90;
-        } else if ("htc_video_rotA-180".equals(name)) {
-          rotationDegrees = 180;
-        } else if ("htc_video_rotA-270".equals(name)) {
-          rotationDegrees = 270;
+
+        if (TRACK_NAME_TO_ROTATION_DEGREES.containsKey(name)) {
+          rotationDegrees = TRACK_NAME_TO_ROTATION_DEGREES.get(name);
         }
         if (projectionType == C.PROJECTION_RECTANGULAR
             && Float.compare(projectionPoseYaw, 0f) == 0
@@ -2136,6 +2159,10 @@ public class MatroskaExtractor implements Extractor {
         throw new ParserException("Unexpected MIME type.");
       }
 
+      if (!TRACK_NAME_TO_ROTATION_DEGREES.containsKey(name)) {
+        formatBuilder.setLabel(name);
+      }
+
       Format format =
           formatBuilder
               .setId(trackId)
@@ -2144,6 +2171,7 @@ public class MatroskaExtractor implements Extractor {
               .setLanguage(language)
               .setSelectionFlags(selectionFlags)
               .setInitializationData(initializationData)
+              .setCodecs(codecs)
               .setDrmInitData(drmInitData)
               .build();
 

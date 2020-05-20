@@ -73,4 +73,6 @@
 
   <string name="tunneling">Request multimedia tunneling</string>
 
+  <string name="save_logs">TVirl: Save logs</string>
+
 </resources>

@@ -23,7 +23,6 @@ import android.view.SurfaceView;
 import android.view.TextureView;
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
-import com.google.android.exoplayer2.C.VideoScalingMode;
 import com.google.android.exoplayer2.audio.AudioAttributes;
 import com.google.android.exoplayer2.audio.AudioListener;
 import com.google.android.exoplayer2.audio.AuxEffectInfo;
@@ -31,6 +30,7 @@ import com.google.android.exoplayer2.device.DeviceInfo;
 import com.google.android.exoplayer2.device.DeviceListener;
 import com.google.android.exoplayer2.metadata.MetadataOutput;
 import com.google.android.exoplayer2.source.TrackGroupArray;
+import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.util.Util;
@@ -173,14 +173,14 @@ public interface Player {
   interface VideoComponent {
 
     /**
-     * Sets the {@link VideoScalingMode}.
+     * Sets the {@link Renderer.VideoScalingMode}.
      *
-     * @param videoScalingMode The {@link VideoScalingMode}.
+     * @param videoScalingMode The {@link Renderer.VideoScalingMode}.
      */
-    void setVideoScalingMode(@VideoScalingMode int videoScalingMode);
+    void setVideoScalingMode(@Renderer.VideoScalingMode int videoScalingMode);
 
-    /** Returns the {@link VideoScalingMode}. */
-    @VideoScalingMode
+    /** Returns the {@link Renderer.VideoScalingMode}. */
+    @Renderer.VideoScalingMode
     int getVideoScalingMode();
 
     /**
@@ -349,6 +349,9 @@ public interface Player {
      * @param listener The output to remove.
      */
     void removeTextOutput(TextOutput listener);
+
+    /** Returns the current {@link Cue Cues}. This list may be empty. */
+    List<Cue> getCurrentCues();
   }
 
   /** The metadata component of a {@link Player}. */
@@ -582,10 +585,10 @@ public interface Player {
     default void onPlaybackSpeedChanged(float playbackSpeed) {}
 
     /**
-     * Called when all pending seek requests have been processed by the player. This is guaranteed
-     * to happen after any necessary changes to the player state were reported to {@link
-     * #onPlaybackStateChanged(int)}.
+     * @deprecated Seeks are processed without delay. Listen to {@link
+     *     #onPositionDiscontinuity(int)} with reason {@link #DISCONTINUITY_REASON_SEEK} instead.
      */
+    @Deprecated
     default void onSeekProcessed() {}
   }
 

@@ -31,6 +31,7 @@ import com.google.android.exoplayer2.source.ShuffleOrder.DefaultShuffleOrder;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -64,6 +65,8 @@ import java.util.Set;
      */
     void onPlaylistUpdateRequested();
   }
+
+  private static final String TAG = "MediaSourceList";
 
   private final List<MediaSourceHolder> mediaSourceHolders;
   private final Map<MediaPeriod, MediaSourceHolder> mediaSourceByMediaPeriod;
@@ -323,7 +326,12 @@ import java.util.Set;
   /** Releases the playlist. */
   public final void release() {
     for (MediaSourceAndListener childSource : childSources.values()) {
-      childSource.mediaSource.releaseSource(childSource.caller);
+      try {
+        childSource.mediaSource.releaseSource(childSource.caller);
+      } catch (RuntimeException e) {
+        // There's nothing we can do.
+        Log.e(TAG, "Failed to release child source.", e);
+      }
       childSource.mediaSource.removeEventListener(childSource.eventListener);
     }
     childSources.clear();
@@ -694,45 +702,59 @@ import java.util.Set;
     // DrmSessionEventListener implementation
 
     @Override
-    public void onDrmSessionAcquired() {
-      eventDispatcher.dispatch(
-          (listener, windowIndex, mediaPeriodId) -> listener.onDrmSessionAcquired(),
-          DrmSessionEventListener.class);
+    public void onDrmSessionAcquired(
+        int windowIndex, @Nullable MediaSource.MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        eventDispatcher.dispatch(
+            DrmSessionEventListener::onDrmSessionAcquired, DrmSessionEventListener.class);
+      }
     }
 
     @Override
-    public void onDrmKeysLoaded() {
-      eventDispatcher.dispatch(
-          (listener, windowIndex, mediaPeriodId) -> listener.onDrmKeysLoaded(),
-          DrmSessionEventListener.class);
+    public void onDrmKeysLoaded(
+        int windowIndex, @Nullable MediaSource.MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        eventDispatcher.dispatch(
+            DrmSessionEventListener::onDrmKeysLoaded, DrmSessionEventListener.class);
+      }
     }
 
     @Override
-    public void onDrmSessionManagerError(Exception error) {
-      eventDispatcher.dispatch(
-          (listener, windowIndex, mediaPeriodId) -> listener.onDrmSessionManagerError(error),
-          DrmSessionEventListener.class);
+    public void onDrmSessionManagerError(
+        int windowIndex, @Nullable MediaSource.MediaPeriodId mediaPeriodId, Exception error) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        eventDispatcher.dispatch(
+            (listener, innerWindowIndex, innerMediaPeriodId) ->
+                listener.onDrmSessionManagerError(innerWindowIndex, innerMediaPeriodId, error),
+            DrmSessionEventListener.class);
+      }
     }
 
     @Override
-    public void onDrmKeysRestored() {
-      eventDispatcher.dispatch(
-          (listener, windowIndex, mediaPeriodId) -> listener.onDrmKeysRestored(),
-          DrmSessionEventListener.class);
+    public void onDrmKeysRestored(
+        int windowIndex, @Nullable MediaSource.MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        eventDispatcher.dispatch(
+            DrmSessionEventListener::onDrmKeysRestored, DrmSessionEventListener.class);
+      }
     }
 
     @Override
-    public void onDrmKeysRemoved() {
-      eventDispatcher.dispatch(
-          (listener, windowIndex, mediaPeriodId) -> listener.onDrmKeysRemoved(),
-          DrmSessionEventListener.class);
+    public void onDrmKeysRemoved(
+        int windowIndex, @Nullable MediaSource.MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        eventDispatcher.dispatch(
+            DrmSessionEventListener::onDrmKeysRemoved, DrmSessionEventListener.class);
+      }
     }
 
     @Override
-    public void onDrmSessionReleased() {
-      eventDispatcher.dispatch(
-          (listener, windowIndex, mediaPeriodId) -> listener.onDrmSessionReleased(),
-          DrmSessionEventListener.class);
+    public void onDrmSessionReleased(
+        int windowIndex, @Nullable MediaSource.MediaPeriodId mediaPeriodId) {
+      if (maybeUpdateEventDispatcher(windowIndex, mediaPeriodId)) {
+        eventDispatcher.dispatch(
+            DrmSessionEventListener::onDrmSessionReleased, DrmSessionEventListener.class);
+      }
     }
 
     /** Updates the event dispatcher and returns whether the event should be dispatched. */

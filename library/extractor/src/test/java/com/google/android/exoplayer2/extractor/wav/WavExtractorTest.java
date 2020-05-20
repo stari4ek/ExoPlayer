@@ -15,19 +15,28 @@
  */
 package com.google.android.exoplayer2.extractor.wav;
 
-import androidx.test.core.app.ApplicationProvider;
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.testutil.ExtractorAsserts;
+import com.google.android.exoplayer2.testutil.ExtractorAsserts.AssertionConfig;
+import java.util.List;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.robolectric.ParameterizedRobolectricTestRunner;
 
 /** Unit test for {@link WavExtractor}. */
-@RunWith(AndroidJUnit4.class)
+@RunWith(ParameterizedRobolectricTestRunner.class)
 public final class WavExtractorTest {
+
+  @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
+  public static List<Object[]> params() {
+    return ExtractorAsserts.configs();
+  }
+
+  @ParameterizedRobolectricTestRunner.Parameter(0)
+  public ExtractorAsserts.SimulationConfig simulationConfig;
 
   @Test
   public void sample() throws Exception {
-    ExtractorAsserts.assertBehavior(WavExtractor::new, "wav/sample.wav");
+    ExtractorAsserts.assertBehavior(WavExtractor::new, "wav/sample.wav", simulationConfig);
   }
 
   @Test
@@ -35,12 +44,13 @@ public final class WavExtractorTest {
     ExtractorAsserts.assertBehavior(
         WavExtractor::new,
         "wav/sample_with_trailing_bytes.wav",
-        ApplicationProvider.getApplicationContext(),
-        /* dumpFilesPrefix= */ "wav/sample.wav");
+        new AssertionConfig.Builder().setDumpFilesPrefix("wav/sample.wav").build(),
+        simulationConfig);
   }
 
   @Test
   public void sample_imaAdpcm() throws Exception {
-    ExtractorAsserts.assertBehavior(WavExtractor::new, "wav/sample_ima_adpcm.wav");
+    ExtractorAsserts.assertBehavior(
+        WavExtractor::new, "wav/sample_ima_adpcm.wav", simulationConfig);
   }
 }

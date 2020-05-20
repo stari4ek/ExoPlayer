@@ -38,6 +38,9 @@ import com.google.android.exoplayer2.metadata.MetadataInputBuffer;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.util.Assertions;
+import com.google.android.exoplayer2.util.Clock;
+import com.google.android.exoplayer2.util.ConditionVariable;
+import com.google.android.exoplayer2.util.SystemClock;
 import com.google.android.exoplayer2.util.Util;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -268,10 +271,10 @@ public class TestUtil {
   /** Returns whether two {@link android.media.MediaCodec.BufferInfo BufferInfos} are equal. */
   public static void assertBufferInfosEqual(
       MediaCodec.BufferInfo expected, MediaCodec.BufferInfo actual) {
-    assertThat(expected.flags).isEqualTo(actual.flags);
-    assertThat(expected.offset).isEqualTo(actual.offset);
-    assertThat(expected.presentationTimeUs).isEqualTo(actual.presentationTimeUs);
-    assertThat(expected.size).isEqualTo(actual.size);
+    assertThat(actual.flags).isEqualTo(expected.flags);
+    assertThat(actual.offset).isEqualTo(expected.offset);
+    assertThat(actual.presentationTimeUs).isEqualTo(expected.presentationTimeUs);
+    assertThat(actual.size).isEqualTo(expected.size);
   }
 
   /**
@@ -482,5 +485,23 @@ public class TestUtil {
     buffer.data = ByteBuffer.allocate(data.length).put(data);
     buffer.data.flip();
     return buffer;
+  }
+
+  /**
+   * Creates a {@link ConditionVariable} whose {@link ConditionVariable#block(long)} method times
+   * out according to wallclock time when used in Robolectric tests.
+   */
+  public static ConditionVariable createRobolectricConditionVariable() {
+    return new ConditionVariable(
+        new SystemClock() {
+          @Override
+          public long elapsedRealtime() {
+            // elapsedRealtime() does not advance during Robolectric test execution, so use
+            // currentTimeMillis() instead. This is technically unsafe because this clock is not
+            // guaranteed to be monotonic, but in practice it will work provided the clock of the
+            // host machine does not change during test execution.
+            return Clock.DEFAULT.currentTimeMillis();
+          }
+        });
   }
 }

@@ -137,6 +137,14 @@ public interface LoadErrorHandlingPolicy {
   }
 
   /**
+   * Called once {@code loadTaskId} will not be associated with any more load errors.
+   *
+   * <p>Implementations should clean up any resources associated with {@code loadTaskId} when this
+   * method is called.
+   */
+  default void onLoadTaskConcluded(long loadTaskId) {}
+
+  /**
    * Returns the minimum number of times to retry a load in the case of a load error, before
    * propagating the error.
    *

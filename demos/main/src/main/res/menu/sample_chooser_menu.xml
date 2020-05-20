@@ -27,4 +27,7 @@
       android:title="@string/tunneling"
       android:checkable="true"
       app:showAsAction="never"/>
+  <item android:id="@+id/save_logs"
+    android:title="@string/save_logs"
+    app:showAsAction="never"/>
 </menu>

@@ -41,6 +41,7 @@ import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy.LoadErrorInfo;
 import com.google.android.exoplayer2.upstream.Loader;
 import com.google.android.exoplayer2.upstream.Loader.LoadErrorAction;
 import com.google.android.exoplayer2.upstream.Loader.Loadable;
@@ -178,7 +179,8 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     this.customCacheKey = customCacheKey;
     this.continueLoadingCheckIntervalBytes = continueLoadingCheckIntervalBytes;
     loader = new Loader("Loader:ProgressiveMediaPeriod");
-    progressiveMediaExtractor = new BundledExtractorsAdapter(extractors);
+    ProgressiveMediaExtractor progressiveMediaExtractor = new BundledExtractorsAdapter(extractors);
+    this.progressiveMediaExtractor = progressiveMediaExtractor;
     loadCondition = new ConditionVariable();
     maybeFinishPrepareRunnable = this::maybeFinishPrepare;
     onContinueLoadingRequestedRunnable =
@@ -552,20 +554,26 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
           : largestQueuedTimestampUs + DEFAULT_LAST_SAMPLE_DURATION_US;
       listener.onSourceInfoRefreshed(durationUs, isSeekable, isLive);
     }
+    StatsDataSource dataSource = loadable.dataSource;
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            dataSource.getLastOpenedUri(),
+            dataSource.getLastResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            dataSource.getBytesRead());
+    loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
     eventDispatcher.loadCompleted(
-        loadable.dataSpec,
-        loadable.dataSource.getLastOpenedUri(),
-        loadable.dataSource.getLastResponseHeaders(),
+        loadEventInfo,
         C.DATA_TYPE_MEDIA,
         C.TRACK_TYPE_UNKNOWN,
         /* trackFormat= */ null,
         C.SELECTION_REASON_UNKNOWN,
         /* trackSelectionData= */ null,
         /* mediaStartTimeUs= */ loadable.seekTimeUs,
-        durationUs,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.dataSource.getBytesRead());
+        durationUs);
     copyLengthFromLoader(loadable);
     loadingFinished = true;
     Assertions.checkNotNull(callback).onContinueLoadingRequested(this);
@@ -574,20 +582,26 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   @Override
   public void onLoadCanceled(
       ExtractingLoadable loadable, long elapsedRealtimeMs, long loadDurationMs, boolean released) {
+    StatsDataSource dataSource = loadable.dataSource;
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            dataSource.getLastOpenedUri(),
+            dataSource.getLastResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            dataSource.getBytesRead());
+    loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
     eventDispatcher.loadCanceled(
-        loadable.dataSpec,
-        loadable.dataSource.getLastOpenedUri(),
-        loadable.dataSource.getLastResponseHeaders(),
+        loadEventInfo,
         C.DATA_TYPE_MEDIA,
         C.TRACK_TYPE_UNKNOWN,
         /* trackFormat= */ null,
         C.SELECTION_REASON_UNKNOWN,
         /* trackSelectionData= */ null,
         /* mediaStartTimeUs= */ loadable.seekTimeUs,
-        durationUs,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.dataSource.getBytesRead());
+        durationUs);
     if (!released) {
       copyLengthFromLoader(loadable);
       for (SampleQueue sampleQueue : sampleQueues) {
@@ -607,9 +621,29 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       IOException error,
       int errorCount) {
     copyLengthFromLoader(loadable);
+    StatsDataSource dataSource = loadable.dataSource;
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            dataSource.getLastOpenedUri(),
+            dataSource.getLastResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            dataSource.getBytesRead());
+    MediaLoadData mediaLoadData =
+        new MediaLoadData(
+            C.DATA_TYPE_MEDIA,
+            C.TRACK_TYPE_UNKNOWN,
+            /* trackFormat= */ null,
+            C.SELECTION_REASON_UNKNOWN,
+            /* trackSelectionData= */ null,
+            /* mediaStartTimeMs= */ C.usToMs(loadable.seekTimeUs),
+            C.usToMs(durationUs));
     LoadErrorAction loadErrorAction;
     long retryDelayMs =
-        loadErrorHandlingPolicy.getRetryDelayMsFor(dataType, loadDurationMs, error, errorCount);
+        loadErrorHandlingPolicy.getRetryDelayMsFor(
+            new LoadErrorInfo(loadEventInfo, mediaLoadData, error, errorCount));
     if (retryDelayMs == C.TIME_UNSET) {
       loadErrorAction = Loader.DONT_RETRY_FATAL;
     } else /* the load should be retried */ {
@@ -621,10 +655,9 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
               : Loader.DONT_RETRY;
     }
 
+    boolean wasCanceled = !loadErrorAction.isRetry();
     eventDispatcher.loadError(
-        loadable.dataSpec,
-        loadable.dataSource.getLastOpenedUri(),
-        loadable.dataSource.getLastResponseHeaders(),
+        loadEventInfo,
         C.DATA_TYPE_MEDIA,
         C.TRACK_TYPE_UNKNOWN,
         /* trackFormat= */ null,
@@ -632,11 +665,11 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
         /* trackSelectionData= */ null,
         /* mediaStartTimeUs= */ loadable.seekTimeUs,
         durationUs,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.dataSource.getBytesRead(),
         error,
-        !loadErrorAction.isRetry());
+        wasCanceled);
+    if (wasCanceled) {
+      loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
+    }
     return loadErrorAction;
   }
 
@@ -680,7 +713,12 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
         return sampleQueues[i];
       }
     }
-    SampleQueue trackOutput = new SampleQueue(allocator, drmSessionManager, eventDispatcher);
+    SampleQueue trackOutput =
+        new SampleQueue(
+            allocator,
+            /* playbackLooper= */ handler.getLooper(),
+            drmSessionManager,
+            eventDispatcher);
     trackOutput.setUpstreamFormatChangeListener(this);
     @NullableType
     TrackId[] sampleQueueTrackIds = Arrays.copyOf(this.sampleQueueTrackIds, trackCount + 1);
@@ -776,16 +814,16 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
     long elapsedRealtimeMs =
         loader.startLoading(
             loadable, this, loadErrorHandlingPolicy.getMinimumLoadableRetryCount(dataType));
+    DataSpec dataSpec = loadable.dataSpec;
     eventDispatcher.loadStarted(
-        loadable.dataSpec,
+        new LoadEventInfo(loadable.loadTaskId, dataSpec, elapsedRealtimeMs),
         C.DATA_TYPE_MEDIA,
         C.TRACK_TYPE_UNKNOWN,
         /* trackFormat= */ null,
         C.SELECTION_REASON_UNKNOWN,
         /* trackSelectionData= */ null,
         /* mediaStartTimeUs= */ loadable.seekTimeUs,
-        durationUs,
-        elapsedRealtimeMs);
+        durationUs);
   }
 
   /**
@@ -917,6 +955,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
   /** Loads the media stream and extracts sample data from it. */
   /* package */ final class ExtractingLoadable implements Loadable, IcyDataSource.Listener {
 
+    private final long loadTaskId;
     private final Uri uri;
     private final StatsDataSource dataSource;
     private final ProgressiveMediaExtractor progressiveMediaExtractor;
@@ -948,6 +987,7 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
       this.positionHolder = new PositionHolder();
       this.pendingExtractorSeek = true;
       this.length = C.LENGTH_UNSET;
+      loadTaskId = LoadEventInfo.getNewId();
       dataSpec = buildDataSpec(/* position= */ 0);
     }
 

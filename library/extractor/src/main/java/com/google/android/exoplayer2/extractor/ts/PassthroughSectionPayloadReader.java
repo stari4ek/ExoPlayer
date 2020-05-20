@@ -54,6 +54,7 @@ public final class PassthroughSectionPayloadReader implements SectionPayloadRead
     this.timestampAdjuster = timestampAdjuster;
     idGenerator.generateNewId();
     output = extractorOutput.track(idGenerator.getTrackId(), C.TRACK_TYPE_METADATA);
+
     // Eagerly output an incomplete format (missing timestamp offset) to ensure source preparation
     // is not blocked waiting for potentially sparse metadata.
     output.format(format);

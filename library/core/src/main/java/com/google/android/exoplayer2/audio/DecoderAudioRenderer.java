@@ -214,10 +214,11 @@ public abstract class DecoderAudioRenderer extends BaseRenderer implements Media
   /**
    * Returns whether the sink supports the audio format.
    *
-   * @see AudioSink#supportsOutput(int, int)
+   * @see AudioSink#supportsOutput(int, int, int)
    */
-  protected final boolean supportsOutput(int channelCount, @C.Encoding int encoding) {
-    return audioSink.supportsOutput(channelCount, encoding);
+  protected final boolean supportsOutput(
+      int channelCount, int sampleRateHz, @C.Encoding int encoding) {
+    return audioSink.supportsOutput(channelCount, sampleRateHz, encoding);
   }
 
   @Override
@@ -323,7 +324,7 @@ public abstract class DecoderAudioRenderer extends BaseRenderer implements Media
    *
    * @param oldFormat The previous format.
    * @param newFormat The new format.
-   * @return True if the existing decoder can be kept.
+   * @return Whether the existing decoder can be kept.
    */
   protected boolean canKeepCodec(Format oldFormat, Format newFormat) {
     return false;
@@ -643,7 +644,9 @@ public abstract class DecoderAudioRenderer extends BaseRenderer implements Media
     Format oldFormat = inputFormat;
     inputFormat = newFormat;
 
-    if (!canKeepCodec(oldFormat, inputFormat)) {
+    if (decoder == null) {
+      maybeInitDecoder();
+    } else if (sourceDrmSession != decoderDrmSession || !canKeepCodec(oldFormat, inputFormat)) {
       if (decoderReceivedBuffers) {
         // Signal end of stream and wait for any final output buffers before re-initialization.
         decoderReinitializationState = REINITIALIZATION_STATE_SIGNAL_END_OF_STREAM;
@@ -657,7 +660,6 @@ public abstract class DecoderAudioRenderer extends BaseRenderer implements Media
 
     encoderDelay = inputFormat.encoderDelay;
     encoderPadding = inputFormat.encoderPadding;
-
     eventDispatcher.inputFormatChanged(inputFormat);
   }
 

@@ -31,6 +31,7 @@ import com.google.android.exoplayer2.util.ColorParser;
 import com.google.common.collect.Iterables;
 import com.google.common.truth.Expect;
 import java.io.IOException;
+import java.util.List;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -44,6 +45,8 @@ public class WebvttDecoderTest {
   private static final String TYPICAL_WITH_IDS_FILE = "webvtt/typical_with_identifiers";
   private static final String TYPICAL_WITH_COMMENTS_FILE = "webvtt/typical_with_comments";
   private static final String WITH_POSITIONING_FILE = "webvtt/with_positioning";
+  private static final String WITH_OVERLAPPING_TIMESTAMPS_FILE =
+      "webvtt/with_overlapping_timestamps";
   private static final String WITH_VERTICAL_FILE = "webvtt/with_vertical";
   private static final String WITH_BAD_CUE_HEADER_FILE = "webvtt/with_bad_cue_header";
   private static final String WITH_TAGS_FILE = "webvtt/with_tags";
@@ -184,19 +187,24 @@ public class WebvttDecoderTest {
   public void decodeWithPositioning() throws Exception {
     WebvttSubtitle subtitle = getSubtitleForTestAsset(WITH_POSITIONING_FILE);
 
-    assertThat(subtitle.getEventTimeCount()).isEqualTo(12);
+    assertThat(subtitle.getEventTimeCount()).isEqualTo(16);
 
     assertThat(subtitle.getEventTime(0)).isEqualTo(0L);
     assertThat(subtitle.getEventTime(1)).isEqualTo(1_234_000L);
     Cue firstCue = Iterables.getOnlyElement(subtitle.getCues(subtitle.getEventTime(0)));
     assertThat(firstCue.text.toString()).isEqualTo("This is the first subtitle.");
-    assertThat(firstCue.position).isEqualTo(0.1f);
-    assertThat(firstCue.positionAnchor).isEqualTo(Cue.ANCHOR_TYPE_START);
+    assertThat(firstCue.position).isEqualTo(0.6f);
+    assertThat(firstCue.positionAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
     assertThat(firstCue.textAlignment).isEqualTo(Alignment.ALIGN_NORMAL);
     assertThat(firstCue.size).isEqualTo(0.35f);
+
     // Unspecified values should use WebVTT defaults
-    assertThat(firstCue.line).isEqualTo(Cue.DIMEN_UNSET);
+    assertThat(firstCue.line).isEqualTo(-1f);
     assertThat(firstCue.lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    // WebVTT specifies START as the default, but it doesn't expect this to be used if
+    // lineType=NUMBER so we have to override it to END in this case, otherwise the Cue will be
+    // displayed off the bottom of the screen.
+    assertThat(firstCue.lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
     assertThat(firstCue.verticalType).isEqualTo(Cue.TYPE_UNSET);
 
     assertThat(subtitle.getEventTime(2)).isEqualTo(2_345_000L);
@@ -246,6 +254,70 @@ public class WebvttDecoderTest {
     // Derived from `align:center`:
     assertThat(sixthCue.position).isEqualTo(0.5f);
     assertThat(sixthCue.positionAnchor).isEqualTo(Cue.ANCHOR_TYPE_MIDDLE);
+
+    assertThat(subtitle.getEventTime(12)).isEqualTo(12_000_000L);
+    assertThat(subtitle.getEventTime(13)).isEqualTo(13_000_000L);
+    Cue seventhCue = Iterables.getOnlyElement(subtitle.getCues(subtitle.getEventTime(12)));
+    assertThat(seventhCue.text.toString()).isEqualTo("This is the seventh subtitle.");
+    assertThat(seventhCue.positionAnchor).isEqualTo(Cue.ANCHOR_TYPE_START);
+
+    assertThat(subtitle.getEventTime(14)).isEqualTo(14_000_000L);
+    assertThat(subtitle.getEventTime(15)).isEqualTo(15_000_000L);
+    Cue eighthCue = Iterables.getOnlyElement(subtitle.getCues(subtitle.getEventTime(14)));
+    assertThat(eighthCue.text.toString()).isEqualTo("This is the eighth subtitle.");
+    assertThat(eighthCue.positionAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+  }
+
+  @Test
+  public void decodeWithOverlappingTimestamps() throws Exception {
+    WebvttSubtitle subtitle = getSubtitleForTestAsset(WITH_OVERLAPPING_TIMESTAMPS_FILE);
+
+    assertThat(subtitle.getEventTimeCount()).isEqualTo(8);
+
+    Cue firstCue = Iterables.getOnlyElement(subtitle.getCues(subtitle.getEventTime(0)));
+    assertThat(firstCue.text.toString()).isEqualTo("Displayed at the bottom for 3 seconds.");
+    assertThat(firstCue.line).isEqualTo(-1f);
+    assertThat(firstCue.lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(firstCue.lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+
+    List<Cue> firstAndSecondCue = subtitle.getCues(subtitle.getEventTime(1));
+    assertThat(firstAndSecondCue).hasSize(2);
+    assertThat(firstAndSecondCue.get(0).text.toString())
+        .isEqualTo("Displayed at the bottom for 3 seconds.");
+    assertThat(firstAndSecondCue.get(0).line).isEqualTo(-1f);
+    assertThat(firstAndSecondCue.get(0).lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(firstAndSecondCue.get(0).lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+    assertThat(firstAndSecondCue.get(1).text.toString())
+        .isEqualTo("Appears directly above for 1 second.");
+    assertThat(firstAndSecondCue.get(1).line).isEqualTo(-2f);
+    assertThat(firstAndSecondCue.get(1).lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(firstAndSecondCue.get(1).lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+
+    Cue thirdCue = Iterables.getOnlyElement(subtitle.getCues(subtitle.getEventTime(4)));
+    assertThat(thirdCue.text.toString()).isEqualTo("Displayed at the bottom for 2 seconds.");
+    assertThat(thirdCue.line).isEqualTo(-1f);
+    assertThat(thirdCue.lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(thirdCue.lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+
+    List<Cue> thirdAndFourthCue = subtitle.getCues(subtitle.getEventTime(5));
+    assertThat(thirdAndFourthCue).hasSize(2);
+    assertThat(thirdAndFourthCue.get(0).text.toString())
+        .isEqualTo("Displayed at the bottom for 2 seconds.");
+    assertThat(thirdAndFourthCue.get(0).line).isEqualTo(-1f);
+    assertThat(thirdAndFourthCue.get(0).lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(thirdAndFourthCue.get(0).lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+    assertThat(thirdAndFourthCue.get(1).text.toString())
+        .isEqualTo("Appears directly above the previous cue, then replaces it after 1 second.");
+    assertThat(thirdAndFourthCue.get(1).line).isEqualTo(-2f);
+    assertThat(thirdAndFourthCue.get(1).lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(thirdAndFourthCue.get(1).lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
+
+    Cue fourthCue = Iterables.getOnlyElement(subtitle.getCues(subtitle.getEventTime(6)));
+    assertThat(fourthCue.text.toString())
+        .isEqualTo("Appears directly above the previous cue, then replaces it after 1 second.");
+    assertThat(fourthCue.line).isEqualTo(-1f);
+    assertThat(fourthCue.lineType).isEqualTo(Cue.LINE_TYPE_NUMBER);
+    assertThat(fourthCue.lineAnchor).isEqualTo(Cue.ANCHOR_TYPE_END);
   }
 
   @Test

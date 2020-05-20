@@ -23,6 +23,7 @@ import android.os.Looper;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.DefaultLoadControl;
 import com.google.android.exoplayer2.ExoPlaybackException;
+import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.LoadControl;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Renderer;
@@ -36,9 +37,11 @@ import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.Supplier;
+import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoListener;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
@@ -48,6 +51,12 @@ import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
  * components.
  */
 public class TestExoPlayer {
+
+  /**
+   * The default timeout applied when calling one of the {@code runUntil} methods. This timeout
+   * should be sufficient for any condition using a Robolectric test.
+   */
+  public static final long DEFAULT_TIMEOUT_MS = 10_000;
 
   /** Reflectively call Robolectric ShadowLooper#runOneTask. */
   private static final Object shadowLooper;
@@ -78,6 +87,7 @@ public class TestExoPlayer {
     @Nullable private Renderer[] renderers;
     @Nullable private RenderersFactory renderersFactory;
     private boolean useLazyPreparation;
+    private boolean throwWhenStuckBuffering;
     private @MonotonicNonNull Looper looper;
 
     public Builder(Context context) {
@@ -248,6 +258,19 @@ public class TestExoPlayer {
     }
 
     /**
+     * Sets whether the player should throw when it detects it's stuck buffering.
+     *
+     * <p>This method is experimental, and will be renamed or removed in a future release.
+     *
+     * @param throwWhenStuckBuffering Whether to throw when the player detects it's stuck buffering.
+     * @return This builder.
+     */
+    public Builder experimental_setThrowWhenStuckBuffering(boolean throwWhenStuckBuffering) {
+      this.throwWhenStuckBuffering = throwWhenStuckBuffering;
+      return this;
+    }
+
+    /**
      * Builds an {@link SimpleExoPlayer} using the provided values or their defaults.
      *
      * @return The built {@link ExoPlayerTestRunner}.
@@ -281,6 +304,7 @@ public class TestExoPlayer {
           .setClock(clock)
           .setUseLazyPreparation(useLazyPreparation)
           .setLooper(looper)
+          .experimental_setThrowWhenStuckBuffering(throwWhenStuckBuffering)
           .build();
     }
   }
@@ -288,16 +312,19 @@ public class TestExoPlayer {
   private TestExoPlayer() {}
 
   /**
-   * Run tasks of the main {@link Looper} until the {@code player}'s state reaches the {@code
-   * expectedState}.
+   * Runs tasks of the main {@link Looper} until {@link Player#getPlaybackState()} matches the
+   * expected state.
+   *
+   * @param player The {@link Player}.
+   * @param expectedState The expected {@link Player.State}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
    */
-  public static void runUntilPlaybackState(
-      SimpleExoPlayer player, @Player.State int expectedState) {
+  public static void runUntilPlaybackState(Player player, @Player.State int expectedState)
+      throws TimeoutException {
     verifyMainTestThread(player);
     if (player.getPlaybackState() == expectedState) {
       return;
     }
-
     AtomicBoolean receivedExpectedState = new AtomicBoolean(false);
     Player.EventListener listener =
         new Player.EventListener() {
@@ -309,21 +336,24 @@ public class TestExoPlayer {
           }
         };
     player.addListener(listener);
-    runUntil(() -> receivedExpectedState.get());
+    runUntil(receivedExpectedState::get);
     player.removeListener(listener);
   }
 
   /**
-   * Run tasks of the main {@link Looper} until the {@code player} calls the {@link
-   * Player.EventListener#onPlaybackSpeedChanged} callback with that matches {@code
-   * expectedPlayWhenReady}.
+   * Runs tasks of the main {@link Looper} until {@link Player#getPlayWhenReady()} matches the
+   * expected value.
+   *
+   * @param player The {@link Player}.
+   * @param expectedPlayWhenReady The expected value for {@link Player#getPlayWhenReady()}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
    */
-  public static void runUntilPlayWhenReady(SimpleExoPlayer player, boolean expectedPlayWhenReady) {
+  public static void runUntilPlayWhenReady(Player player, boolean expectedPlayWhenReady)
+      throws TimeoutException {
     verifyMainTestThread(player);
     if (player.getPlayWhenReady() == expectedPlayWhenReady) {
       return;
     }
-
     AtomicBoolean receivedExpectedPlayWhenReady = new AtomicBoolean(false);
     Player.EventListener listener =
         new Player.EventListener() {
@@ -336,34 +366,53 @@ public class TestExoPlayer {
           }
         };
     player.addListener(listener);
-    runUntil(() -> receivedExpectedPlayWhenReady.get());
+    runUntil(receivedExpectedPlayWhenReady::get);
   }
 
   /**
-   * Run tasks of the main {@link Looper} until the {@code player} calls the {@link
-   * Player.EventListener#onTimelineChanged} callback.
+   * Runs tasks of the main {@link Looper} until {@link Player#getCurrentTimeline()} matches the
+   * expected timeline.
    *
-   * @param player The {@link SimpleExoPlayer}.
-   * @param expectedTimeline A specific {@link Timeline} to wait for, or null if any timeline is
-   *     accepted.
-   * @return The received {@link Timeline}.
+   * @param player The {@link Player}.
+   * @param expectedTimeline The expected {@link Timeline}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
    */
-  public static Timeline runUntilTimelineChanged(
-      SimpleExoPlayer player, @Nullable Timeline expectedTimeline) {
+  public static void runUntilTimelineChanged(Player player, Timeline expectedTimeline)
+      throws TimeoutException {
     verifyMainTestThread(player);
-
-    if (expectedTimeline != null && expectedTimeline.equals(player.getCurrentTimeline())) {
-      return expectedTimeline;
+    if (expectedTimeline.equals(player.getCurrentTimeline())) {
+      return;
     }
+    AtomicBoolean receivedExpectedTimeline = new AtomicBoolean(false);
+    Player.EventListener listener =
+        new Player.EventListener() {
+          @Override
+          public void onTimelineChanged(Timeline timeline, int reason) {
+            if (expectedTimeline.equals(timeline)) {
+              receivedExpectedTimeline.set(true);
+            }
+            player.removeListener(this);
+          }
+        };
+    player.addListener(listener);
+    runUntil(receivedExpectedTimeline::get);
+  }
 
+  /**
+   * Runs tasks of the main {@link Looper} until a timeline change occurred.
+   *
+   * @param player The {@link Player}.
+   * @return The new {@link Timeline}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
+   */
+  public static Timeline runUntilTimelineChanged(Player player) throws TimeoutException {
+    verifyMainTestThread(player);
     AtomicReference<Timeline> receivedTimeline = new AtomicReference<>();
     Player.EventListener listener =
         new Player.EventListener() {
           @Override
           public void onTimelineChanged(Timeline timeline, int reason) {
-            if (expectedTimeline == null || expectedTimeline.equals(timeline)) {
-              receivedTimeline.set(timeline);
-            }
+            receivedTimeline.set(timeline);
             player.removeListener(this);
           }
         };
@@ -373,12 +422,16 @@ public class TestExoPlayer {
   }
 
   /**
-   * Run tasks of the main {@link Looper} until the {@code player} calls the {@link
+   * Runs tasks of the main {@link Looper} until a {@link
    * Player.EventListener#onPositionDiscontinuity} callback with the specified {@link
-   * Player.DiscontinuityReason}.
+   * Player.DiscontinuityReason} occurred.
+   *
+   * @param player The {@link Player}.
+   * @param expectedReason The expected {@link Player.DiscontinuityReason}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
    */
   public static void runUntilPositionDiscontinuity(
-      SimpleExoPlayer player, @Player.DiscontinuityReason int expectedReason) {
+      Player player, @Player.DiscontinuityReason int expectedReason) throws TimeoutException {
     AtomicBoolean receivedCallback = new AtomicBoolean(false);
     Player.EventListener listener =
         new Player.EventListener() {
@@ -391,17 +444,17 @@ public class TestExoPlayer {
           }
         };
     player.addListener(listener);
-    runUntil(() -> receivedCallback.get());
+    runUntil(receivedCallback::get);
   }
 
   /**
-   * Run tasks of the main {@link Looper} until the {@code player} calls the {@link
-   * Player.EventListener#onPlayerError} callback.
+   * Runs tasks of the main {@link Looper} until a player error occurred.
    *
-   * @param player The {@link SimpleExoPlayer}.
-   * @return The raised error.
+   * @param player The {@link Player}.
+   * @return The raised {@link ExoPlaybackException}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
    */
-  public static ExoPlaybackException runUntilError(SimpleExoPlayer player) {
+  public static ExoPlaybackException runUntilError(Player player) throws TimeoutException {
     verifyMainTestThread(player);
     AtomicReference<ExoPlaybackException> receivedError = new AtomicReference<>();
     Player.EventListener listener =
@@ -418,10 +471,13 @@ public class TestExoPlayer {
   }
 
   /**
-   * Run tasks of the main {@link Looper} until the {@code player} calls the {@link
-   * com.google.android.exoplayer2.video.VideoRendererEventListener#onRenderedFirstFrame} callback.
+   * Runs tasks of the main {@link Looper} until the {@link VideoListener#onRenderedFirstFrame}
+   * callback has been called.
+   *
+   * @param player The {@link Player}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
    */
-  public static void runUntilRenderedFirstFrame(SimpleExoPlayer player) {
+  public static void runUntilRenderedFirstFrame(SimpleExoPlayer player) throws TimeoutException {
     verifyMainTestThread(player);
     AtomicBoolean receivedCallback = new AtomicBoolean(false);
     VideoListener listener =
@@ -433,25 +489,65 @@ public class TestExoPlayer {
           }
         };
     player.addVideoListener(listener);
-    runUntil(() -> receivedCallback.get());
+    runUntil(receivedCallback::get);
   }
 
-  /** Run tasks of the main {@link Looper} until the {@code condition} returns {@code true}. */
-  public static void runUntil(Supplier<Boolean> condition) {
-    verifyMainTestThread();
+  /**
+   * Runs tasks of the main {@link Looper} until the player completely handled all previously issued
+   * commands on the internal playback thread.
+   *
+   * @param player The {@link Player}.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS default timeout} is exceeded.
+   */
+  public static void runUntilPendingCommandsAreFullyHandled(ExoPlayer player)
+      throws TimeoutException {
+    verifyMainTestThread(player);
+    // Send message to player that will arrive after all other pending commands. Thus, the message
+    // execution on the app thread will also happen after all other pending command
+    // acknowledgements have arrived back on the app thread.
+    AtomicBoolean receivedMessageCallback = new AtomicBoolean(false);
+    player
+        .createMessage((type, data) -> receivedMessageCallback.set(true))
+        .setHandler(Util.createHandler())
+        .send();
+    runUntil(receivedMessageCallback::get);
+  }
 
+  /**
+   * Runs tasks of the main {@link Looper} until the {@code condition} returns {@code true}.
+   *
+   * @param condition The condition.
+   * @throws TimeoutException If the {@link #DEFAULT_TIMEOUT_MS} is exceeded.
+   */
+  public static void runUntil(Supplier<Boolean> condition) throws TimeoutException {
+    runUntil(condition, DEFAULT_TIMEOUT_MS, Clock.DEFAULT);
+  }
+
+  /**
+   * Runs tasks of the main {@link Looper} until the {@code condition} returns {@code true}.
+   *
+   * @param condition The condition.
+   * @param timeoutMs The timeout in milliseconds.
+   * @param clock The {@link Clock} to measure the timeout.
+   * @throws TimeoutException If the {@code timeoutMs timeout} is exceeded.
+   */
+  public static void runUntil(Supplier<Boolean> condition, long timeoutMs, Clock clock)
+      throws TimeoutException {
+    verifyMainTestThread();
     try {
+      long timeoutTimeMs = clock.currentTimeMillis() + timeoutMs;
       while (!condition.get()) {
+        if (clock.currentTimeMillis() >= timeoutTimeMs) {
+          throw new TimeoutException();
+        }
         runOneTaskMethod.invoke(shadowLooper);
       }
-    } catch (IllegalAccessException e) {
-      throw new IllegalStateException(e);
-    } catch (InvocationTargetException e) {
+    } catch (IllegalAccessException | InvocationTargetException e) {
       throw new IllegalStateException(e);
     }
   }
 
-  private static void verifyMainTestThread(SimpleExoPlayer player) {
+  private static void verifyMainTestThread(Player player) {
     if (Looper.myLooper() != Looper.getMainLooper()
         || player.getApplicationLooper() != Looper.getMainLooper()) {
       throw new IllegalStateException();

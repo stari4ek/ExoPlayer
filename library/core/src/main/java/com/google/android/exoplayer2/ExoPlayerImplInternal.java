@@ -131,7 +131,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private int enabledRendererCount;
   @Nullable private SeekPosition pendingInitialSeekPosition;
   private long rendererPositionUs;
-  private int nextPendingMessageIndex;
+  private int nextPendingMessageIndexHint;
   private boolean deliverPendingMessageAtStartPositionRequired;
 
   private long releaseTimeoutMs;
@@ -870,7 +870,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
         }
       }
       if (throwWhenStuckBuffering
-          && !shouldContinueLoading
+          && !playbackInfo.isLoading
           && playbackInfo.totalBufferedDurationUs < 500_000
           && isLoadingPossible()) {
         // Throw if the LoadControl prevents loading even if the buffer is empty or almost empty. We
@@ -1191,7 +1191,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
         pendingMessageInfo.message.markAsProcessed(/* isDelivered= */ false);
       }
       pendingMessages.clear();
-      nextPendingMessageIndex = 0;
       resetPosition = true;
     }
     MediaPeriodId mediaPeriodId = playbackInfo.periodId;
@@ -1365,6 +1364,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
     // Correct next index if necessary (e.g. after seeking, timeline changes, or new messages)
     int currentPeriodIndex =
         playbackInfo.timeline.getIndexOfPeriod(playbackInfo.periodId.periodUid);
+    int nextPendingMessageIndex = Math.min(nextPendingMessageIndexHint, pendingMessages.size());
     PendingMessageInfo previousInfo =
         nextPendingMessageIndex > 0 ? pendingMessages.get(nextPendingMessageIndex - 1) : null;
     while (previousInfo != null
@@ -1410,6 +1410,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
               ? pendingMessages.get(nextPendingMessageIndex)
               : null;
     }
+    nextPendingMessageIndexHint = nextPendingMessageIndex;
   }
 
   private void ensureStopped(Renderer renderer) throws ExoPlaybackException {
@@ -2241,13 +2242,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
     // Ensure ad insertion metadata is up to date.
     MediaPeriodId periodIdWithAds =
         queue.resolveMediaPeriodIdForAds(timeline, newPeriodUid, contentPositionForAdResolutionUs);
+    boolean earliestCuePointIsUnchangedOrLater =
+        periodIdWithAds.nextAdGroupIndex == C.INDEX_UNSET
+            || (oldPeriodId.nextAdGroupIndex != C.INDEX_UNSET
+                && periodIdWithAds.adGroupIndex >= oldPeriodId.nextAdGroupIndex);
+    // Drop update if we keep playing the same content (MediaPeriod.periodUid are identical) and
+    // the only change is that MediaPeriodId.nextAdGroupIndex increased. This postpones a potential
+    // discontinuity until we reach the former next ad group position.
     boolean oldAndNewPeriodIdAreSame =
         oldPeriodId.periodUid.equals(newPeriodUid)
             && !oldPeriodId.isAd()
-            && !periodIdWithAds.isAd();
-    // Drop update if we keep playing the same content (MediaPeriod.periodUid are identical) and
-    // only MediaPeriodId.nextAdGroupIndex may have changed. This postpones a potential
-    // discontinuity until we reach the former next ad group position.
+            && !periodIdWithAds.isAd()
+            && earliestCuePointIsUnchangedOrLater;
     MediaPeriodId newPeriodId = oldAndNewPeriodIdAreSame ? oldPeriodId : periodIdWithAds;
 
     long periodPositionUs = contentPositionForAdResolutionUs;

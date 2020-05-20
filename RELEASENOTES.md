@@ -3,6 +3,15 @@
 ### dev-v2 (not yet released)
 
 *   Core library:
+    *   Added `TextComponent.getCurrentCues` because the current cues are no
+        longer forwarded to a new `TextOutput` in `SimpleExoPlayer`
+        automatically.
+    *   Add opt-in to verify correct thread usage with
+        `SimpleExoPlayer.setThrowsWhenUsingWrongThread(true)`
+        ([#4463](https://github.com/google/ExoPlayer/issues/4463)).
+    *   Fix bug where `PlayerMessages` throw an exception after `MediaSources`
+        are removed from the playlist
+        ([#7278](https://github.com/google/ExoPlayer/issues/7278)).
     *   Add playbackPositionUs parameter to 'LoadControl.shouldContinueLoading'.
     *   The `DefaultLoadControl` default minimum buffer is set to 50 seconds,
         equal to the default maximum buffer. `DefaultLoadControl` applies the
@@ -26,6 +35,8 @@
         consistency.
     *   Deprecate and rename `onLoadingChanged` to `onIsLoadingChanged` for
         consistency.
+    *   Deprecate `onSeekProcessed` because all seek changes happen instantly
+        now and listening to `onPositionDiscontinuity` is sufficient.
     *   Add `ExoPlayer.setPauseAtEndOfMediaItems` to let the player pause at the
         end of each media item
         ([#5660](https://github.com/google/ExoPlayer/issues/5660)).
@@ -38,6 +49,8 @@
     *   Rename `MediaCodecRenderer.onOutputFormatChanged` to
         `MediaCodecRenderer.onOutputMediaFormatChanged`, further clarifying the
         distinction between `Format` and `MediaFormat`.
+    *   Improve `Format` propagation within the media codec renderer
+        ([#6646](https://github.com/google/ExoPlayer/issues/6646)).
     *   Move player message-related constants from `C` to `Renderer`, to avoid
         having the constants class depend on player/renderer classes.
     *   Split out `common` and `extractor` submodules.
@@ -45,9 +58,6 @@
     *   Add `DataSpec.Builder` and deprecate most `DataSpec` constructors.
     *   Add `DataSpec.customData` to allow applications to pass custom data
         through `DataSource` chains.
-    *   Add a sample count parameter to `MediaCodecRenderer.processOutputBuffer`
-        and `AudioSink.handleBuffer` to allow batching multiple encoded frames
-        in one buffer.
     *   Add a `Format.Builder` and deprecate all `Format.create*` methods and
         most `Format.copyWith*` methods.
     *   Split `Format.bitrate` into `Format.averageBitrate` and
@@ -60,14 +70,20 @@
         `DecoderVideoRenderer` and `DecoderAudioRenderer` respectively, and
         generalized to work with `Decoder` rather than `SimpleDecoder`.
     *   Add media item based playlist API to Player.
-    *   Update `CachedContentIndex` to use `SecureRandom` for generating the
-        initialization vector used to encrypt the cache contents.
     *   Remove deprecated members in `DefaultTrackSelector`.
     *   Add `Player.DeviceComponent` and implement it for `SimpleExoPlayer` so
         that the device volume can be controlled by player.
     *   Avoid throwing an exception while parsing fragmented MP4 default sample
         values where the most-significant bit is set
         ([#7207](https://github.com/google/ExoPlayer/issues/7207)).
+    *   Add `SilenceMediaSource.Factory` to support tags
+        ([PR #7245](https://github.com/google/ExoPlayer/pull/7245)).
+    *   Fix `AdsMediaSource` child `MediaSource`s not being released.
+    *   Parse track titles from Matroska files
+        ([#7247](https://github.com/google/ExoPlayer/pull/7247)).
+    *   Replace `CacheDataSinkFactory` and `CacheDataSourceFactory` with
+        `CacheDataSink.Factory` and `CacheDataSource.Factory` respectively.
+*   Video: Pass frame rate hint to `Surface.setFrameRate` on Android R devices.
 *   Text:
     *   Parse `<ruby>` and `<rt>` tags in WebVTT subtitles (rendering is coming
         later).
@@ -84,6 +100,21 @@
         [issue #6581](https://github.com/google/ExoPlayer/issues/6581)).
     *   Parse `tts:ruby` and `tts:rubyPosition` properties in TTML subtitles
         (rendering is coming later).
+    *   Update WebVTT position alignment parsing to recognise `line-left`,
+        `center` and `line-right` as per the
+        [released spec](https://www.w3.org/TR/webvtt1/#webvtt-position-cue-setting)
+        (a
+        [previous draft](https://www.w3.org/TR/2014/WD-webvtt1-20141111/#dfn-webvtt-text-position-cue-setting)
+        used `start`, `middle` and `end`).
+    *   Use anti-aliasing and bitmap filtering when displaying bitmap subtitles
+        ([#6950](https://github.com/google/ExoPlayer/pull/6950)).
+    *   Implement timing-out of stuck CEA-608 captions (as permitted by
+        ANSI/CTA-608-E R-2014 Annex C.9) and set the default timeout to 16
+        seconds ([#7181](https://github.com/google/ExoPlayer/issues/7181)).
+    *   Add special-case positioning behaviour for vertical cues being rendered
+        horizontally.
+    *   Implement steps 4-10 of the
+        [WebVTT line computation algorithm](https://www.w3.org/TR/webvtt1/#cue-computed-line).
 *   DRM:
     *   Add support for attaching DRM sessions to clear content in the demo app.
     *   Remove `DrmSessionManager` references from all renderers.
@@ -93,8 +124,27 @@
         `OfflineLicenseHelper`
         ([#7078](https://github.com/google/ExoPlayer/issues/7078)).
     *   Remove generics from DRM components.
-*   Downloads: Merge downloads in `SegmentDownloader` to improve overall
-    download speed ([#5978](https://github.com/google/ExoPlayer/issues/5978)).
+*   Downloads and caching:
+    *   Merge downloads in `SegmentDownloader` to improve overall download speed
+        ([#5978](https://github.com/google/ExoPlayer/issues/5978)).
+    *   Replace `CacheDataSinkFactory` and `CacheDataSourceFactory` with
+        `CacheDataSink.Factory` and `CacheDataSource.Factory` respectively.
+    *   Remove `DownloadConstructorHelper` and use `CacheDataSource.Factory`
+        directly instead.
+    *   Update `CachedContentIndex` to use `SecureRandom` for generating the
+        initialization vector used to encrypt the cache contents.
+*   Audio:
+    *   Add a sample count parameter to `MediaCodecRenderer.processOutputBuffer`
+        and `AudioSink.handleBuffer` to allow batching multiple encoded frames
+        in one buffer.
+    *   No longer use a `MediaCodec` in audio passthrough mode.
+*   DASH:
+    *   Merge trick play adaptation sets (i.e., adaptation sets marked with
+        `http://dashif.org/guidelines/trickmode`) into the same `TrackGroup` as
+        the main adaptation sets to which they refer. Trick play tracks are
+        marked with the `C.ROLE_FLAG_TRICK_PLAY` flag.
+    *   Fix assertion failure in `SampleQueue` when playing DASH streams with
+        EMSG tracks ([#7273](https://github.com/google/ExoPlayer/issues/7273)).
 *   MP3: Add `IndexSeeker` for accurate seeks in VBR streams
     ([#6787](https://github.com/google/ExoPlayer/issues/6787)). This seeker is
     enabled by passing `FLAG_ENABLE_INDEX_SEEKING` to the `Mp3Extractor`. It may
@@ -102,12 +152,16 @@
     costly on large files.
 *   MP4: Store the Android capture frame rate only in `Format.metadata`.
     `Format.frameRate` now stores the calculated frame rate.
+*   MPEG-TS: Fix issue where SEI NAL units were incorrectly dropped from H.265
+    samples ([#7113](https://github.com/google/ExoPlayer/issues/7113)).
 *   Testing
     *   Add `TestExoPlayer`, a utility class with APIs to create
         `SimpleExoPlayer` instances with fake components for testing.
     *   Upgrade Truth dependency from 0.44 to 1.0.
     *   Upgrade to JUnit 4.13-rc-2.
 *   UI
+    *   Remove deperecated `exo_simple_player_view.xml` and
+        `exo_playback_control_view.xml` from resource.
     *   Add `showScrubber` and `hideScrubber` methods to DefaultTimeBar.
     *   Move logic of prev, next, fast forward and rewind to ControlDispatcher
         ([#6926](https://github.com/google/ExoPlayer/issues/6926)).
@@ -119,6 +173,17 @@
 *   Change the order of extractors for sniffing to reduce start-up latency in
     `DefaultExtractorsFactory` and `DefaultHlsExtractorsFactory`
     ([#6410](https://github.com/google/ExoPlayer/issues/6410)).
+*   Add missing `@Nullable` annotations to `MediaSessionConnector`
+    ([#7234](https://github.com/google/ExoPlayer/issues/7234)).
+*   AV1 extension: Add a heuristic to determine the default number of threads
+    used for AV1 playback using the extension.
+*   IMA extension: Upgrade to IMA SDK version 3.18.1, and migrate to new
+    preloading APIs ([#6429](https://github.com/google/ExoPlayer/issues/6429)).
+*   OkHttp extension: Upgrade OkHttp dependency to 3.12.11.
+*   Cronet extension: Default to using the Cronet implementation in Google Play
+    Services rather than Cronet Embedded. This allows Cronet to be used with a
+    negligible increase in application size, compared to approximately 8MB when
+    embedding the library.
 
 ### 2.11.4 (2020-04-08)
 

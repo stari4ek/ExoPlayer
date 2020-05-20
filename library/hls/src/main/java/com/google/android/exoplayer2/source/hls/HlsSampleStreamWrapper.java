@@ -17,8 +17,11 @@ package com.google.android.exoplayer2.source.hls;
 
 import android.net.Uri;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.SparseIntArray;
+
 import androidx.annotation.Nullable;
+
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.FormatHolder;
@@ -36,6 +39,8 @@ import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.emsg.EventMessage;
 import com.google.android.exoplayer2.metadata.emsg.EventMessageDecoder;
 import com.google.android.exoplayer2.metadata.id3.PrivFrame;
+import com.google.android.exoplayer2.source.LoadEventInfo;
+import com.google.android.exoplayer2.source.MediaLoadData;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
 import com.google.android.exoplayer2.source.SampleQueue;
 import com.google.android.exoplayer2.source.SampleQueue.UpstreamFormatChangedListener;
@@ -49,6 +54,7 @@ import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.upstream.Allocator;
 import com.google.android.exoplayer2.upstream.DataReader;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy.LoadErrorInfo;
 import com.google.android.exoplayer2.upstream.Loader;
 import com.google.android.exoplayer2.upstream.Loader.LoadErrorAction;
 import com.google.android.exoplayer2.util.Assertions;
@@ -57,6 +63,12 @@ import com.google.android.exoplayer2.util.MediaSourceEventDispatcher;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 import com.google.android.exoplayer2.util.Util;
+
+import org.checkerframework.checker.nullness.compatqual.NullableType;
+import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
+import org.checkerframework.checker.nullness.qual.RequiresNonNull;
+
 import java.io.EOFException;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -66,10 +78,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.checkerframework.checker.nullness.compatqual.NullableType;
-import org.checkerframework.checker.nullness.qual.EnsuresNonNull;
-import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
-import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
 /**
  * Loads {@link HlsMediaChunk}s obtained from a {@link HlsChunkSource}, and provides
@@ -108,13 +116,13 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
   // TVirl: https://github.com/google/ExoPlayer/issues/2014
   // private static final Set<Integer> MAPPABLE_TYPES =
-  private static Set<Integer> MAPPABLE_TYPES =
-      Collections.unmodifiableSet(
-          new HashSet<>(
-              Arrays.asList(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_METADATA)));
+  private static final Set<Integer> MAPPABLE_TYPES_DEFAULT = Collections.unmodifiableSet(
+      new HashSet<>(
+          Arrays.asList(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_METADATA)));
+    private static Set<Integer> MAPPABLE_TYPES = MAPPABLE_TYPES_DEFAULT;
 
-  public static void disableMapping() {
-    MAPPABLE_TYPES = Collections.emptySet();
+  public static void enableMapping(boolean enable) {
+    MAPPABLE_TYPES = enable ? MAPPABLE_TYPES_DEFAULT : Collections.emptySet();
   }
   // !TVirl
 
@@ -683,15 +691,14 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
         loader.startLoading(
             loadable, this, loadErrorHandlingPolicy.getMinimumLoadableRetryCount(loadable.type));
     eventDispatcher.loadStarted(
-        loadable.dataSpec,
+        new LoadEventInfo(loadable.loadTaskId, loadable.dataSpec, elapsedRealtimeMs),
         loadable.type,
         trackType,
         loadable.trackFormat,
         loadable.trackSelectionReason,
         loadable.trackSelectionData,
         loadable.startTimeUs,
-        loadable.endTimeUs,
-        elapsedRealtimeMs);
+        loadable.endTimeUs);
     return true;
   }
 
@@ -710,20 +717,25 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   @Override
   public void onLoadCompleted(Chunk loadable, long elapsedRealtimeMs, long loadDurationMs) {
     chunkSource.onChunkLoadCompleted(loadable);
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            loadable.getUri(),
+            loadable.getResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            loadable.bytesLoaded());
+    loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
     eventDispatcher.loadCompleted(
-        loadable.dataSpec,
-        loadable.getUri(),
-        loadable.getResponseHeaders(),
+        loadEventInfo,
         loadable.type,
         trackType,
         loadable.trackFormat,
         loadable.trackSelectionReason,
         loadable.trackSelectionData,
         loadable.startTimeUs,
-        loadable.endTimeUs,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.bytesLoaded());
+        loadable.endTimeUs);
     if (!prepared) {
       continueLoading(lastSeekPositionUs);
     } else {
@@ -734,20 +746,25 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   @Override
   public void onLoadCanceled(
       Chunk loadable, long elapsedRealtimeMs, long loadDurationMs, boolean released) {
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            loadable.getUri(),
+            loadable.getResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            loadable.bytesLoaded());
+    loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
     eventDispatcher.loadCanceled(
-        loadable.dataSpec,
-        loadable.getUri(),
-        loadable.getResponseHeaders(),
+        loadEventInfo,
         loadable.type,
         trackType,
         loadable.trackFormat,
         loadable.trackSelectionReason,
         loadable.trackSelectionData,
         loadable.startTimeUs,
-        loadable.endTimeUs,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        loadable.bytesLoaded());
+        loadable.endTimeUs);
     if (!released) {
       resetSampleQueues();
       if (enabledTrackGroupCount > 0) {
@@ -766,11 +783,28 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
     long bytesLoaded = loadable.bytesLoaded();
     boolean isMediaChunk = isMediaChunk(loadable);
     boolean blacklistSucceeded = false;
+    LoadEventInfo loadEventInfo =
+        new LoadEventInfo(
+            loadable.loadTaskId,
+            loadable.dataSpec,
+            loadable.getUri(),
+            loadable.getResponseHeaders(),
+            elapsedRealtimeMs,
+            loadDurationMs,
+            bytesLoaded);
+    MediaLoadData mediaLoadData =
+        new MediaLoadData(
+            loadable.type,
+            trackType,
+            loadable.trackFormat,
+            loadable.trackSelectionReason,
+            loadable.trackSelectionData,
+            C.usToMs(loadable.startTimeUs),
+            C.usToMs(loadable.endTimeUs));
+    LoadErrorInfo loadErrorInfo =
+        new LoadErrorInfo(loadEventInfo, mediaLoadData, error, errorCount);
     LoadErrorAction loadErrorAction;
-
-    long blacklistDurationMs =
-        loadErrorHandlingPolicy.getBlacklistDurationMsFor(
-            loadable.type, loadDurationMs, error, errorCount);
+    long blacklistDurationMs = loadErrorHandlingPolicy.getBlacklistDurationMsFor(loadErrorInfo);
     if (blacklistDurationMs != C.TIME_UNSET) {
       blacklistSucceeded = chunkSource.maybeBlacklistTrack(loadable, blacklistDurationMs);
     }
@@ -785,19 +819,16 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
       }
       loadErrorAction = Loader.DONT_RETRY;
     } else /* did not blacklist */ {
-      long retryDelayMs =
-          loadErrorHandlingPolicy.getRetryDelayMsFor(
-              loadable.type, loadDurationMs, error, errorCount);
+      long retryDelayMs = loadErrorHandlingPolicy.getRetryDelayMsFor(loadErrorInfo);
       loadErrorAction =
           retryDelayMs != C.TIME_UNSET
               ? Loader.createRetryAction(/* resetErrorCount= */ false, retryDelayMs)
               : Loader.DONT_RETRY_FATAL;
     }
 
+    boolean wasCanceled = !loadErrorAction.isRetry();
     eventDispatcher.loadError(
-        loadable.dataSpec,
-        loadable.getUri(),
-        loadable.getResponseHeaders(),
+        loadEventInfo,
         loadable.type,
         trackType,
         loadable.trackFormat,
@@ -805,11 +836,11 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
         loadable.trackSelectionData,
         loadable.startTimeUs,
         loadable.endTimeUs,
-        elapsedRealtimeMs,
-        loadDurationMs,
-        bytesLoaded,
         error,
-        /* wasCanceled= */ !loadErrorAction.isRetry());
+        wasCanceled);
+    if (wasCanceled) {
+      loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
+    }
 
     if (blacklistSucceeded) {
       if (!prepared) {
@@ -916,7 +947,12 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
     boolean isAudioVideo = type == C.TRACK_TYPE_AUDIO || type == C.TRACK_TYPE_VIDEO;
     HlsSampleQueue sampleQueue =
-        new HlsSampleQueue(allocator, drmSessionManager, eventDispatcher, overridingDrmInitData);
+        new HlsSampleQueue(
+            allocator,
+            /* playbackLooper= */ handler.getLooper(),
+            drmSessionManager,
+            eventDispatcher,
+            overridingDrmInitData);
     if (isAudioVideo) {
       sampleQueue.setDrmInitData(drmInitData);
     }
@@ -1301,6 +1337,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
             .setLabel(playlistFormat.label)
             .setLanguage(playlistFormat.language)
             .setSelectionFlags(playlistFormat.selectionFlags)
+            .setRoleFlags(playlistFormat.roleFlags)
             .setAverageBitrate(propagateBitrates ? playlistFormat.averageBitrate : Format.NO_VALUE)
             .setPeakBitrate(propagateBitrates ? playlistFormat.peakBitrate : Format.NO_VALUE)
             .setCodecs(codecs)
@@ -1386,10 +1423,11 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
     private HlsSampleQueue(
         Allocator allocator,
+        Looper playbackLooper,
         DrmSessionManager drmSessionManager,
         MediaSourceEventDispatcher eventDispatcher,
         Map<String, DrmInitData> overridingDrmInitData) {
-      super(allocator, drmSessionManager, eventDispatcher);
+      super(allocator, playbackLooper, drmSessionManager, eventDispatcher);
       this.overridingDrmInitData = overridingDrmInitData;
     }
 
@@ -1530,7 +1568,8 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
     }
 
     @Override
-    public int sampleData(DataReader input, int length, boolean allowEndOfInput)
+    public int sampleData(
+        DataReader input, int length, boolean allowEndOfInput, @SampleDataPart int sampleDataPart)
         throws IOException {
       ensureBufferCapacity(bufferPosition + length);
       int numBytesRead = input.read(buffer, bufferPosition, length);
@@ -1546,7 +1585,8 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
     }
 
     @Override
-    public void sampleData(ParsableByteArray buffer, int length) {
+    public void sampleData(
+        ParsableByteArray buffer, int length, @SampleDataPart int sampleDataPart) {
       ensureBufferCapacity(bufferPosition + length);
       buffer.readBytes(this.buffer, bufferPosition, length);
       bufferPosition += length;

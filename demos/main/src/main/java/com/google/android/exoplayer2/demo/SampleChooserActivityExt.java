@@ -4,60 +4,44 @@ package com.google.android.exoplayer2.demo;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Environment;
-import android.view.View;
-import android.widget.ExpandableListView;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.widget.Toast;
-
 import androidx.annotation.NonNull;
-import com.google.android.exoplayer2.util.Assertions;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.util.List;
 
 /**
  * Extend sample chooser with testing functionality: save logcat to file
  */
 public class SampleChooserActivityExt extends SampleChooserActivity {
 
-    private final Sample logcatSample = new Sample("Save logcat") {
-        @Override
-        public void addToIntent(Intent intent) {
-            Assertions.checkState(false, "Should not be called");
+    private MenuItem saveLogsItem;
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        try {
+            return super.onCreateOptionsMenu(menu);
+        } finally {
+            saveLogsItem = menu.findItem(R.id.save_logs);
         }
-    };
-
-
-    /* private */ void onSampleGroups(final List<SampleGroup> groups, boolean sawError) {
-        // TVirl: inject own group with special handlers
-        SampleGroup toolsGroup = new SampleGroup("=== Tools");
-        toolsGroup.samples.add(logcatSample);
-        groups.add(toolsGroup);
-        // !TVirl
-
-        super.onSampleGroups(groups, sawError);
     }
 
     @Override
-    public boolean onChildClick(
-        ExpandableListView parent, View view, int groupPosition, int childPosition, long id) {
-        Sample sample = (Sample) view.getTag();
-
-        // intercept own sample
-        if (sample == logcatSample) {
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if (item == saveLogsItem) {
             tryToSaveLogcat();
             return true;
         } else {
-            return super.onChildClick(parent, view, groupPosition, childPosition, id);
+            return super.onOptionsItemSelected(item);
         }
     }
 
