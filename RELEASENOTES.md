@@ -3,9 +3,12 @@
 ### dev-v2 (not yet released)
 
 *   Core library:
+    *   Add `Player.getTrackSelector` to access track selector from UI module.
     *   Added `TextComponent.getCurrentCues` because the current cues are no
         longer forwarded to a new `TextOutput` in `SimpleExoPlayer`
         automatically.
+    *   Add additional options to `SimpleExoPlayer.Builder` that were previously
+        only accessible via setters.
     *   Add opt-in to verify correct thread usage with
         `SimpleExoPlayer.setThrowsWhenUsingWrongThread(true)`
         ([#4463](https://github.com/google/ExoPlayer/issues/4463)).
@@ -23,6 +26,11 @@
         average video frame processing offset.
     *   Add playlist API
         ([#6161](https://github.com/google/ExoPlayer/issues/6161)).
+    *   Attach an identifier and extra information to load error events passed
+        to `LoadErrorHandlingPolicy`. `LoadErrorHandlingPolicy` implementations
+        must migrate to overriding the non-deprecated methods of the interface
+        in preparation for deprecated methods' removal in a future ExoPlayer
+        version ([#7309](https://github.com/google/ExoPlayer/issues/7309)).
     *   Add `play` and `pause` methods to `Player`.
     *   Add `Player.getCurrentLiveOffset` to conveniently return the live
         offset.
@@ -83,6 +91,11 @@
         ([#7247](https://github.com/google/ExoPlayer/pull/7247)).
     *   Replace `CacheDataSinkFactory` and `CacheDataSourceFactory` with
         `CacheDataSink.Factory` and `CacheDataSource.Factory` respectively.
+    *   Enable the configuration of `SilenceSkippingAudioProcessor`
+        ([#6705](https://github.com/google/ExoPlayer/issues/6705)).
+    *   Extend `EventTime` with more details about the current player state for
+        easier access
+        ([#7332](https://github.com/google/ExoPlayer/issues/7332)).
 *   Video: Pass frame rate hint to `Surface.setFrameRate` on Android R devices.
 *   Text:
     *   Parse `<ruby>` and `<rt>` tags in WebVTT subtitles (rendering is coming
@@ -115,6 +128,12 @@
         horizontally.
     *   Implement steps 4-10 of the
         [WebVTT line computation algorithm](https://www.w3.org/TR/webvtt1/#cue-computed-line).
+    *   Stop parsing unsupported WebVTT CSS properties. The spec provides an
+        [exhaustive list](https://www.w3.org/TR/webvtt1/#the-cue-pseudo-element)
+        of which are supported.
+    *   Ignore excess characters in CEA-608 lines (max length is 32)
+        ([#7341](https://github.com/google/ExoPlayer/issues/7341)).
+    *   Add support for WebVTT's `ruby-position` CSS property.
 *   DRM:
     *   Add support for attaching DRM sessions to clear content in the demo app.
     *   Remove `DrmSessionManager` references from all renderers.
@@ -143,13 +162,17 @@
         `http://dashif.org/guidelines/trickmode`) into the same `TrackGroup` as
         the main adaptation sets to which they refer. Trick play tracks are
         marked with the `C.ROLE_FLAG_TRICK_PLAY` flag.
+    *   Enable support for embedded CEA-708.
     *   Fix assertion failure in `SampleQueue` when playing DASH streams with
         EMSG tracks ([#7273](https://github.com/google/ExoPlayer/issues/7273)).
-*   MP3: Add `IndexSeeker` for accurate seeks in VBR streams
-    ([#6787](https://github.com/google/ExoPlayer/issues/6787)). This seeker is
-    enabled by passing `FLAG_ENABLE_INDEX_SEEKING` to the `Mp3Extractor`. It may
-    require to scan a significant portion of the file for seeking, which may be
-    costly on large files.
+*   MP3:
+    *   Add `IndexSeeker` for accurate seeks in VBR streams
+        ([#6787](https://github.com/google/ExoPlayer/issues/6787)). This seeker
+        is enabled by passing `FLAG_ENABLE_INDEX_SEEKING` to the `Mp3Extractor`.
+        It may require to scan a significant portion of the file for seeking,
+        which may be costly on large files.
+    *   Allow MP3 files with XING headers that are larger than 2GB to be played
+        ([#7337](https://github.com/google/ExoPlayer/issues/7337)).
 *   MP4: Store the Android capture frame rate only in `Format.metadata`.
     `Format.frameRate` now stores the calculated frame rate.
 *   MPEG-TS: Fix issue where SEI NAL units were incorrectly dropped from H.265
@@ -177,13 +200,33 @@
     ([#7234](https://github.com/google/ExoPlayer/issues/7234)).
 *   AV1 extension: Add a heuristic to determine the default number of threads
     used for AV1 playback using the extension.
-*   IMA extension: Upgrade to IMA SDK version 3.18.1, and migrate to new
-    preloading APIs ([#6429](https://github.com/google/ExoPlayer/issues/6429)).
+*   IMA extension:
+    *   Upgrade to IMA SDK version 3.19.0, and migrate to new preloading APIs
+        ([#6429](https://github.com/google/ExoPlayer/issues/6429)). This fixes
+        several issues involving preloading and handling of ad loading error
+        cases: ([#4140](https://github.com/google/ExoPlayer/issues/4140),
+        [#5006](https://github.com/google/ExoPlayer/issues/5006),
+        [#6030](https://github.com/google/ExoPlayer/issues/6030),
+        [#6097](https://github.com/google/ExoPlayer/issues/6097),
+        [#6425](https://github.com/google/ExoPlayer/issues/6425),
+        [#6967](https://github.com/google/ExoPlayer/issues/6967),
+        [#7041](https://github.com/google/ExoPlayer/issues/7041),
+        [#7161](https://github.com/google/ExoPlayer/issues/7161),
+        [#7212](https://github.com/google/ExoPlayer/issues/7212),
+        [#7340](https://github.com/google/ExoPlayer/issues/7340)).
+    *   Add support for timing out ad preloading, to avoid playback getting
+        stuck if an ad group unexpectedly fails to load
+        ([#5444](https://github.com/google/ExoPlayer/issues/5444),
+        [#5966](https://github.com/google/ExoPlayer/issues/5966),
+        [#7002](https://github.com/google/ExoPlayer/issues/7002)).
 *   OkHttp extension: Upgrade OkHttp dependency to 3.12.11.
 *   Cronet extension: Default to using the Cronet implementation in Google Play
     Services rather than Cronet Embedded. This allows Cronet to be used with a
     negligible increase in application size, compared to approximately 8MB when
     embedding the library.
+*   MediaSession extension: Set session playback state to BUFFERING only when
+    actually playing ([#7367](https://github.com/google/ExoPlayer/pull/7367),
+    [#7206](https://github.com/google/ExoPlayer/issues/7206)).
 
 ### 2.11.4 (2020-04-08)
 

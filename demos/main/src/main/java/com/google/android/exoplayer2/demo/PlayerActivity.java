@@ -326,7 +326,7 @@ public class PlayerActivity extends AppCompatActivity
           new SimpleExoPlayer.Builder(/* context= */ this, renderersFactory)
               .setMediaSourceFactory(
                   // TVirl
-                  //new DefaultMediaSourceFactory(
+                  //DefaultMediaSourceFactory.newInstance(
                   new CustomMediaSourceFactory(
                       /* context= */ this, dataSourceFactory, new AdSupportProvider()))
               .setTrackSelector(trackSelector)

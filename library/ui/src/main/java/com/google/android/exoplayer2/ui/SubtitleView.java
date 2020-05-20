@@ -20,10 +20,16 @@ import static java.lang.annotation.RetentionPolicy.SOURCE;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Canvas;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.AbsoluteSizeSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.accessibility.CaptioningManager;
+import android.webkit.WebView;
 import android.widget.FrameLayout;
 import androidx.annotation.Dimension;
 import androidx.annotation.IntDef;
@@ -35,11 +41,43 @@ import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /** A view for displaying subtitle {@link Cue}s. */
 public final class SubtitleView extends FrameLayout implements TextOutput {
+
+  /**
+   * An output for displaying subtitles.
+   *
+   * <p>Implementations of this also need to extend {@link View} in order to be attached to the
+   * Android view hierarchy.
+   */
+  /* package */ interface Output {
+
+    /**
+     * Updates the list of cues displayed.
+     *
+     * @param cues The cues to display.
+     * @param style A {@link CaptionStyleCompat} to use for styling unset properties of cues.
+     * @param defaultTextSize The default font size to apply when {@link Cue#textSize} is {@link
+     *     Cue#DIMEN_UNSET}.
+     * @param defaultTextSizeType The type of {@code defaultTextSize}.
+     * @param bottomPaddingFraction The bottom padding to apply when {@link Cue#line} is {@link
+     *     Cue#DIMEN_UNSET}, as a fraction of the view's remaining height after its top and bottom
+     *     padding have been subtracted.
+     * @see #setStyle(CaptionStyleCompat)
+     * @see #setTextSize(int, float)
+     * @see #setBottomPaddingFraction(float)
+     */
+    void update(
+        List<Cue> cues,
+        CaptionStyleCompat style,
+        float defaultTextSize,
+        @Cue.TextSizeType int defaultTextSizeType,
+        float bottomPaddingFraction);
+  }
 
   /**
    * The default fractional text size.
@@ -56,17 +94,14 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    */
   public static final float DEFAULT_BOTTOM_PADDING_FRACTION = 0.08f;
 
-  /**
-   * Indicates a {@link SubtitleTextView} should be used to display subtitles. This is the default.
-   */
-  public static final int VIEW_TYPE_TEXT = 1;
+  /** Indicates subtitles should be displayed using a {@link Canvas}. This is the default. */
+  public static final int VIEW_TYPE_CANVAS = 1;
 
   /**
-   * Indicates a {@link SubtitleWebView} should be used to display subtitles.
+   * Indicates subtitles should be displayed using a {@link WebView}.
    *
-   * <p>This will instantiate a {@link android.webkit.WebView} and use CSS and HTML styling to
-   * render the subtitles. This supports some additional styling features beyond those supported by
-   * {@link SubtitleTextView} such as vertical text.
+   * <p>This will use CSS and HTML styling to render the subtitles. This supports some additional
+   * styling features beyond those supported by {@link #VIEW_TYPE_CANVAS} such as vertical text.
    */
   public static final int VIEW_TYPE_WEB = 2;
 
@@ -76,14 +111,22 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    * <p>One of:
    *
    * <ul>
-   *   <li>{@link #VIEW_TYPE_TEXT}
+   *   <li>{@link #VIEW_TYPE_CANVAS}
    *   <li>{@link #VIEW_TYPE_WEB}
    * </ul>
    */
   @Documented
   @Retention(SOURCE)
-  @IntDef({VIEW_TYPE_TEXT, VIEW_TYPE_WEB})
+  @IntDef({VIEW_TYPE_CANVAS, VIEW_TYPE_WEB})
   public @interface ViewType {}
+
+  private List<Cue> cues;
+  private CaptionStyleCompat style;
+  @Cue.TextSizeType private int defaultTextSizeType;
+  private float defaultTextSize;
+  private float bottomPaddingFraction;
+  private boolean applyEmbeddedStyles;
+  private boolean applyEmbeddedFontSizes;
 
   private @ViewType int viewType;
   private Output output;
@@ -95,11 +138,19 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
 
   public SubtitleView(Context context, @Nullable AttributeSet attrs) {
     super(context, attrs);
-    SubtitleTextView subtitleTextView = new SubtitleTextView(context, attrs);
-    output = subtitleTextView;
-    innerSubtitleView = subtitleTextView;
+    cues = Collections.emptyList();
+    style = CaptionStyleCompat.DEFAULT;
+    defaultTextSizeType = Cue.TEXT_SIZE_TYPE_FRACTIONAL;
+    defaultTextSize = DEFAULT_TEXT_SIZE_FRACTION;
+    bottomPaddingFraction = DEFAULT_BOTTOM_PADDING_FRACTION;
+    applyEmbeddedStyles = true;
+    applyEmbeddedFontSizes = true;
+
+    CanvasSubtitleOutput canvasSubtitleOutput = new CanvasSubtitleOutput(context, attrs);
+    output = canvasSubtitleOutput;
+    innerSubtitleView = canvasSubtitleOutput;
     addView(innerSubtitleView);
-    viewType = VIEW_TYPE_TEXT;
+    viewType = VIEW_TYPE_CANVAS;
   }
 
   @Override
@@ -113,7 +164,8 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    * @param cues The cues to display, or null to clear the cues.
    */
   public void setCues(@Nullable List<Cue> cues) {
-    output.onCues(cues != null ? cues : Collections.emptyList());
+    this.cues = (cues != null ? cues : Collections.emptyList());
+    updateOutput();
   }
 
   /**
@@ -129,11 +181,11 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
       return;
     }
     switch (viewType) {
-      case VIEW_TYPE_TEXT:
-        setView(new SubtitleTextView(getContext()));
+      case VIEW_TYPE_CANVAS:
+        setView(new CanvasSubtitleOutput(getContext()));
         break;
       case VIEW_TYPE_WEB:
-        setView(new SubtitleWebView(getContext()));
+        setView(new WebViewSubtitleOutput(getContext()));
         break;
       default:
         throw new IllegalArgumentException();
@@ -143,8 +195,8 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
 
   private <T extends View & Output> void setView(T view) {
     removeView(innerSubtitleView);
-    if (innerSubtitleView instanceof SubtitleWebView) {
-      ((SubtitleWebView) innerSubtitleView).destroy();
+    if (innerSubtitleView instanceof WebViewSubtitleOutput) {
+      ((WebViewSubtitleOutput) innerSubtitleView).destroy();
     }
     innerSubtitleView = view;
     output = view;
@@ -211,7 +263,9 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
   }
 
   private void setTextSize(@Cue.TextSizeType int textSizeType, float textSize) {
-    output.setTextSize(textSizeType, textSize);
+    this.defaultTextSizeType = textSizeType;
+    this.defaultTextSize = textSize;
+    updateOutput();
   }
 
   /**
@@ -221,7 +275,8 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    * @param applyEmbeddedStyles Whether styling embedded within the cues should be applied.
    */
   public void setApplyEmbeddedStyles(boolean applyEmbeddedStyles) {
-    output.setApplyEmbeddedStyles(applyEmbeddedStyles);
+    this.applyEmbeddedStyles = applyEmbeddedStyles;
+    updateOutput();
   }
 
   /**
@@ -231,7 +286,8 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    * @param applyEmbeddedFontSizes Whether font sizes embedded within the cues should be applied.
    */
   public void setApplyEmbeddedFontSizes(boolean applyEmbeddedFontSizes) {
-    output.setApplyEmbeddedFontSizes(applyEmbeddedFontSizes);
+    this.applyEmbeddedFontSizes = applyEmbeddedFontSizes;
+    updateOutput();
   }
 
   /**
@@ -251,7 +307,8 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    * @param style A style for the view.
    */
   public void setStyle(CaptionStyleCompat style) {
-    output.setStyle(style);
+    this.style = style;
+    updateOutput();
   }
 
   /**
@@ -264,7 +321,8 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
    * @param bottomPaddingFraction The bottom padding fraction.
    */
   public void setBottomPaddingFraction(float bottomPaddingFraction) {
-    output.setBottomPaddingFraction(bottomPaddingFraction);
+    this.bottomPaddingFraction = bottomPaddingFraction;
+    updateOutput();
   }
 
   @RequiresApi(19)
@@ -288,12 +346,71 @@ public final class SubtitleView extends FrameLayout implements TextOutput {
     return CaptionStyleCompat.createFromCaptionStyle(captioningManager.getUserStyle());
   }
 
-  /* package */ interface Output {
-    void onCues(List<Cue> cues);
-    void setTextSize(@Cue.TextSizeType int textSizeType, float textSize);
-    void setApplyEmbeddedStyles(boolean applyEmbeddedStyles);
-    void setApplyEmbeddedFontSizes(boolean applyEmbeddedFontSizes);
-    void setStyle(CaptionStyleCompat style);
-    void setBottomPaddingFraction(float bottomPaddingFraction);
+  private void updateOutput() {
+    output.update(
+        getCuesWithStylingPreferencesApplied(),
+        style,
+        defaultTextSize,
+        defaultTextSizeType,
+        bottomPaddingFraction);
   }
+
+  /**
+   * Returns {@link #cues} with {@link #applyEmbeddedStyles} and {@link #applyEmbeddedFontSizes}
+   * applied.
+   *
+   * <p>If {@link #applyEmbeddedStyles} is false then all styling spans are removed from {@link
+   * Cue#text}, {@link Cue#textSize} and {@link Cue#textSizeType} are set to {@link Cue#DIMEN_UNSET}
+   * and {@link Cue#windowColorSet} is set to false.
+   *
+   * <p>Otherwise if {@link #applyEmbeddedFontSizes} is false then only size-related styling spans
+   * are removed from {@link Cue#text} and {@link Cue#textSize} and {@link Cue#textSizeType} are set
+   * to {@link Cue#DIMEN_UNSET}
+   */
+  private List<Cue> getCuesWithStylingPreferencesApplied() {
+    if (applyEmbeddedStyles && applyEmbeddedFontSizes) {
+      return cues;
+    }
+    List<Cue> strippedCues = new ArrayList<>(cues.size());
+    for (int i = 0; i < cues.size(); i++) {
+      strippedCues.add(removeEmbeddedStyling(cues.get(i)));
+    }
+    return strippedCues;
+  }
+
+  private Cue removeEmbeddedStyling(Cue cue) {
+    @Nullable CharSequence cueText = cue.text;
+    if (!applyEmbeddedStyles) {
+      Cue.Builder strippedCue =
+          cue.buildUpon().setTextSize(Cue.DIMEN_UNSET, Cue.TYPE_UNSET).clearWindowColor();
+      if (cueText != null) {
+        // Remove all spans, regardless of type.
+        strippedCue.setText(cueText.toString());
+      }
+      return strippedCue.build();
+    } else if (!applyEmbeddedFontSizes) {
+      if (cueText == null) {
+        return cue;
+      }
+      Cue.Builder strippedCue = cue.buildUpon().setTextSize(Cue.DIMEN_UNSET, Cue.TYPE_UNSET);
+      if (cueText instanceof Spanned) {
+        SpannableString spannable = SpannableString.valueOf(cueText);
+        AbsoluteSizeSpan[] absSpans =
+            spannable.getSpans(0, spannable.length(), AbsoluteSizeSpan.class);
+        for (AbsoluteSizeSpan absSpan : absSpans) {
+          spannable.removeSpan(absSpan);
+        }
+        RelativeSizeSpan[] relSpans =
+            spannable.getSpans(0, spannable.length(), RelativeSizeSpan.class);
+        for (RelativeSizeSpan relSpan : relSpans) {
+          spannable.removeSpan(relSpan);
+        }
+        strippedCue.setText(spannable);
+      }
+      return strippedCue.build();
+    }
+    return cue;
+  }
+
+
 }

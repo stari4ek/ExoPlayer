@@ -16,10 +16,11 @@
 package com.google.android.exoplayer2.text.webvtt;
 
 import android.graphics.Typeface;
-import android.text.Layout;
 import android.text.TextUtils;
+import androidx.annotation.ColorInt;
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
+import com.google.android.exoplayer2.text.span.RubySpan;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Documented;
 import java.lang.annotation.Retention;
@@ -84,17 +85,15 @@ public final class WebvttCssStyle {
 
   // Style properties.
   @Nullable private String fontFamily;
-  private int fontColor;
+  @ColorInt private int fontColor;
   private boolean hasFontColor;
-  private int backgroundColor;
-  private boolean hasBackgroundColor;
   @OptionalBoolean private int linethrough;
   @OptionalBoolean private int underline;
   @OptionalBoolean private int bold;
   @OptionalBoolean private int italic;
   @FontSizeUnit private int fontSizeUnit;
   private float fontSize;
-  @Nullable private Layout.Alignment textAlign;
+  @RubySpan.Position private int rubyPosition;
   private boolean combineUpright;
 
   // Calling reset() is forbidden because `this` isn't initialized. This can be safely suppressed
@@ -112,13 +111,12 @@ public final class WebvttCssStyle {
     targetVoice = "";
     fontFamily = null;
     hasFontColor = false;
-    hasBackgroundColor = false;
     linethrough = UNSPECIFIED;
     underline = UNSPECIFIED;
     bold = UNSPECIFIED;
     italic = UNSPECIFIED;
     fontSizeUnit = UNSPECIFIED;
-    textAlign = null;
+    rubyPosition = RubySpan.POSITION_UNKNOWN;
     combineUpright = false;
   }
 
@@ -244,33 +242,6 @@ public final class WebvttCssStyle {
     return hasFontColor;
   }
 
-  public int getBackgroundColor() {
-    if (!hasBackgroundColor) {
-      throw new IllegalStateException("Background color not defined.");
-    }
-    return backgroundColor;
-  }
-
-  public WebvttCssStyle setBackgroundColor(int backgroundColor) {
-    this.backgroundColor = backgroundColor;
-    hasBackgroundColor = true;
-    return this;
-  }
-
-  public boolean hasBackgroundColor() {
-    return hasBackgroundColor;
-  }
-
-  @Nullable
-  public Layout.Alignment getTextAlign() {
-    return textAlign;
-  }
-
-  public WebvttCssStyle setTextAlign(@Nullable Layout.Alignment textAlign) {
-    this.textAlign = textAlign;
-    return this;
-  }
-
   public WebvttCssStyle setFontSize(float fontSize) {
     this.fontSize = fontSize;
     return this;
@@ -289,8 +260,19 @@ public final class WebvttCssStyle {
     return fontSize;
   }
 
-  public void setCombineUpright(boolean enabled) {
+  public WebvttCssStyle setRubyPosition(@RubySpan.Position int rubyPosition) {
+    this.rubyPosition = rubyPosition;
+    return this;
+  }
+
+  @RubySpan.Position
+  public int getRubyPosition() {
+    return rubyPosition;
+  }
+
+  public WebvttCssStyle setCombineUpright(boolean enabled) {
     this.combineUpright = enabled;
+    return this;
   }
 
   public boolean getCombineUpright() {

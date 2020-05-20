@@ -131,9 +131,20 @@ public final class DefaultAudioSink implements AudioSink {
 
     /**
      * Creates a new default chain of audio processors, with the user-defined {@code
-     * audioProcessors} applied before silence skipping and playback parameters.
+     * audioProcessors} applied before silence skipping and speed adjustment processors.
      */
     public DefaultAudioProcessorChain(AudioProcessor... audioProcessors) {
+      this(audioProcessors, new SilenceSkippingAudioProcessor(), new SonicAudioProcessor());
+    }
+
+    /**
+     * Creates a new default chain of audio processors, with the user-defined {@code
+     * audioProcessors} applied before silence skipping and speed adjustment processors.
+     */
+    public DefaultAudioProcessorChain(
+        AudioProcessor[] audioProcessors,
+        SilenceSkippingAudioProcessor silenceSkippingAudioProcessor,
+        SonicAudioProcessor sonicAudioProcessor) {
       // The passed-in type may be more specialized than AudioProcessor[], so allocate a new array
       // rather than using Arrays.copyOf.
       this.audioProcessors = new AudioProcessor[audioProcessors.length + 2];
@@ -143,8 +154,8 @@ public final class DefaultAudioSink implements AudioSink {
           /* dest= */ this.audioProcessors,
           /* destPos= */ 0,
           /* length= */ audioProcessors.length);
-      silenceSkippingAudioProcessor = new SilenceSkippingAudioProcessor();
-      sonicAudioProcessor = new SonicAudioProcessor();
+      this.silenceSkippingAudioProcessor = silenceSkippingAudioProcessor;
+      this.sonicAudioProcessor = sonicAudioProcessor;
       this.audioProcessors[audioProcessors.length] = silenceSkippingAudioProcessor;
       this.audioProcessors[audioProcessors.length + 1] = sonicAudioProcessor;
     }
@@ -396,6 +407,9 @@ public final class DefaultAudioSink implements AudioSink {
 
   @Override
   public boolean supportsOutput(int channelCount, int sampleRateHz, @C.Encoding int encoding) {
+    if (encoding == C.ENCODING_INVALID) {
+      return false;
+    }
     if (Util.isEncodingLinearPcm(encoding)) {
       // AudioTrack supports 16-bit integer PCM output in all platform API versions, and float
       // output from platform API version 21 only. Other integer PCM encodings are resampled by this
@@ -629,6 +643,7 @@ public final class DefaultAudioSink implements AudioSink {
 
     if (inputBuffer == null) {
       // We are seeing this buffer for the first time.
+      Assertions.checkArgument(buffer.order() == ByteOrder.LITTLE_ENDIAN);
       if (!buffer.hasRemaining()) {
         // The buffer is empty.
         return true;

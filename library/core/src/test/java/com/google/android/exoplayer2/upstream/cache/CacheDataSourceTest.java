@@ -75,7 +75,7 @@ public final class CacheDataSourceTest {
     boundedDataSpec = buildDataSpec(/* unbounded= */ false, /* key= */ null);
     unboundedDataSpecWithKey = buildDataSpec(/* unbounded= */ true, DATASPEC_KEY);
     boundedDataSpecWithKey = buildDataSpec(/* unbounded= */ false, DATASPEC_KEY);
-    defaultCacheKey = CacheUtil.DEFAULT_CACHE_KEY_FACTORY.buildCacheKey(unboundedDataSpec);
+    defaultCacheKey = CacheKeyFactory.DEFAULT.buildCacheKey(unboundedDataSpec);
     customCacheKey = "customKey." + defaultCacheKey;
     cacheKeyFactory = dataSpec -> customCacheKey;
 
@@ -432,7 +432,7 @@ public final class CacheDataSourceTest {
     TestUtil.readExactly(cacheDataSource, 100);
 
     // Delete cached data.
-    CacheUtil.remove(unboundedDataSpec, cache, /* cacheKeyFactory= */ null);
+    cache.removeResource(cacheDataSource.getCacheKeyFactory().buildCacheKey(unboundedDataSpec));
     assertCacheEmpty(cache);
 
     // Read the rest of the data.

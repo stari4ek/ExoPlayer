@@ -32,7 +32,9 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.RendererConfiguration;
 import com.google.android.exoplayer2.decoder.DecoderException;
+import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.decoder.SimpleDecoder;
+import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.drm.ExoMediaCrypto;
 import com.google.android.exoplayer2.testutil.FakeSampleStream;
 import com.google.android.exoplayer2.testutil.FakeSampleStream.FakeSampleStreamItem;
@@ -141,7 +143,8 @@ public final class DecoderVideoRendererTest {
                 new VideoDecoderInputBuffer[10], new VideoDecoderOutputBuffer[10]) {
               @Override
               protected VideoDecoderInputBuffer createInputBuffer() {
-                return new VideoDecoderInputBuffer();
+                return new VideoDecoderInputBuffer(
+                    DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT);
               }
 
               @Override
@@ -183,6 +186,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,
@@ -211,6 +215,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,
@@ -238,6 +243,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,
@@ -268,6 +274,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream1 =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,
@@ -276,6 +283,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream2 =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,
@@ -312,6 +320,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream1 =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,
@@ -320,6 +329,7 @@ public final class DecoderVideoRendererTest {
     FakeSampleStream fakeSampleStream2 =
         new FakeSampleStream(
             /* format= */ H264_FORMAT,
+            DrmSessionManager.DUMMY,
             /* eventDispatcher= */ null,
             /* firstSampleTimeUs= */ 0,
             /* timeUsIncrement= */ 50,

@@ -26,7 +26,6 @@ import android.text.Spanned;
 import android.text.SpannedString;
 import android.text.TextUtils;
 import android.text.style.AbsoluteSizeSpan;
-import android.text.style.AlignmentSpan;
 import android.text.style.BackgroundColorSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.RelativeSizeSpan;
@@ -539,6 +538,7 @@ public final class WebvttCueParser {
       List<StyleMatch> scratchStyleMatches) {
     int start = startTag.position;
     int end = text.length();
+
     switch(startTag.name) {
       case TAG_BOLD:
         text.setSpan(new StyleSpan(STYLE_BOLD), start, end,
@@ -549,7 +549,7 @@ public final class WebvttCueParser {
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         break;
       case TAG_RUBY:
-        applyRubySpans(nestedElements, text, start);
+        applyRubySpans(text, cueId, startTag, nestedElements, styles);
         break;
       case TAG_UNDERLINE:
         text.setSpan(new UnderlineSpan(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -564,33 +564,46 @@ public final class WebvttCueParser {
       default:
         return;
     }
+
     scratchStyleMatches.clear();
     getApplicableStyles(styles, cueId, startTag, scratchStyleMatches);
-    int styleMatchesCount = scratchStyleMatches.size();
-    for (int i = 0; i < styleMatchesCount; i++) {
+    for (int i = 0; i < scratchStyleMatches.size(); i++) {
       applyStyleToText(text, scratchStyleMatches.get(i).style, start, end);
     }
   }
 
   private static void applyRubySpans(
-      List<Element> nestedElements, SpannableStringBuilder text, int startTagPosition) {
+      SpannableStringBuilder text,
+      @Nullable String cueId,
+      StartTag startTag,
+      List<Element> nestedElements,
+      List<WebvttCssStyle> styles) {
+    @RubySpan.Position int rubyTagPosition = getRubyPosition(styles, cueId, startTag);
     List<Element> sortedNestedElements = new ArrayList<>(nestedElements.size());
     sortedNestedElements.addAll(nestedElements);
     Collections.sort(sortedNestedElements, Element.BY_START_POSITION_ASC);
     int deletedCharCount = 0;
-    int lastRubyTextEnd = startTagPosition;
+    int lastRubyTextEnd = startTag.position;
     for (int i = 0; i < sortedNestedElements.size(); i++) {
       if (!TAG_RUBY_TEXT.equals(sortedNestedElements.get(i).startTag.name)) {
         continue;
       }
       Element rubyTextElement = sortedNestedElements.get(i);
+      // Use the <rt> element's ruby-position if set, otherwise the <ruby> element's and otherwise
+      // default to OVER.
+      @RubySpan.Position
+      int rubyPosition =
+          firstKnownRubyPosition(
+              getRubyPosition(styles, cueId, rubyTextElement.startTag),
+              rubyTagPosition,
+              RubySpan.POSITION_OVER);
       // Move the rubyText from spannedText into the RubySpan.
       int adjustedRubyTextStart = rubyTextElement.startTag.position - deletedCharCount;
       int adjustedRubyTextEnd = rubyTextElement.endPosition - deletedCharCount;
       CharSequence rubyText = text.subSequence(adjustedRubyTextStart, adjustedRubyTextEnd);
       text.delete(adjustedRubyTextStart, adjustedRubyTextEnd);
       text.setSpan(
-          new RubySpan(rubyText.toString(), RubySpan.POSITION_OVER),
+          new RubySpan(rubyText.toString(), rubyPosition),
           lastRubyTextEnd,
           adjustedRubyTextStart,
           Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -598,6 +611,37 @@ public final class WebvttCueParser {
       // The ruby text has been deleted, so new-start == old-end.
       lastRubyTextEnd = adjustedRubyTextStart;
     }
+  }
+
+  @RubySpan.Position
+  private static int getRubyPosition(
+      List<WebvttCssStyle> styles, @Nullable String cueId, StartTag startTag) {
+    List<StyleMatch> styleMatches = new ArrayList<>();
+    getApplicableStyles(styles, cueId, startTag, styleMatches);
+    for (int i = 0; i < styleMatches.size(); i++) {
+      WebvttCssStyle style = styleMatches.get(i).style;
+      if (style.getRubyPosition() != RubySpan.POSITION_UNKNOWN) {
+        return style.getRubyPosition();
+      }
+    }
+    return RubySpan.POSITION_UNKNOWN;
+  }
+
+  @RubySpan.Position
+  private static int firstKnownRubyPosition(
+      @RubySpan.Position int position1,
+      @RubySpan.Position int position2,
+      @RubySpan.Position int position3) {
+    if (position1 != RubySpan.POSITION_UNKNOWN) {
+      return position1;
+    }
+    if (position2 != RubySpan.POSITION_UNKNOWN) {
+      return position2;
+    }
+    if (position3 != RubySpan.POSITION_UNKNOWN) {
+      return position3;
+    }
+    throw new IllegalArgumentException();
   }
 
   /**
@@ -647,27 +691,10 @@ public final class WebvttCueParser {
           end,
           Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
     }
-    if (style.hasBackgroundColor()) {
-      addOrReplaceSpan(
-          spannedText,
-          new BackgroundColorSpan(style.getBackgroundColor()),
-          start,
-          end,
-          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-    }
     if (style.getFontFamily() != null) {
       addOrReplaceSpan(
           spannedText,
           new TypefaceSpan(style.getFontFamily()),
-          start,
-          end,
-          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-    }
-    Layout.Alignment textAlign = style.getTextAlign();
-    if (textAlign != null) {
-      addOrReplaceSpan(
-          spannedText,
-          new AlignmentSpan.Standard(textAlign),
           start,
           end,
           Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -895,7 +922,7 @@ public final class WebvttCueParser {
 
     @Override
     public int compareTo(StyleMatch another) {
-      return this.score - another.score;
+      return Integer.compare(this.score, another.score);
     }
 
   }

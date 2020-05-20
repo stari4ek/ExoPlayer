@@ -28,10 +28,10 @@ public class CustomMediaSourceFactory implements MediaSourceFactory {
   CustomMediaSourceFactory(
       Context context,
       DataSource.Factory dataSourceFactory,
-      @Nullable DefaultMediaSourceFactory.AdSupportProvider adSupportProvider) {
+      DefaultMediaSourceFactory.AdSupportProvider adSupportProvider) {
 
     this.dataSourceFactory = dataSourceFactory;
-    fallback = new DefaultMediaSourceFactory(context, dataSourceFactory, adSupportProvider);
+    fallback = DefaultMediaSourceFactory.newInstance(context, dataSourceFactory, adSupportProvider);
   }
 
   @NonNull

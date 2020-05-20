@@ -768,6 +768,24 @@ public final class Util {
   }
 
   /**
+   * Returns the index of the first occurrence of {@code value} in {@code array}, or {@link
+   * C#INDEX_UNSET} if {@code value} is not contained in {@code array}.
+   *
+   * @param array The array to search.
+   * @param value The value to search for.
+   * @return The index of the first occurrence of value in {@code array}, or {@link C#INDEX_UNSET}
+   *     if {@code value} is not contained in {@code array}.
+   */
+  public static int linearSearch(long[] array, long value) {
+    for (int i = 0; i < array.length; i++) {
+      if (array[i] == value) {
+        return i;
+      }
+    }
+    return C.INDEX_UNSET;
+  }
+
+  /**
    * Returns the index of the largest element in {@code array} that is less than (or optionally
    * equal to) a specified {@code value}.
    *
@@ -1289,6 +1307,36 @@ public final class Util {
    */
   public static long toLong(int mostSignificantBits, int leastSignificantBits) {
     return (toUnsignedLong(mostSignificantBits) << 32) | toUnsignedLong(leastSignificantBits);
+  }
+
+  /**
+   * Truncates a sequence of ASCII characters to a maximum length.
+   *
+   * <p><b>Note:</b> This is not safe to use in general on Unicode text because it may separate
+   * characters from combining characters or split up surrogate pairs.
+   *
+   * @param sequence The character sequence to truncate.
+   * @param maxLength The max length to truncate to.
+   * @return {@code sequence} directly if {@code sequence.length() <= maxLength}, otherwise {@code
+   *     sequence.subsequence(0, maxLength}.
+   */
+  public static CharSequence truncateAscii(CharSequence sequence, int maxLength) {
+    return sequence.length() <= maxLength ? sequence : sequence.subSequence(0, maxLength);
+  }
+
+  /**
+   * Truncates a string of ASCII characters to a maximum length.
+   *
+   * <p><b>Note:</b> This is not safe to use in general on Unicode text because it may separate
+   * characters from combining characters or split up surrogate pairs.
+   *
+   * @param string The string to truncate.
+   * @param maxLength The max length to truncate to.
+   * @return {@code string} directly if {@code string.length() <= maxLength}, otherwise {@code
+   *     string.substring(0, maxLength}.
+   */
+  public static String truncateAscii(String string, int maxLength) {
+    return string.length() <= maxLength ? string : string.substring(0, maxLength);
   }
 
   /**

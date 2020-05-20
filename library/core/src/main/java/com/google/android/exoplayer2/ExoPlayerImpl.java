@@ -45,7 +45,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeoutException;
 
 /**
  * An {@link ExoPlayer} implementation. Instances can be obtained from {@link ExoPlayer.Builder}.
@@ -109,6 +108,8 @@ import java.util.concurrent.TimeoutException;
    * @param useLazyPreparation Whether playlist items are prepared lazily. If false, all manifest
    *     loads and other initial preparation steps happen immediately. If true, these initial
    *     preparations are triggered only when the player starts buffering the media.
+   * @param seekParameters The {@link SeekParameters}.
+   * @param pauseAtEndOfMediaItems Whether to pause playback at the end of each media item.
    * @param clock The {@link Clock}.
    * @param applicationLooper The {@link Looper} that must be used for all calls to the player and
    *     which is used to call listeners on.
@@ -122,6 +123,8 @@ import java.util.concurrent.TimeoutException;
       BandwidthMeter bandwidthMeter,
       @Nullable AnalyticsCollector analyticsCollector,
       boolean useLazyPreparation,
+      SeekParameters seekParameters,
+      boolean pauseAtEndOfMediaItems,
       Clock clock,
       Looper applicationLooper) {
     Log.i(TAG, "Init " + Integer.toHexString(System.identityHashCode(this)) + " ["
@@ -131,6 +134,8 @@ import java.util.concurrent.TimeoutException;
     this.trackSelector = checkNotNull(trackSelector);
     this.mediaSourceFactory = mediaSourceFactory;
     this.useLazyPreparation = useLazyPreparation;
+    this.seekParameters = seekParameters;
+    this.pauseAtEndOfMediaItems = pauseAtEndOfMediaItems;
     repeatMode = Player.REPEAT_MODE_OFF;
     listeners = new CopyOnWriteArrayList<>();
     mediaSourceHolders = new ArrayList<>();
@@ -142,7 +147,6 @@ import java.util.concurrent.TimeoutException;
             null);
     period = new Timeline.Period();
     playbackSpeed = Player.DEFAULT_PLAYBACK_SPEED;
-    seekParameters = SeekParameters.DEFAULT;
     maskingWindowIndex = C.INDEX_UNSET;
     applicationHandler =
         new Handler(applicationLooper) {
@@ -166,23 +170,11 @@ import java.util.concurrent.TimeoutException;
             repeatMode,
             shuffleModeEnabled,
             analyticsCollector,
+            seekParameters,
+            pauseAtEndOfMediaItems,
             applicationHandler,
             clock);
     internalPlayerHandler = new Handler(internalPlayer.getPlaybackLooper());
-  }
-
-  /**
-   * Set a limit on the time a call to {@link #release()} can spend. If a call to {@link #release()}
-   * takes more than {@code timeoutMs} milliseconds to complete, the player will raise an error via
-   * {@link Player.EventListener#onPlayerError}.
-   *
-   * <p>This method is experimental, and will be renamed or removed in a future release. It should
-   * only be called before the player is used.
-   *
-   * @param timeoutMs The time limit in milliseconds, or 0 for no limit.
-   */
-  public void experimental_setReleaseTimeoutMs(long timeoutMs) {
-    internalPlayer.experimental_setReleaseTimeoutMs(timeoutMs);
   }
 
   /**
@@ -683,13 +675,7 @@ import java.util.concurrent.TimeoutException;
     Log.i(TAG, "Release " + Integer.toHexString(System.identityHashCode(this)) + " ["
         + ExoPlayerLibraryInfo.VERSION_SLASHY + "] [" + Util.DEVICE_DEBUG_INFO + "] ["
         + ExoPlayerLibraryInfo.registeredModules() + "]");
-    if (!internalPlayer.release()) {
-      notifyListeners(
-          listener ->
-              listener.onPlayerError(
-                  ExoPlaybackException.createForUnexpected(
-                      new RuntimeException(new TimeoutException("Player release timed out.")))));
-    }
+    internalPlayer.release();
     applicationHandler.removeCallbacksAndMessages(null);
     playbackInfo =
         getResetPlaybackInfo(
@@ -818,6 +804,12 @@ import java.util.concurrent.TimeoutException;
   @Override
   public int getRendererType(int index) {
     return renderers[index].getTrackType();
+  }
+
+  @Override
+  @Nullable
+  public TrackSelector getTrackSelector() {
+    return trackSelector;
   }
 
   @Override

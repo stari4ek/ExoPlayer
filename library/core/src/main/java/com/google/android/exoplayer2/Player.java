@@ -33,6 +33,7 @@ import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.TextOutput;
 import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
+import com.google.android.exoplayer2.trackselection.TrackSelector;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoDecoderOutputBufferRenderer;
 import com.google.android.exoplayer2.video.VideoFrameMetadataListener;
@@ -1190,6 +1191,12 @@ public interface Player {
   int getRendererType(int index);
 
   /**
+   * Returns the track selector that this player uses, or null if track selection is not supported.
+   */
+  @Nullable
+  TrackSelector getTrackSelector();
+
+  /**
    * Returns the available track groups.
    */
   TrackGroupArray getCurrentTrackGroups();
@@ -1202,7 +1209,8 @@ public interface Player {
   /**
    * Returns the current manifest. The type depends on the type of media being played. May be null.
    */
-  @Nullable Object getCurrentManifest();
+  @Nullable
+  Object getCurrentManifest();
 
   /**
    * Returns the current {@link Timeline}. Never null, but may be empty.
