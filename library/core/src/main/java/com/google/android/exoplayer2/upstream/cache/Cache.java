@@ -272,11 +272,24 @@ public interface Cache {
    *
    * @param key The cache key of the resource.
    * @param position The starting position of the data in the resource.
-   * @param length The maximum length of the data or hole to be returned.
+   * @param length The maximum length of the data or hole to be returned. {@link C#LENGTH_UNSET} is
+   *     permitted, and is equivalent to passing {@link Long#MAX_VALUE}.
    * @return The length of the continuously cached data, or {@code -holeLength} if {@code position}
    *     isn't cached.
    */
   long getCachedLength(String key, long position, long length);
+
+  /**
+   * Returns the total number of cached bytes between {@code position} (inclusive) and {@code
+   * (position + length)} (exclusive) of a resource.
+   *
+   * @param key The cache key of the resource.
+   * @param position The starting position of the data in the resource.
+   * @param length The length of the data to check. {@link C#LENGTH_UNSET} is permitted, and is
+   *     equivalent to passing {@link Long#MAX_VALUE}.
+   * @return The total number of cached bytes.
+   */
+  long getCachedBytes(String key, long position, long length);
 
   /**
    * Applies {@code mutations} to the {@link ContentMetadata} for the given resource. A new {@link

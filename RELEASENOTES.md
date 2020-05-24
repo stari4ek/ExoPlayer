@@ -157,6 +157,9 @@
         and `AudioSink.handleBuffer` to allow batching multiple encoded frames
         in one buffer.
     *   No longer use a `MediaCodec` in audio passthrough mode.
+    *   Check `DefaultAudioSink` supports passthrough, in addition to checking
+        the `AudioCapabilities`
+        ([#7404](https://github.com/google/ExoPlayer/issues/7404)).
 *   DASH:
     *   Merge trick play adaptation sets (i.e., adaptation sets marked with
         `http://dashif.org/guidelines/trickmode`) into the same `TrackGroup` as
@@ -165,6 +168,9 @@
     *   Enable support for embedded CEA-708.
     *   Fix assertion failure in `SampleQueue` when playing DASH streams with
         EMSG tracks ([#7273](https://github.com/google/ExoPlayer/issues/7273)).
+*   HLS:
+    *   Add support for upstream discard including cancelation of ongoing load
+        ([#6322](https://github.com/google/ExoPlayer/issues/6322)).
 *   MP3:
     *   Add `IndexSeeker` for accurate seeks in VBR streams
         ([#6787](https://github.com/google/ExoPlayer/issues/6787)). This seeker
@@ -227,6 +233,7 @@
 *   MediaSession extension: Set session playback state to BUFFERING only when
     actually playing ([#7367](https://github.com/google/ExoPlayer/pull/7367),
     [#7206](https://github.com/google/ExoPlayer/issues/7206)).
+*   Add Guava dependency.
 
 ### 2.11.4 (2020-04-08)
 

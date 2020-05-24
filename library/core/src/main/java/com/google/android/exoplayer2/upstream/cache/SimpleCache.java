@@ -494,8 +494,34 @@ public final class SimpleCache implements Cache {
   @Override
   public synchronized long getCachedLength(String key, long position, long length) {
     Assertions.checkState(!released);
+    if (length == C.LENGTH_UNSET) {
+      length = Long.MAX_VALUE;
+    }
     @Nullable CachedContent cachedContent = contentIndex.get(key);
     return cachedContent != null ? cachedContent.getCachedBytesLength(position, length) : -length;
+  }
+
+  @Override
+  public synchronized long getCachedBytes(String key, long position, long length) {
+    long endPosition = length == C.LENGTH_UNSET ? Long.MAX_VALUE : position + length;
+    if (endPosition < 0) {
+      // The calculation rolled over (length is probably Long.MAX_VALUE).
+      endPosition = Long.MAX_VALUE;
+    }
+    long currentPosition = position;
+    long cachedBytes = 0;
+    while (currentPosition < endPosition) {
+      long maxRemainingLength = endPosition - currentPosition;
+      long blockLength = getCachedLength(key, currentPosition, maxRemainingLength);
+      if (blockLength > 0) {
+        cachedBytes += blockLength;
+      } else {
+        // There's a hole of length -blockLength.
+        blockLength = -blockLength;
+      }
+      currentPosition += blockLength;
+    }
+    return cachedBytes;
   }
 
   @Override
