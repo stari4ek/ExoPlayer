@@ -27,6 +27,9 @@ android {
         versionCode project.ext.releaseVersionCode
         minSdkVersion project.ext.minSdkVersion
         targetSdkVersion project.ext.appTargetSdkVersion
+
+        // https://github.com/google/ExoPlayer/issues/7421
+        multiDexEnabled true
     }
 
     buildTypes {
