@@ -15,10 +15,12 @@
  */
 package com.google.android.exoplayer2.offline;
 
+import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
+
 import android.net.Uri;
-import android.util.Pair;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.upstream.ParsingLoadable;
@@ -27,6 +29,7 @@ import com.google.android.exoplayer2.upstream.cache.Cache;
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource;
 import com.google.android.exoplayer2.upstream.cache.CacheKeyFactory;
 import com.google.android.exoplayer2.upstream.cache.CacheUtil;
+import com.google.android.exoplayer2.upstream.cache.ContentMetadata;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.PriorityTaskManager;
 import com.google.android.exoplayer2.util.Util;
@@ -79,10 +82,8 @@ public abstract class SegmentDownloader<M extends FilterableManifest<M>> impleme
   @Nullable private volatile Thread downloadThread;
 
   /**
-   * @param manifestUri The {@link Uri} of the manifest to be downloaded.
+   * @param mediaItem The {@link MediaItem} to be downloaded.
    * @param manifestParser A parser for the manifest.
-   * @param streamKeys Keys defining which streams in the manifest should be selected for download.
-   *     If empty, all streams are downloaded.
    * @param cacheDataSourceFactory A {@link CacheDataSource.Factory} for the cache into which the
    *     download will be written.
    * @param executor An {@link Executor} used to make requests for the media being downloaded.
@@ -90,14 +91,14 @@ public abstract class SegmentDownloader<M extends FilterableManifest<M>> impleme
    *     allowing parts of it to be executed in parallel.
    */
   public SegmentDownloader(
-      Uri manifestUri,
+      MediaItem mediaItem,
       Parser<M> manifestParser,
-      List<StreamKey> streamKeys,
       CacheDataSource.Factory cacheDataSourceFactory,
       Executor executor) {
-    this.manifestDataSpec = getCompressibleDataSpec(manifestUri);
+    checkNotNull(mediaItem.playbackProperties);
+    this.manifestDataSpec = getCompressibleDataSpec(mediaItem.playbackProperties.uri);
     this.manifestParser = manifestParser;
-    this.streamKeys = new ArrayList<>(streamKeys);
+    this.streamKeys = new ArrayList<>(mediaItem.playbackProperties.streamKeys);
     this.cacheDataSourceFactory = cacheDataSourceFactory;
     this.executor = executor;
     isCanceled = new AtomicBoolean();
@@ -135,11 +136,18 @@ public abstract class SegmentDownloader<M extends FilterableManifest<M>> impleme
       long contentLength = 0;
       long bytesDownloaded = 0;
       for (int i = segments.size() - 1; i >= 0; i--) {
-        Segment segment = segments.get(i);
-        Pair<Long, Long> segmentLengthAndBytesDownloaded =
-            CacheUtil.getCached(segment.dataSpec, cache, cacheKeyFactory);
-        long segmentLength = segmentLengthAndBytesDownloaded.first;
-        long segmentBytesDownloaded = segmentLengthAndBytesDownloaded.second;
+        DataSpec dataSpec = segments.get(i).dataSpec;
+        String cacheKey = cacheKeyFactory.buildCacheKey(dataSpec);
+        long segmentLength = dataSpec.length;
+        if (segmentLength == C.LENGTH_UNSET) {
+          long resourceLength =
+              ContentMetadata.getContentLength(cache.getContentMetadata(cacheKey));
+          if (resourceLength != C.LENGTH_UNSET) {
+            segmentLength = resourceLength - dataSpec.position;
+          }
+        }
+        long segmentBytesDownloaded =
+            cache.getCachedBytes(cacheKey, dataSpec.position, segmentLength);
         bytesDownloaded += segmentBytesDownloaded;
         if (segmentLength != C.LENGTH_UNSET) {
           if (segmentLength == segmentBytesDownloaded) {
@@ -204,13 +212,13 @@ public abstract class SegmentDownloader<M extends FilterableManifest<M>> impleme
       M manifest = getManifest(dataSource, manifestDataSpec);
       List<Segment> segments = getSegments(dataSource, manifest, true);
       for (int i = 0; i < segments.size(); i++) {
-        CacheUtil.remove(segments.get(i).dataSpec, cache, cacheKeyFactory);
+        cache.removeResource(cacheKeyFactory.buildCacheKey(segments.get(i).dataSpec));
       }
     } catch (IOException e) {
       // Ignore exceptions when removing.
     } finally {
       // Always attempt to remove the manifest.
-      CacheUtil.remove(manifestDataSpec, cache, cacheKeyFactory);
+      cache.removeResource(cacheKeyFactory.buildCacheKey(manifestDataSpec));
     }
   }
 

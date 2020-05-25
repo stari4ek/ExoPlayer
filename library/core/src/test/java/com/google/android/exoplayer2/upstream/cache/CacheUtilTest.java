@@ -15,14 +15,11 @@
  */
 package com.google.android.exoplayer2.upstream.cache;
 
-import static com.google.android.exoplayer2.C.LENGTH_UNSET;
-import static com.google.android.exoplayer2.testutil.CacheAsserts.assertCacheEmpty;
 import static com.google.android.exoplayer2.testutil.CacheAsserts.assertCachedData;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
 import android.net.Uri;
-import android.util.Pair;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
@@ -30,7 +27,6 @@ import com.google.android.exoplayer2.testutil.FakeDataSet;
 import com.google.android.exoplayer2.testutil.FakeDataSource;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.upstream.DataSpec;
-import com.google.android.exoplayer2.upstream.FileDataSource;
 import com.google.android.exoplayer2.util.Util;
 import java.io.EOFException;
 import java.io.File;
@@ -66,6 +62,9 @@ public final class CacheUtilTest {
 
     @Override
     public long getCachedLength(String key, long position, long length) {
+      if (length == C.LENGTH_UNSET) {
+        length = Long.MAX_VALUE;
+      }
       for (int i = 0; i < spansAndGaps.length; i++) {
         int spanOrGap = spansAndGaps[i];
         if (position < spanOrGap) {
@@ -102,96 +101,6 @@ public final class CacheUtilTest {
   @After
   public void tearDown() {
     Util.recursiveDelete(tempFolder);
-  }
-
-  @Test
-  public void generateKey() {
-    assertThat(CacheUtil.generateKey(Uri.EMPTY)).isNotNull();
-
-    Uri testUri = Uri.parse("test");
-    String key = CacheUtil.generateKey(testUri);
-    assertThat(key).isNotNull();
-
-    // Should generate the same key for the same input.
-    assertThat(CacheUtil.generateKey(testUri)).isEqualTo(key);
-
-    // Should generate different key for different input.
-    assertThat(key.equals(CacheUtil.generateKey(Uri.parse("test2")))).isFalse();
-  }
-
-  @Test
-  public void defaultCacheKeyFactory_buildCacheKey() {
-    Uri testUri = Uri.parse("test");
-    String key = "key";
-    // If DataSpec.key is present, returns it.
-    assertThat(
-            CacheUtil.DEFAULT_CACHE_KEY_FACTORY.buildCacheKey(
-                new DataSpec.Builder().setUri(testUri).setKey(key).build()))
-        .isEqualTo(key);
-    // If not generates a new one using DataSpec.uri.
-    assertThat(
-            CacheUtil.DEFAULT_CACHE_KEY_FACTORY.buildCacheKey(
-                new DataSpec(testUri, /* position= */ 0, /* length= */ LENGTH_UNSET)))
-        .isEqualTo(testUri.toString());
-  }
-
-  @Test
-  public void getCachedNoData() {
-    Pair<Long, Long> contentLengthAndBytesCached =
-        CacheUtil.getCached(
-            new DataSpec(Uri.parse("test")), mockCache, /* cacheKeyFactory= */ null);
-
-    assertThat(contentLengthAndBytesCached.first).isEqualTo(C.LENGTH_UNSET);
-    assertThat(contentLengthAndBytesCached.second).isEqualTo(0);
-  }
-
-  @Test
-  public void getCachedDataUnknownLength() {
-    // Mock there is 100 bytes cached at the beginning
-    mockCache.spansAndGaps = new int[] {100};
-    Pair<Long, Long> contentLengthAndBytesCached =
-        CacheUtil.getCached(
-            new DataSpec(Uri.parse("test")), mockCache, /* cacheKeyFactory= */ null);
-
-    assertThat(contentLengthAndBytesCached.first).isEqualTo(C.LENGTH_UNSET);
-    assertThat(contentLengthAndBytesCached.second).isEqualTo(100);
-  }
-
-  @Test
-  public void getCachedNoDataKnownLength() {
-    mockCache.contentLength = 1000;
-    Pair<Long, Long> contentLengthAndBytesCached =
-        CacheUtil.getCached(
-            new DataSpec(Uri.parse("test")), mockCache, /* cacheKeyFactory= */ null);
-
-    assertThat(contentLengthAndBytesCached.first).isEqualTo(1000);
-    assertThat(contentLengthAndBytesCached.second).isEqualTo(0);
-  }
-
-  @Test
-  public void getCached() {
-    mockCache.contentLength = 1000;
-    mockCache.spansAndGaps = new int[] {100, 100, 200};
-    Pair<Long, Long> contentLengthAndBytesCached =
-        CacheUtil.getCached(
-            new DataSpec(Uri.parse("test")), mockCache, /* cacheKeyFactory= */ null);
-
-    assertThat(contentLengthAndBytesCached.first).isEqualTo(1000);
-    assertThat(contentLengthAndBytesCached.second).isEqualTo(300);
-  }
-
-  @Test
-  public void getCachedFromNonZeroPosition() {
-    mockCache.contentLength = 1000;
-    mockCache.spansAndGaps = new int[] {100, 100, 200};
-    Pair<Long, Long> contentLengthAndBytesCached =
-        CacheUtil.getCached(
-            new DataSpec(Uri.parse("test"), /* position= */ 100, /* length= */ C.LENGTH_UNSET),
-            mockCache,
-            /* cacheKeyFactory= */ null);
-
-    assertThat(contentLengthAndBytesCached.first).isEqualTo(900);
-    assertThat(contentLengthAndBytesCached.second).isEqualTo(200);
   }
 
   @Test
@@ -317,35 +226,6 @@ public final class CacheUtilTest {
 
     counters.assertValues(0, 300, 300);
     assertCachedData(cache, fakeDataSet);
-  }
-
-  @Test
-  public void remove() throws Exception {
-    FakeDataSet fakeDataSet = new FakeDataSet().setRandomData("test_data", 100);
-    FakeDataSource dataSource = new FakeDataSource(fakeDataSet);
-
-    DataSpec dataSpec =
-        new DataSpec.Builder()
-            .setUri("test_data")
-            .setFlags(DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
-            .build();
-    CacheUtil.cache(
-        // Set fragmentSize to 10 to make sure there are multiple spans.
-        new CacheDataSource(
-            cache,
-            dataSource,
-            new FileDataSource(),
-            new CacheDataSink(cache, /* fragmentSize= */ 10),
-            /* flags= */ 0,
-            /* eventListener= */ null),
-        dataSpec,
-        /* progressListener= */ null,
-        /* isCanceled= */ null,
-        /* enableEOFException= */ true,
-        /* temporaryBuffer= */ new byte[CacheUtil.DEFAULT_BUFFER_SIZE_BYTES]);
-    CacheUtil.remove(dataSpec, cache, /* cacheKeyFactory= */ null);
-
-    assertCacheEmpty(cache);
   }
 
   private static final class CachingCounters implements CacheUtil.ProgressListener {

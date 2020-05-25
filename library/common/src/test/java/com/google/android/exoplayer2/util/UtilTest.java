@@ -24,9 +24,14 @@ import static com.google.android.exoplayer2.util.Util.parseXsDuration;
 import static com.google.android.exoplayer2.util.Util.unescapeFileName;
 import static com.google.common.truth.Truth.assertThat;
 
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.StrikethroughSpan;
+import android.text.style.UnderlineSpan;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.testutil.TestUtil;
+import com.google.android.exoplayer2.testutil.truth.SpannedSubject;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -714,6 +719,38 @@ public class UtilTest {
   }
 
   @Test
+  public void truncateAscii_shortInput_returnsInput() {
+    String input = "a short string";
+
+    assertThat(Util.truncateAscii(input, 100)).isSameInstanceAs(input);
+  }
+
+  @Test
+  public void truncateAscii_longInput_truncated() {
+    String input = "a much longer string";
+
+    assertThat(Util.truncateAscii(input, 5).toString()).isEqualTo("a muc");
+  }
+
+  @Test
+  public void truncateAscii_preservesStylingSpans() {
+    SpannableString input = new SpannableString("a short string");
+    input.setSpan(new UnderlineSpan(), 0, 10, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    input.setSpan(new StrikethroughSpan(), 4, 10, Spanned.SPAN_INCLUSIVE_EXCLUSIVE);
+
+    CharSequence result = Util.truncateAscii(input, 7);
+
+    assertThat(result).isInstanceOf(SpannableString.class);
+    assertThat(result.toString()).isEqualTo("a short");
+    SpannedSubject.assertThat((Spanned) result)
+        .hasUnderlineSpanBetween(0, 7)
+        .withFlags(Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    SpannedSubject.assertThat((Spanned) result)
+        .hasStrikethroughSpanBetween(4, 7)
+        .withFlags(Spanned.SPAN_INCLUSIVE_EXCLUSIVE);
+  }
+
+  @Test
   public void toHexString_returnsHexString() {
     byte[] bytes = TestUtil.createByteArray(0x12, 0xFC, 0x06);
 
@@ -958,21 +995,6 @@ public class UtilTest {
     assertThat(Util.normalizeLanguageCode("hak")).isEqualTo("zh-hak");
     assertThat(Util.normalizeLanguageCode("nan")).isEqualTo("zh-nan");
     assertThat(Util.normalizeLanguageCode("hsn")).isEqualTo("zh-hsn");
-  }
-
-  @Test
-  public void toList() {
-    assertThat(Util.toList(0, 3, 4)).containsExactly(0, 3, 4).inOrder();
-  }
-
-  @Test
-  public void toList_nullPassed_returnsEmptyList() {
-    assertThat(Util.toList(null)).isEmpty();
-  }
-
-  @Test
-  public void toList_emptyArrayPassed_returnsEmptyList() {
-    assertThat(Util.toList(new int[0])).isEmpty();
   }
 
   private static void assertEscapeUnescapeFileName(String fileName, String escapedFileName) {

@@ -53,6 +53,7 @@ import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.common.base.Ascii;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -63,7 +64,6 @@ import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
@@ -768,6 +768,24 @@ public final class Util {
   }
 
   /**
+   * Returns the index of the first occurrence of {@code value} in {@code array}, or {@link
+   * C#INDEX_UNSET} if {@code value} is not contained in {@code array}.
+   *
+   * @param array The array to search.
+   * @param value The value to search for.
+   * @return The index of the first occurrence of value in {@code array}, or {@link C#INDEX_UNSET}
+   *     if {@code value} is not contained in {@code array}.
+   */
+  public static int linearSearch(long[] array, long value) {
+    for (int i = 0; i < array.length; i++) {
+      if (array[i] == value) {
+        return i;
+      }
+    }
+    return C.INDEX_UNSET;
+  }
+
+  /**
    * Returns the index of the largest element in {@code array} that is less than (or optionally
    * equal to) a specified {@code value}.
    *
@@ -1217,41 +1235,6 @@ public final class Util {
   }
 
   /**
-   * Converts a list of integers to a primitive array.
-   *
-   * @param list A list of integers.
-   * @return The list in array form, or null if the input list was null.
-   */
-  public static int @PolyNull [] toArray(@PolyNull List<Integer> list) {
-    if (list == null) {
-      return null;
-    }
-    int length = list.size();
-    int[] intArray = new int[length];
-    for (int i = 0; i < length; i++) {
-      intArray[i] = list.get(i);
-    }
-    return intArray;
-  }
-
-  /**
-   * Converts an array of primitive ints to a list of integers.
-   *
-   * @param ints The ints.
-   * @return The input array in list form.
-   */
-  public static List<Integer> toList(int... ints) {
-    if (ints == null) {
-      return new ArrayList<>();
-    }
-    List<Integer> integers = new ArrayList<>();
-    for (int anInt : ints) {
-      integers.add(anInt);
-    }
-    return integers;
-  }
-
-  /**
    * Returns the integer equal to the big-endian concatenation of the characters in {@code string}
    * as bytes. The string must be no more than four characters long.
    *
@@ -1289,6 +1272,24 @@ public final class Util {
    */
   public static long toLong(int mostSignificantBits, int leastSignificantBits) {
     return (toUnsignedLong(mostSignificantBits) << 32) | toUnsignedLong(leastSignificantBits);
+  }
+
+  /**
+   * Truncates a sequence of ASCII characters to a maximum length.
+   *
+   * <p>This preserves span styling in the {@link CharSequence}. If that's not important, use {@link
+   * Ascii#truncate(CharSequence, int, String)}.
+   *
+   * <p><b>Note:</b> This is not safe to use in general on Unicode text because it may separate
+   * characters from combining characters or split up surrogate pairs.
+   *
+   * @param sequence The character sequence to truncate.
+   * @param maxLength The max length to truncate to.
+   * @return {@code sequence} directly if {@code sequence.length() <= maxLength}, otherwise {@code
+   *     sequence.subsequence(0, maxLength}.
+   */
+  public static CharSequence truncateAscii(CharSequence sequence, int maxLength) {
+    return sequence.length() <= maxLength ? sequence : sequence.subSequence(0, maxLength);
   }
 
   /**

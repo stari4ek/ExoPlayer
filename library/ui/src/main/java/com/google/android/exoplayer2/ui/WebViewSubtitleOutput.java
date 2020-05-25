@@ -35,6 +35,7 @@ import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.util.Util;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -42,45 +43,39 @@ import java.util.List;
  *
  * <p>This is useful for subtitle styling not supported by Android's native text libraries such as
  * vertical text.
- *
- * <p>NOTE: This is currently extremely experimental and doesn't support most {@link Cue} styling
- * properties.
  */
-/* package */ final class SubtitleWebView extends FrameLayout implements SubtitleView.Output {
+/* package */ final class WebViewSubtitleOutput extends FrameLayout implements SubtitleView.Output {
 
   /**
-   * A {@link SubtitleTextView} used for displaying bitmap cues.
+   * A {@link CanvasSubtitleOutput} used for displaying bitmap cues.
    *
    * <p>There's no advantage to displaying bitmap cues in a {@link WebView}, so we re-use the
    * existing logic.
    */
-  private final SubtitleTextView subtitleTextView;
+  private final CanvasSubtitleOutput canvasSubtitleOutput;
 
   private final WebView webView;
-  private final List<Cue> cues;
 
-  @Cue.TextSizeType private int defaultTextSizeType;
-  private float defaultTextSize;
-  private boolean applyEmbeddedStyles;
-  private boolean applyEmbeddedFontSizes;
+  private List<Cue> textCues;
   private CaptionStyleCompat style;
+  private float defaultTextSize;
+  @Cue.TextSizeType private int defaultTextSizeType;
   private float bottomPaddingFraction;
 
-  public SubtitleWebView(Context context) {
+  public WebViewSubtitleOutput(Context context) {
     this(context, null);
   }
 
-  public SubtitleWebView(Context context, @Nullable AttributeSet attrs) {
+  public WebViewSubtitleOutput(Context context, @Nullable AttributeSet attrs) {
     super(context, attrs);
-    cues = new ArrayList<>();
-    defaultTextSizeType = Cue.TEXT_SIZE_TYPE_FRACTIONAL;
-    defaultTextSize = DEFAULT_TEXT_SIZE_FRACTION;
-    applyEmbeddedStyles = true;
-    applyEmbeddedFontSizes = true;
+
+    textCues = Collections.emptyList();
     style = CaptionStyleCompat.DEFAULT;
+    defaultTextSize = DEFAULT_TEXT_SIZE_FRACTION;
+    defaultTextSizeType = Cue.TEXT_SIZE_TYPE_FRACTIONAL;
     bottomPaddingFraction = DEFAULT_BOTTOM_PADDING_FRACTION;
 
-    subtitleTextView = new SubtitleTextView(context, attrs);
+    canvasSubtitleOutput = new CanvasSubtitleOutput(context, attrs);
     webView =
         new WebView(context, attrs) {
           @Override
@@ -99,79 +94,53 @@ import java.util.List;
         };
     webView.setBackgroundColor(Color.TRANSPARENT);
 
-    addView(subtitleTextView);
+    addView(canvasSubtitleOutput);
     addView(webView);
   }
 
   @Override
-  public void onCues(List<Cue> cues) {
+  public void update(
+      List<Cue> cues,
+      CaptionStyleCompat style,
+      float textSize,
+      @Cue.TextSizeType int textSizeType,
+      float bottomPaddingFraction) {
+    this.style = style;
+    this.defaultTextSize = textSize;
+    this.defaultTextSizeType = textSizeType;
+    this.bottomPaddingFraction = bottomPaddingFraction;
+
     List<Cue> bitmapCues = new ArrayList<>();
-    this.cues.clear();
+    List<Cue> textCues = new ArrayList<>();
     for (int i = 0; i < cues.size(); i++) {
       Cue cue = cues.get(i);
       if (cue.bitmap != null) {
         bitmapCues.add(cue);
       } else {
-        this.cues.add(cue);
+        textCues.add(cue);
       }
     }
-    subtitleTextView.onCues(bitmapCues);
-    // Invalidate to trigger subtitleTextView to draw.
+
+    if (!this.textCues.isEmpty() || !textCues.isEmpty()) {
+      this.textCues = textCues;
+      // Skip updating if this is a transition from empty-cues to empty-cues (i.e. only positioning
+      // info has changed) since a positional-only change with no cues is a visual no-op. The new
+      // position info will be used when we get non-empty cue data in a future update() call.
+      updateWebView();
+    }
+    canvasSubtitleOutput.update(bitmapCues, style, textSize, textSizeType, bottomPaddingFraction);
+    // Invalidate to trigger canvasSubtitleOutput to draw.
     invalidate();
-    updateWebView();
   }
 
   @Override
-  public void setTextSize(@Cue.TextSizeType int textSizeType, float textSize) {
-    if (this.defaultTextSizeType == textSizeType && this.defaultTextSize == textSize) {
-      return;
+  protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+    super.onLayout(changed, left, top, right, bottom);
+    if (changed && !textCues.isEmpty()) {
+      // A positional change with no cues is a visual no-op. The new layout info will be used
+      // automatically next time update() is called.
+      updateWebView();
     }
-    this.defaultTextSizeType = textSizeType;
-    this.defaultTextSize = textSize;
-    invalidate();
-    updateWebView();
-  }
-
-  @Override
-  public void setApplyEmbeddedStyles(boolean applyEmbeddedStyles) {
-    if (this.applyEmbeddedStyles == applyEmbeddedStyles
-        && this.applyEmbeddedFontSizes == applyEmbeddedStyles) {
-      return;
-    }
-    this.applyEmbeddedStyles = applyEmbeddedStyles;
-    this.applyEmbeddedFontSizes = applyEmbeddedStyles;
-    invalidate();
-    updateWebView();
-  }
-
-  @Override
-  public void setApplyEmbeddedFontSizes(boolean applyEmbeddedFontSizes) {
-    if (this.applyEmbeddedFontSizes == applyEmbeddedFontSizes) {
-      return;
-    }
-    this.applyEmbeddedFontSizes = applyEmbeddedFontSizes;
-    invalidate();
-    updateWebView();
-  }
-
-  @Override
-  public void setStyle(CaptionStyleCompat style) {
-    if (this.style == style) {
-      return;
-    }
-    this.style = style;
-    invalidate();
-    updateWebView();
-  }
-
-  @Override
-  public void setBottomPaddingFraction(float bottomPaddingFraction) {
-    if (this.bottomPaddingFraction == bottomPaddingFraction) {
-      return;
-    }
-    this.bottomPaddingFraction = bottomPaddingFraction;
-    invalidate();
-    updateWebView();
   }
 
   /**
@@ -181,7 +150,6 @@ import java.util.List;
    * other methods may be called on this view after destroy.
    */
   public void destroy() {
-    cues.clear();
     webView.destroy();
   }
 
@@ -189,7 +157,7 @@ import java.util.List;
     StringBuilder html = new StringBuilder();
     html.append(
         Util.formatInvariant(
-            "<html><body><div style=\""
+            "<html><body><div style='"
                 + "-webkit-user-select:none;"
                 + "position:fixed;"
                 + "top:0;"
@@ -198,14 +166,16 @@ import java.util.List;
                 + "right:0;"
                 + "color:%s;"
                 + "font-size:%s;"
-                + "\">",
+                + "text-shadow:%s;"
+                + "'>",
             HtmlUtils.toCssRgba(style.foregroundColor),
-            convertTextSizeToCss(defaultTextSizeType, defaultTextSize)));
+            convertTextSizeToCss(defaultTextSizeType, defaultTextSize),
+            convertCaptionStyleToCssTextShadow(style)));
 
     String backgroundColorCss = HtmlUtils.toCssRgba(style.backgroundColor);
 
-    for (int i = 0; i < cues.size(); i++) {
-      Cue cue = cues.get(i);
+    for (int i = 0; i < textCues.size(); i++) {
+      Cue cue = textCues.get(i);
       float positionPercent = (cue.position != Cue.DIMEN_UNSET) ? (cue.position * 100) : 50;
       int positionAnchorTranslatePercent = anchorTypeToTranslatePercent(cue.positionAnchor);
 
@@ -250,8 +220,7 @@ import java.util.List;
       String writingMode = convertVerticalTypeToCss(cue.verticalType);
       String cueTextSizeCssPx = convertTextSizeToCss(cue.textSizeType, cue.textSize);
       String windowCssColor =
-          HtmlUtils.toCssRgba(
-              cue.windowColorSet && applyEmbeddedStyles ? cue.windowColor : style.windowColor);
+          HtmlUtils.toCssRgba(cue.windowColorSet ? cue.windowColor : style.windowColor);
 
       String positionProperty;
       String lineProperty;
@@ -285,7 +254,7 @@ import java.util.List;
 
       html.append(
               Util.formatInvariant(
-                  "<div style=\""
+                  "<div style='"
                       + "position:absolute;"
                       + "%s:%.2f%%;"
                       + "%s:%.2f%%;"
@@ -295,7 +264,7 @@ import java.util.List;
                       + "font-size:%s;"
                       + "background-color:%s;"
                       + "transform:translate(%s%%,%s%%);"
-                      + "\">",
+                      + "'>",
                   positionProperty,
                   positionPercent,
                   lineProperty,
@@ -308,7 +277,7 @@ import java.util.List;
                   windowCssColor,
                   horizontalTranslatePercent,
                   verticalTranslatePercent))
-          .append(Util.formatInvariant("<span style=\"background-color:%s;\">", backgroundColorCss))
+          .append(Util.formatInvariant("<span style='background-color:%s;'>", backgroundColorCss))
           .append(
               SpannedToHtmlConverter.convert(
                   cue.text, getContext().getResources().getDisplayMetrics().density))
@@ -343,6 +312,28 @@ import java.util.List;
     }
     float sizeDp = sizePx / getContext().getResources().getDisplayMetrics().density;
     return Util.formatInvariant("%.2fpx", sizeDp);
+  }
+
+  private static String convertCaptionStyleToCssTextShadow(CaptionStyleCompat style) {
+    switch (style.edgeType) {
+      case CaptionStyleCompat.EDGE_TYPE_DEPRESSED:
+        return Util.formatInvariant(
+            "-0.05em -0.05em 0.15em %s", HtmlUtils.toCssRgba(style.edgeColor));
+      case CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW:
+        return Util.formatInvariant("0.1em 0.12em 0.15em %s", HtmlUtils.toCssRgba(style.edgeColor));
+      case CaptionStyleCompat.EDGE_TYPE_OUTLINE:
+        // -webkit-text-stroke makes the underlying text appear too narrow, so we 'fake' an edge
+        // outline using 4 text-shadows each offset by 1px in different directions.
+        return Util.formatInvariant(
+            "1px 1px 0 %1$s, 1px -1px 0 %1$s, -1px 1px 0 %1$s, -1px -1px 0 %1$s",
+            HtmlUtils.toCssRgba(style.edgeColor));
+      case CaptionStyleCompat.EDGE_TYPE_RAISED:
+        return Util.formatInvariant(
+            "0.06em 0.08em 0.15em %s", HtmlUtils.toCssRgba(style.edgeColor));
+      case CaptionStyleCompat.EDGE_TYPE_NONE:
+      default:
+        return "unset";
+    }
   }
 
   private static String convertVerticalTypeToCss(@Cue.VerticalType int verticalType) {
