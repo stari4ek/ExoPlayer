@@ -17,7 +17,7 @@ package com.google.android.exoplayer2.upstream.cache;
 
 import static com.google.android.exoplayer2.testutil.CacheAsserts.assertCachedData;
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.assertThrows;
 
 import android.net.Uri;
 import androidx.test.core.app.ApplicationProvider;
@@ -26,10 +26,11 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.testutil.FakeDataSet;
 import com.google.android.exoplayer2.testutil.FakeDataSource;
 import com.google.android.exoplayer2.testutil.TestUtil;
+import com.google.android.exoplayer2.upstream.DataSourceException;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.util.Util;
-import java.io.EOFException;
 import java.io.File;
+import java.io.IOException;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,9 +39,9 @@ import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
-/** Tests {@link CacheUtil}. */
+/** Unit tests for {@link CacheWriter}. */
 @RunWith(AndroidJUnit4.class)
-public final class CacheUtilTest {
+public final class CacheWriterTest {
 
   /**
    * Abstract fake Cache implementation used by the test. This class must be public so Mockito can
@@ -109,8 +110,16 @@ public final class CacheUtilTest {
     FakeDataSource dataSource = new FakeDataSource(fakeDataSet);
 
     CachingCounters counters = new CachingCounters();
-    CacheUtil.cache(
-        cache, new DataSpec(Uri.parse("test_data")), dataSource, counters, /* isCanceled= */ null);
+
+    CacheWriter cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            new DataSpec(Uri.parse("test_data")),
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(0, 100, 100);
     assertCachedData(cache, fakeDataSet);
@@ -124,12 +133,29 @@ public final class CacheUtilTest {
     Uri testUri = Uri.parse("test_data");
     DataSpec dataSpec = new DataSpec(testUri, /* position= */ 10, /* length= */ 20);
     CachingCounters counters = new CachingCounters();
-    CacheUtil.cache(cache, dataSpec, dataSource, counters, /* isCanceled= */ null);
+
+    CacheWriter cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            dataSpec,
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(0, 20, 20);
     counters.reset();
 
-    CacheUtil.cache(cache, new DataSpec(testUri), dataSource, counters, /* isCanceled= */ null);
+    cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            new DataSpec(testUri),
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(20, 80, 100);
     assertCachedData(cache, fakeDataSet);
@@ -144,7 +170,16 @@ public final class CacheUtilTest {
 
     DataSpec dataSpec = new DataSpec(Uri.parse("test_data"));
     CachingCounters counters = new CachingCounters();
-    CacheUtil.cache(cache, dataSpec, dataSource, counters, /* isCanceled= */ null);
+
+    CacheWriter cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            dataSpec,
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(0, 100, 100);
     assertCachedData(cache, fakeDataSet);
@@ -160,12 +195,29 @@ public final class CacheUtilTest {
     Uri testUri = Uri.parse("test_data");
     DataSpec dataSpec = new DataSpec(testUri, /* position= */ 10, /* length= */ 20);
     CachingCounters counters = new CachingCounters();
-    CacheUtil.cache(cache, dataSpec, dataSource, counters, /* isCanceled= */ null);
+
+    CacheWriter cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            dataSpec,
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(0, 20, 20);
     counters.reset();
 
-    CacheUtil.cache(cache, new DataSpec(testUri), dataSource, counters, /* isCanceled= */ null);
+    cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            new DataSpec(testUri),
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(20, 80, 100);
     assertCachedData(cache, fakeDataSet);
@@ -179,9 +231,18 @@ public final class CacheUtilTest {
     Uri testUri = Uri.parse("test_data");
     DataSpec dataSpec = new DataSpec(testUri, /* position= */ 0, /* length= */ 1000);
     CachingCounters counters = new CachingCounters();
-    CacheUtil.cache(cache, dataSpec, dataSource, counters, /* isCanceled= */ null);
 
-    counters.assertValues(0, 100, 1000);
+    CacheWriter cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            dataSpec,
+            /* allowShortContent= */ true,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
+
+    counters.assertValues(0, 100, 100);
     assertCachedData(cache, fakeDataSet);
   }
 
@@ -193,18 +254,19 @@ public final class CacheUtilTest {
     Uri testUri = Uri.parse("test_data");
     DataSpec dataSpec = new DataSpec(testUri, /* position= */ 0, /* length= */ 1000);
 
-    try {
-      CacheUtil.cache(
-          new CacheDataSource(cache, dataSource),
-          dataSpec,
-          /* progressListener= */ null,
-          /* isCanceled= */ null,
-          /* enableEOFException= */ true,
-          /* temporaryBuffer= */ new byte[CacheUtil.DEFAULT_BUFFER_SIZE_BYTES]);
-      fail();
-    } catch (EOFException e) {
-      // Do nothing.
-    }
+    IOException exception =
+        assertThrows(
+            IOException.class,
+            () ->
+                new CacheWriter(
+                        new CacheDataSource(cache, dataSource),
+                        dataSpec,
+                        /* allowShortContent= */ false,
+                        /* isCanceled= */ null,
+                        /* temporaryBuffer= */ null,
+                        /* progressListener= */ null)
+                    .cache());
+    assertThat(DataSourceException.isCausedByPositionOutOfRange(exception)).isTrue();
   }
 
   @Test
@@ -221,14 +283,21 @@ public final class CacheUtilTest {
             .endData();
     FakeDataSource dataSource = new FakeDataSource(fakeDataSet);
 
-    CacheUtil.cache(
-        cache, new DataSpec(Uri.parse("test_data")), dataSource, counters, /* isCanceled= */ null);
+    CacheWriter cacheWriter =
+        new CacheWriter(
+            new CacheDataSource(cache, dataSource),
+            new DataSpec(Uri.parse("test_data")),
+            /* allowShortContent= */ false,
+            /* isCanceled= */ null,
+            /* temporaryBuffer= */ null,
+            counters);
+    cacheWriter.cache();
 
     counters.assertValues(0, 300, 300);
     assertCachedData(cache, fakeDataSet);
   }
 
-  private static final class CachingCounters implements CacheUtil.ProgressListener {
+  private static final class CachingCounters implements CacheWriter.ProgressListener {
 
     private long contentLength = C.LENGTH_UNSET;
     private long bytesAlreadyCached;

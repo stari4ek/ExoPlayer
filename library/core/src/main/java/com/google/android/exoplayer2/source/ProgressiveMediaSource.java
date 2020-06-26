@@ -180,15 +180,18 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     @Override
     public ProgressiveMediaSource createMediaSource(MediaItem mediaItem) {
       checkNotNull(mediaItem.playbackProperties);
-      MediaItem.Builder builder = mediaItem.buildUpon();
-      if (mediaItem.playbackProperties.tag == null) {
-        builder.setTag(tag);
-      }
-      if (mediaItem.playbackProperties.customCacheKey == null) {
-        builder.setCustomCacheKey(customCacheKey);
+      boolean needsTag = mediaItem.playbackProperties.tag == null && tag != null;
+      boolean needsCustomCacheKey =
+          mediaItem.playbackProperties.customCacheKey == null && customCacheKey != null;
+      if (needsTag && needsCustomCacheKey) {
+        mediaItem = mediaItem.buildUpon().setTag(tag).setCustomCacheKey(customCacheKey).build();
+      } else if (needsTag) {
+        mediaItem = mediaItem.buildUpon().setTag(tag).build();
+      } else if (needsCustomCacheKey) {
+        mediaItem = mediaItem.buildUpon().setCustomCacheKey(customCacheKey).build();
       }
       return new ProgressiveMediaSource(
-          builder.build(),
+          mediaItem,
           dataSourceFactory,
           extractorsFactory,
           drmSessionManager,
@@ -241,14 +244,19 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     this.timelineDurationUs = C.TIME_UNSET;
   }
 
+  /**
+   * @deprecated Use {@link #getMediaItem()} and {@link MediaItem.PlaybackProperties#tag} instead.
+   */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   @Nullable
   public Object getTag() {
     return playbackProperties.tag;
   }
 
-  @Nullable
-  public Object getMediaItem() {
+  @Override
+  public MediaItem getMediaItem() {
     return mediaItem;
   }
 
@@ -273,7 +281,7 @@ public final class ProgressiveMediaSource extends BaseMediaSource
     return new ProgressiveMediaPeriod(
         playbackProperties.uri,
         dataSource,
-        extractorsFactory.createExtractors(),
+        extractorsFactory,
         drmSessionManager,
         loadableLoadErrorHandlingPolicy,
         createEventDispatcher(id),

@@ -203,6 +203,11 @@ import java.util.concurrent.TimeoutException;
   }
 
   @Override
+  public void experimental_enableOffloadScheduling(boolean enableOffloadScheduling) {
+    internalPlayer.experimental_enableOffloadScheduling(enableOffloadScheduling);
+  }
+
+  @Override
   @Nullable
   public AudioComponent getAudioComponent() {
     return null;
@@ -659,7 +664,14 @@ import java.util.concurrent.TimeoutException;
   public void setForegroundMode(boolean foregroundMode) {
     if (this.foregroundMode != foregroundMode) {
       this.foregroundMode = foregroundMode;
-      internalPlayer.setForegroundMode(foregroundMode);
+      if (!internalPlayer.setForegroundMode(foregroundMode)) {
+        notifyListeners(
+            listener ->
+                listener.onPlayerError(
+                    ExoPlaybackException.createForUnexpected(
+                        new RuntimeException(
+                            new TimeoutException("Setting foreground mode timed out.")))));
+      }
     }
   }
 

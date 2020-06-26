@@ -18,9 +18,11 @@ package com.google.android.exoplayer2.source;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
+import android.net.Uri;
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Timeline.Period;
@@ -51,8 +53,8 @@ import org.robolectric.annotation.LooperMode.Mode;
 @LooperMode(Mode.PAUSED)
 public final class ClippingMediaSourceTest {
 
-  private static final long TEST_PERIOD_DURATION_US = 1000000;
-  private static final long TEST_CLIP_AMOUNT_US = 300000;
+  private static final long TEST_PERIOD_DURATION_US = 1_000_000;
+  private static final long TEST_CLIP_AMOUNT_US = 300_000;
 
   private Window window;
   private Period period;
@@ -72,7 +74,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline clippedTimeline = getClippedTimeline(timeline, 0, TEST_PERIOD_DURATION_US);
 
@@ -93,7 +95,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     // If the unseekable window isn't clipped, clipping succeeds.
     getClippedTimeline(timeline, 0, TEST_PERIOD_DURATION_US);
@@ -115,7 +117,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     // If the unseekable window isn't clipped, clipping succeeds.
     getClippedTimeline(timeline, /* startUs= */ 0, TEST_PERIOD_DURATION_US);
@@ -137,7 +139,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline clippedTimeline =
         getClippedTimeline(timeline, TEST_CLIP_AMOUNT_US, TEST_PERIOD_DURATION_US);
@@ -156,7 +158,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline clippedTimeline =
         getClippedTimeline(timeline, 0, TEST_PERIOD_DURATION_US - TEST_CLIP_AMOUNT_US);
@@ -171,7 +173,7 @@ public final class ClippingMediaSourceTest {
     // Timeline that's dynamic and not seekable. A child source might report such a timeline prior
     // to it having loaded sufficient data to establish its duration and seekability. Such timelines
     // should not result in clipping failure.
-    Timeline timeline = new DummyTimeline(/* tag= */ null);
+    Timeline timeline = new DummyTimeline(MediaItem.fromUri(Uri.EMPTY));
 
     Timeline clippedTimeline =
         getClippedTimeline(
@@ -192,7 +194,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     // When clipping to the end, the clipped timeline should also have a duration.
     Timeline clippedTimeline =
@@ -211,7 +213,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     // When clipping to the end, the clipped timeline should also have an unset duration.
     Timeline clippedTimeline =
@@ -229,7 +231,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline clippedTimeline =
         getClippedTimeline(
@@ -252,7 +254,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline clippedTimeline = getClippedTimeline(timeline, /* durationUs= */ TEST_CLIP_AMOUNT_US);
     assertThat(clippedTimeline.getWindow(0, window).getDurationUs()).isEqualTo(TEST_CLIP_AMOUNT_US);
@@ -275,7 +277,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     Timeline timeline2 =
         new SinglePeriodTimeline(
             /* periodDurationUs= */ 3 * TEST_PERIOD_DURATION_US,
@@ -286,7 +288,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline[] clippedTimelines =
         getClippedTimelines(
@@ -326,7 +328,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     Timeline timeline2 =
         new SinglePeriodTimeline(
             /* periodDurationUs= */ 4 * TEST_PERIOD_DURATION_US,
@@ -337,7 +339,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline[] clippedTimelines =
         getClippedTimelines(
@@ -377,7 +379,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     Timeline timeline2 =
         new SinglePeriodTimeline(
             /* periodDurationUs= */ 3 * TEST_PERIOD_DURATION_US,
@@ -388,7 +390,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline[] clippedTimelines =
         getClippedTimelines(
@@ -429,7 +431,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     Timeline timeline2 =
         new SinglePeriodTimeline(
             /* periodDurationUs= */ 4 * TEST_PERIOD_DURATION_US,
@@ -440,7 +442,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
 
     Timeline[] clippedTimelines =
         getClippedTimelines(
@@ -559,7 +561,7 @@ public final class ClippingMediaSourceTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     FakeMediaSource fakeMediaSource =
         new FakeMediaSource(timeline) {
           @Override
@@ -597,7 +599,7 @@ public final class ClippingMediaSourceTest {
       testRunner.runOnPlaybackThread(
           () ->
               clippingMediaSource.addEventListener(
-                  Util.createHandler(),
+                  Util.createHandlerForCurrentLooper(),
                   new MediaSourceEventListener() {
                     @Override
                     public void onDownstreamFormatChanged(

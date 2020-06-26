@@ -146,6 +146,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   private final ArrayList<HlsSampleStream> hlsSampleStreams;
   private final Map<String, DrmInitData> overridingDrmInitData;
 
+  @Nullable private Chunk loadingChunk;
   private HlsSampleQueue[] sampleQueues;
   private int[] sampleQueueTrackIds;
   private Set<Integer> sampleQueueMappingDoneByType;
@@ -159,7 +160,6 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   private @MonotonicNonNull Format upstreamTrackFormat;
   @Nullable private Format downstreamTrackFormat;
   private boolean released;
-  private int pendingDiscardUpstreamQueueSize;
 
   // Tracks are complicated in HLS. See documentation of buildTracksFromSampleStreams for details.
   // Indexed by track (as exposed by this source).
@@ -240,10 +240,9 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
     @SuppressWarnings("nullness:methodref.receiver.bound.invalid")
     Runnable onTracksEndedRunnable = this::onTracksEnded;
     this.onTracksEndedRunnable = onTracksEndedRunnable;
-    handler = Util.createHandler();
+    handler = Util.createHandlerForCurrentLooper();
     lastSeekPositionUs = positionUs;
     pendingResetPositionUs = positionUs;
-    pendingDiscardUpstreamQueueSize = C.LENGTH_UNSET;
   }
 
   public void continuePreparing() {
@@ -689,6 +688,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
     if (isMediaChunk(loadable)) {
       initMediaChunkLoad((HlsMediaChunk) loadable);
     }
+    loadingChunk = loadable;
     long elapsedRealtimeMs =
         loader.startLoading(
             loadable, this, loadErrorHandlingPolicy.getMinimumLoadableRetryCount(loadable.type));
@@ -715,15 +715,16 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
       return;
     }
 
-    int currentQueueSize = mediaChunks.size();
-    int preferredQueueSize = chunkSource.getPreferredQueueSize(positionUs, readOnlyMediaChunks);
-    if (currentQueueSize <= preferredQueueSize) {
+    if (loader.isLoading()) {
+      Assertions.checkNotNull(loadingChunk);
+      if (chunkSource.shouldCancelLoad(positionUs, loadingChunk, readOnlyMediaChunks)) {
+        loader.cancelLoading();
+      }
       return;
     }
-    if (loader.isLoading()) {
-      pendingDiscardUpstreamQueueSize = preferredQueueSize;
-      loader.cancelLoading();
-    } else {
+
+    int preferredQueueSize = chunkSource.getPreferredQueueSize(positionUs, readOnlyMediaChunks);
+    if (preferredQueueSize < mediaChunks.size()) {
       discardUpstream(preferredQueueSize);
     }
   }
@@ -732,6 +733,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
 
   @Override
   public void onLoadCompleted(Chunk loadable, long elapsedRealtimeMs, long loadDurationMs) {
+    loadingChunk = null;
     chunkSource.onChunkLoadCompleted(loadable);
     LoadEventInfo loadEventInfo =
         new LoadEventInfo(
@@ -762,6 +764,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   @Override
   public void onLoadCanceled(
       Chunk loadable, long elapsedRealtimeMs, long loadDurationMs, boolean released) {
+    loadingChunk = null;
     LoadEventInfo loadEventInfo =
         new LoadEventInfo(
             loadable.loadTaskId,
@@ -782,10 +785,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
         loadable.startTimeUs,
         loadable.endTimeUs);
     if (!released) {
-      if (pendingDiscardUpstreamQueueSize != C.LENGTH_UNSET) {
-        discardUpstream(pendingDiscardUpstreamQueueSize);
-        pendingDiscardUpstreamQueueSize = C.LENGTH_UNSET;
-      } else {
+      if (isPendingReset() || enabledTrackGroupCount == 0) {
         resetSampleQueues();
       }
       if (enabledTrackGroupCount > 0) {
@@ -860,6 +860,7 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
         error,
         wasCanceled);
     if (wasCanceled) {
+      loadingChunk = null;
       loadErrorHandlingPolicy.onLoadTaskConcluded(loadable.loadTaskId);
     }
 
@@ -894,15 +895,14 @@ public final class HlsSampleStreamWrapper implements Loader.Callback<Chunk>,
   private void discardUpstream(int preferredQueueSize) {
     Assertions.checkState(!loader.isLoading());
 
-    int currentQueueSize = mediaChunks.size();
-    int newQueueSize = Integer.MAX_VALUE;
-    for (int i = preferredQueueSize; i < currentQueueSize; i++) {
+    int newQueueSize = C.LENGTH_UNSET;
+    for (int i = preferredQueueSize; i < mediaChunks.size(); i++) {
       if (!haveReadFromMediaChunkDiscardRange(i)) {
         newQueueSize = i;
         break;
       }
     }
-    if (newQueueSize >= currentQueueSize) {
+    if (newQueueSize == C.LENGTH_UNSET) {
       return;
     }
 

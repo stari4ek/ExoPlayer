@@ -16,7 +16,6 @@
 package com.google.android.exoplayer2.source.dash;
 
 import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
-import static com.google.android.exoplayer2.util.Util.castNonNull;
 
 import android.net.Uri;
 import android.os.Handler;
@@ -64,11 +63,11 @@ import com.google.android.exoplayer2.util.Log;
 import com.google.android.exoplayer2.util.MimeTypes;
 import com.google.android.exoplayer2.util.SntpClient;
 import com.google.android.exoplayer2.util.Util;
+import com.google.common.base.Charsets;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
@@ -377,15 +376,21 @@ public final class DashMediaSource extends BaseMediaSource {
         manifestParser = new DashManifestParser();
       }
       List<StreamKey> streamKeys =
-          !mediaItem.playbackProperties.streamKeys.isEmpty()
-              ? mediaItem.playbackProperties.streamKeys
-              : this.streamKeys;
+          mediaItem.playbackProperties.streamKeys.isEmpty()
+              ? this.streamKeys
+              : mediaItem.playbackProperties.streamKeys;
       if (!streamKeys.isEmpty()) {
         manifestParser = new FilteringManifestParser<>(manifestParser, streamKeys);
       }
-      if (mediaItem.playbackProperties.tag == null && tag != null) {
+
+      boolean needsTag = mediaItem.playbackProperties.tag == null && tag != null;
+      boolean needsStreamKeys =
+          mediaItem.playbackProperties.streamKeys.isEmpty() && !streamKeys.isEmpty();
+      if (needsTag && needsStreamKeys) {
         mediaItem = mediaItem.buildUpon().setTag(tag).setStreamKeys(streamKeys).build();
-      } else if (mediaItem.playbackProperties.streamKeys.isEmpty() && !streamKeys.isEmpty()) {
+      } else if (needsTag) {
+        mediaItem = mediaItem.buildUpon().setTag(tag).build();
+      } else if (needsStreamKeys) {
         mediaItem = mediaItem.buildUpon().setStreamKeys(streamKeys).build();
       }
       return new DashMediaSource(
@@ -411,7 +416,7 @@ public final class DashMediaSource extends BaseMediaSource {
    * The default presentation delay for live streams. The presentation delay is the duration by
    * which the default start position precedes the end of the live window.
    */
-  public static final long DEFAULT_LIVE_PRESENTATION_DELAY_MS = 30000;
+  public static final long DEFAULT_LIVE_PRESENTATION_DELAY_MS = 30_000;
   /** @deprecated Use {@link #DEFAULT_LIVE_PRESENTATION_DELAY_MS}. */
   @Deprecated
   public static final long DEFAULT_LIVE_PRESENTATION_DELAY_FIXED_MS =
@@ -432,7 +437,7 @@ public final class DashMediaSource extends BaseMediaSource {
   /**
    * The minimum default start position for live streams, relative to the start of the live window.
    */
-  private static final long MIN_LIVE_DEFAULT_START_POSITION_US = 5000000;
+  private static final long MIN_LIVE_DEFAULT_START_POSITION_US = 5_000_000;
 
   private static final String TAG = "DashMediaSource";
 
@@ -453,6 +458,8 @@ public final class DashMediaSource extends BaseMediaSource {
   private final Runnable simulateManifestRefreshRunnable;
   private final PlayerEmsgCallback playerEmsgCallback;
   private final LoaderErrorThrower manifestLoadErrorThrower;
+  private final MediaItem mediaItem;
+  private final MediaItem.PlaybackProperties playbackProperties;
 
   private DataSource dataSource;
   private Loader loader;
@@ -461,9 +468,8 @@ public final class DashMediaSource extends BaseMediaSource {
   private IOException manifestFatalError;
   private Handler handler;
 
-  private MediaItem mediaItem;
-  private MediaItem.PlaybackProperties playbackProperties;
   private Uri manifestUri;
+  private Uri initialManifestUri;
   private DashManifest manifest;
   private boolean manifestLoadPending;
   private long manifestLoadStartTimestampMs;
@@ -604,6 +610,7 @@ public final class DashMediaSource extends BaseMediaSource {
     this.mediaItem = mediaItem;
     this.playbackProperties = checkNotNull(mediaItem.playbackProperties);
     this.manifestUri = playbackProperties.uri;
+    this.initialManifestUri = playbackProperties.uri;
     this.manifest = manifest;
     this.manifestDataSourceFactory = manifestDataSourceFactory;
     this.manifestParser = manifestParser;
@@ -642,20 +649,24 @@ public final class DashMediaSource extends BaseMediaSource {
   public void replaceManifestUri(Uri manifestUri) {
     synchronized (manifestUriLock) {
       this.manifestUri = manifestUri;
-      this.mediaItem = mediaItem.buildUpon().setUri(manifestUri).build();
-      this.playbackProperties = castNonNull(mediaItem.playbackProperties);
+      this.initialManifestUri = manifestUri;
     }
   }
 
   // MediaSource implementation.
 
+  /**
+   * @deprecated Use {@link #getMediaItem()} and {@link MediaItem.PlaybackProperties#tag} instead.
+   */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   @Nullable
   public Object getTag() {
     return playbackProperties.tag;
   }
 
-  // TODO(bachinger): add @Override annotation once the method is defined by MediaSource.
+  @Override
   public MediaItem getMediaItem() {
     return mediaItem;
   }
@@ -669,7 +680,7 @@ public final class DashMediaSource extends BaseMediaSource {
     } else {
       dataSource = manifestDataSourceFactory.createDataSource();
       loader = new Loader("Loader:DashMediaSource");
-      handler = Util.createHandler();
+      handler = Util.createHandlerForCurrentLooper();
       startLoadingManifest();
     }
   }
@@ -722,7 +733,7 @@ public final class DashMediaSource extends BaseMediaSource {
     manifestLoadStartTimestampMs = 0;
     manifestLoadEndTimestampMs = 0;
     manifest = sideloadedManifest ? manifest : null;
-    manifestUri = playbackProperties.uri;
+    manifestUri = initialManifestUri;
     manifestFatalError = null;
     if (handler != null) {
       handler.removeCallbacksAndMessages(null);
@@ -1440,8 +1451,7 @@ public final class DashMediaSource extends BaseMediaSource {
     @Override
     public Long parse(Uri uri, InputStream inputStream) throws IOException {
       String firstLine =
-          new BufferedReader(new InputStreamReader(inputStream, Charset.forName(C.UTF8_NAME)))
-              .readLine();
+          new BufferedReader(new InputStreamReader(inputStream, Charsets.UTF_8)).readLine();
       try {
         Matcher matcher = TIMESTAMP_WITH_TIMEZONE_PATTERN.matcher(firstLine);
         if (!matcher.matches()) {

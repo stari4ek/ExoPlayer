@@ -29,11 +29,10 @@ import android.view.MotionEvent;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
 import androidx.annotation.Nullable;
-import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.text.CaptionStyleCompat;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.util.Util;
-import java.nio.charset.Charset;
+import com.google.common.base.Charsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -45,6 +44,12 @@ import java.util.List;
  * vertical text.
  */
 /* package */ final class WebViewSubtitleOutput extends FrameLayout implements SubtitleView.Output {
+
+  /**
+   * A hard-coded value for the line-height attribute, so we can use it to move text up and down by
+   * one line-height. Most browsers default 'normal' (CSS default) to 1.2 for most font families.
+   */
+  private static final float CSS_LINE_HEIGHT = 1.2f;
 
   /**
    * A {@link CanvasSubtitleOutput} used for displaying bitmap cues.
@@ -166,10 +171,12 @@ import java.util.List;
                 + "right:0;"
                 + "color:%s;"
                 + "font-size:%s;"
+                + "line-height:%.2fem;"
                 + "text-shadow:%s;"
                 + "'>",
             HtmlUtils.toCssRgba(style.foregroundColor),
             convertTextSizeToCss(defaultTextSizeType, defaultTextSize),
+            CSS_LINE_HEIGHT,
             convertCaptionStyleToCssTextShadow(style)));
 
     String backgroundColorCss = HtmlUtils.toCssRgba(style.backgroundColor);
@@ -179,37 +186,33 @@ import java.util.List;
       float positionPercent = (cue.position != Cue.DIMEN_UNSET) ? (cue.position * 100) : 50;
       int positionAnchorTranslatePercent = anchorTypeToTranslatePercent(cue.positionAnchor);
 
-      float linePercent;
-      int lineTranslatePercent;
-      @Cue.AnchorType int lineAnchor;
+      String lineValue;
+      boolean lineMeasuredFromEnd = false;
+      int lineAnchorTranslatePercent = 0;
       if (cue.line != Cue.DIMEN_UNSET) {
         switch (cue.lineType) {
           case Cue.LINE_TYPE_NUMBER:
             if (cue.line >= 0) {
-              linePercent = 0;
-              lineTranslatePercent = Math.round(cue.line) * 100;
+              lineValue = Util.formatInvariant("%.2fem", cue.line * CSS_LINE_HEIGHT);
             } else {
-              linePercent = 100;
-              lineTranslatePercent = Math.round(cue.line + 1) * 100;
+              lineValue = Util.formatInvariant("%.2fem", (-cue.line - 1) * CSS_LINE_HEIGHT);
+              lineMeasuredFromEnd = true;
             }
             break;
           case Cue.LINE_TYPE_FRACTION:
           case Cue.TYPE_UNSET:
           default:
-            linePercent = cue.line * 100;
-            lineTranslatePercent = 0;
+            lineValue = Util.formatInvariant("%.2f%%", cue.line * 100);
+
+            lineAnchorTranslatePercent =
+                cue.verticalType == Cue.VERTICAL_TYPE_RL
+                    ? -anchorTypeToTranslatePercent(cue.lineAnchor)
+                    : anchorTypeToTranslatePercent(cue.lineAnchor);
         }
-        lineAnchor = cue.lineAnchor;
       } else {
-        linePercent = (1.0f - bottomPaddingFraction) * 100;
-        lineTranslatePercent = 0;
-        // If Cue.line == DIMEN_UNSET then ignore Cue.lineAnchor and assume ANCHOR_TYPE_END.
-        lineAnchor = Cue.ANCHOR_TYPE_END;
+        lineValue = Util.formatInvariant("%.2f%%", (1.0f - bottomPaddingFraction) * 100);
+        lineAnchorTranslatePercent = -100;
       }
-      int lineAnchorTranslatePercent =
-          cue.verticalType == Cue.VERTICAL_TYPE_RL
-              ? -anchorTypeToTranslatePercent(lineAnchor)
-              : anchorTypeToTranslatePercent(lineAnchor);
 
       String size =
           cue.size != Cue.DIMEN_UNSET
@@ -226,16 +229,16 @@ import java.util.List;
       String lineProperty;
       switch (cue.verticalType) {
         case Cue.VERTICAL_TYPE_LR:
-          lineProperty = "left";
+          lineProperty = lineMeasuredFromEnd ? "right" : "left";
           positionProperty = "top";
           break;
         case Cue.VERTICAL_TYPE_RL:
-          lineProperty = "right";
+          lineProperty = lineMeasuredFromEnd ? "left" : "right";
           positionProperty = "top";
           break;
         case Cue.TYPE_UNSET:
         default:
-          lineProperty = "top";
+          lineProperty = lineMeasuredFromEnd ? "bottom" : "top";
           positionProperty = "left";
       }
 
@@ -244,12 +247,12 @@ import java.util.List;
       int verticalTranslatePercent;
       if (cue.verticalType == Cue.VERTICAL_TYPE_LR || cue.verticalType == Cue.VERTICAL_TYPE_RL) {
         sizeProperty = "height";
-        horizontalTranslatePercent = lineTranslatePercent + lineAnchorTranslatePercent;
+        horizontalTranslatePercent = lineAnchorTranslatePercent;
         verticalTranslatePercent = positionAnchorTranslatePercent;
       } else {
         sizeProperty = "width";
         horizontalTranslatePercent = positionAnchorTranslatePercent;
-        verticalTranslatePercent = lineTranslatePercent + lineAnchorTranslatePercent;
+        verticalTranslatePercent = lineAnchorTranslatePercent;
       }
 
       html.append(
@@ -257,7 +260,7 @@ import java.util.List;
                   "<div style='"
                       + "position:absolute;"
                       + "%s:%.2f%%;"
-                      + "%s:%.2f%%;"
+                      + "%s:%s;"
                       + "%s:%s;"
                       + "text-align:%s;"
                       + "writing-mode:%s;"
@@ -268,7 +271,7 @@ import java.util.List;
                   positionProperty,
                   positionPercent,
                   lineProperty,
-                  linePercent,
+                  lineValue,
                   sizeProperty,
                   size,
                   textAlign,
@@ -288,8 +291,7 @@ import java.util.List;
     html.append("</div></body></html>");
 
     webView.loadData(
-        Base64.encodeToString(
-            html.toString().getBytes(Charset.forName(C.UTF8_NAME)), Base64.NO_PADDING),
+        Base64.encodeToString(html.toString().getBytes(Charsets.UTF_8), Base64.NO_PADDING),
         "text/html",
         "base64");
   }

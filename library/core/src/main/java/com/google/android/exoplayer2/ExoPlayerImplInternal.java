@@ -43,6 +43,7 @@ import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.HandlerWrapper;
 import com.google.android.exoplayer2.util.Log;
+import com.google.android.exoplayer2.util.Supplier;
 import com.google.android.exoplayer2.util.TraceUtil;
 import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
@@ -94,6 +95,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
   private static final int ACTIVE_INTERVAL_MS = 10;
   private static final int IDLE_INTERVAL_MS = 1000;
+  /**
+   * Duration under which pausing the main DO_SOME_WORK loop is not expected to yield significant
+   * power saving.
+   *
+   * <p>This value is probably too high, power measurements are needed adjust it, but as renderer
+   * sleep is currently only implemented for audio offload, which uses buffer much bigger than 2s,
+   * this does not matter for now.
+   */
+  private static final long MIN_RENDERER_SLEEP_DURATION_MS = 2000;
 
   private final Renderer[] renderers;
   private final RendererCapabilities[] rendererCapabilities;
@@ -127,6 +137,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
   @Player.RepeatMode private int repeatMode;
   private boolean shuffleModeEnabled;
   private boolean foregroundMode;
+  private boolean requestForRendererSleep;
+  private boolean offloadSchedulingEnabled;
 
   private int enabledRendererCount;
   @Nullable private SeekPosition pendingInitialSeekPosition;
@@ -185,10 +197,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
     internalPlaybackThread.start();
     handler = clock.createHandler(internalPlaybackThread.getLooper(), this);
     deliverPendingMessageAtStartPositionRequired = true;
-    mediaSourceList = new MediaSourceList(this);
-    if (analyticsCollector != null) {
-      mediaSourceList.setAnalyticsCollector(eventHandler, analyticsCollector);
-    }
+    mediaSourceList = new MediaSourceList(/* listener= */ this, analyticsCollector, eventHandler);
   }
 
   public void experimental_setReleaseTimeoutMs(long releaseTimeoutMs) {
@@ -197,6 +206,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
   public void experimental_throwWhenStuckBuffering() {
     throwWhenStuckBuffering = true;
+  }
+
+  public void experimental_enableOffloadScheduling(boolean enableOffloadScheduling) {
+    offloadSchedulingEnabled = enableOffloadScheduling;
+    if (!enableOffloadScheduling) {
+      handler.sendEmptyMessage(MSG_DO_SOME_WORK);
+    }
   }
 
   public void prepare() {
@@ -296,29 +312,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
     handler.obtainMessage(MSG_SEND_MESSAGE, message).sendToTarget();
   }
 
-  public synchronized void setForegroundMode(boolean foregroundMode) {
+  public synchronized boolean setForegroundMode(boolean foregroundMode) {
     if (released || !internalPlaybackThread.isAlive()) {
-      return;
+      return true;
     }
     if (foregroundMode) {
       handler.obtainMessage(MSG_SET_FOREGROUND_MODE, /* foregroundMode */ 1, 0).sendToTarget();
+      return true;
     } else {
       AtomicBoolean processedFlag = new AtomicBoolean();
       handler
           .obtainMessage(MSG_SET_FOREGROUND_MODE, /* foregroundMode */ 0, 0, processedFlag)
           .sendToTarget();
-      boolean wasInterrupted = false;
-      while (!processedFlag.get()) {
-        try {
-          wait();
-        } catch (InterruptedException e) {
-          wasInterrupted = true;
-        }
+      if (releaseTimeoutMs > 0) {
+        waitUninterruptibly(/* condition= */ processedFlag::get, releaseTimeoutMs);
+      } else {
+        waitUninterruptibly(/* condition= */ processedFlag::get);
       }
-      if (wasInterrupted) {
-        // Restore the interrupted status.
-        Thread.currentThread().interrupt();
-      }
+      return processedFlag.get();
     }
   }
 
@@ -328,16 +339,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
     }
 
     handler.sendEmptyMessage(MSG_RELEASE);
-    try {
-      if (releaseTimeoutMs > 0) {
-        waitUntilReleased(releaseTimeoutMs);
-      } else {
-        waitUntilReleased();
-      }
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
+    if (releaseTimeoutMs > 0) {
+      waitUninterruptibly(/* condition= */ () -> released, releaseTimeoutMs);
+    } else {
+      waitUninterruptibly(/* condition= */ () -> released);
     }
-
     return released;
   }
 
@@ -505,59 +511,54 @@ import java.util.concurrent.atomic.AtomicBoolean;
   // Private methods.
 
   /**
-   * Blocks the current thread until {@link #releaseInternal()} is executed on the playback Thread.
+   * Blocks the current thread until a condition becomes true.
    *
-   * <p>If the current thread is interrupted while waiting for {@link #releaseInternal()} to
-   * complete, this method will delay throwing the {@link InterruptedException} to ensure that the
-   * underlying resources have been released, and will an {@link InterruptedException} <b>after</b>
-   * {@link #releaseInternal()} is complete.
+   * <p>If the current thread is interrupted while waiting for the condition to become true, this
+   * method will restore the interrupt <b>after</b> the condition became true.
    *
-   * @throws {@link InterruptedException} if the current Thread was interrupted while waiting for
-   *     {@link #releaseInternal()} to complete.
+   * @param condition The condition.
    */
-  private synchronized void waitUntilReleased() throws InterruptedException {
-    InterruptedException interruptedException = null;
-    while (!released) {
+  private synchronized void waitUninterruptibly(Supplier<Boolean> condition) {
+    boolean wasInterrupted = false;
+    while (!condition.get()) {
       try {
         wait();
       } catch (InterruptedException e) {
-        interruptedException = e;
+        wasInterrupted = true;
       }
     }
-
-    if (interruptedException != null) {
-      throw interruptedException;
+    if (wasInterrupted) {
+      // Restore the interrupted status.
+      Thread.currentThread().interrupt();
     }
   }
 
   /**
-   * Blocks the current thread until {@link #releaseInternal()} is performed on the playback Thread
-   * or the specified amount of time has elapsed.
+   * Blocks the current thread until a condition becomes true or the specified amount of time has
+   * elapsed.
    *
-   * <p>If the current thread is interrupted while waiting for {@link #releaseInternal()} to
-   * complete, this method will delay throwing the {@link InterruptedException} to ensure that the
-   * underlying resources have been released or the operation timed out, and will throw an {@link
-   * InterruptedException} afterwards.
+   * <p>If the current thread is interrupted while waiting for the condition to become true, this
+   * method will restore the interrupt <b>after</b> the condition became true or the operation times
+   * out.
    *
-   * @param timeoutMs the time in milliseconds to wait for {@link #releaseInternal()} to complete.
-   * @throws {@link InterruptedException} if the current Thread was interrupted while waiting for
-   *     {@link #releaseInternal()} to complete.
+   * @param condition The condition.
+   * @param timeoutMs The time in milliseconds to wait for the condition to become true.
    */
-  private synchronized void waitUntilReleased(long timeoutMs) throws InterruptedException {
+  private synchronized void waitUninterruptibly(Supplier<Boolean> condition, long timeoutMs) {
     long deadlineMs = clock.elapsedRealtime() + timeoutMs;
     long remainingMs = timeoutMs;
-    InterruptedException interruptedException = null;
-    while (!released && remainingMs > 0) {
+    boolean wasInterrupted = false;
+    while (!condition.get() && remainingMs > 0) {
       try {
         wait(remainingMs);
       } catch (InterruptedException e) {
-        interruptedException = e;
+        wasInterrupted = true;
       }
       remainingMs = deadlineMs - clock.elapsedRealtime();
     }
-
-    if (interruptedException != null) {
-      throw interruptedException;
+    if (wasInterrupted) {
+      // Restore the interrupted status.
+      Thread.currentThread().interrupt();
     }
   }
 
@@ -885,12 +886,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
     if ((shouldPlayWhenReady() && playbackInfo.playbackState == Player.STATE_READY)
         || playbackInfo.playbackState == Player.STATE_BUFFERING) {
-      scheduleNextWork(operationStartTimeMs, ACTIVE_INTERVAL_MS);
+      maybeScheduleWakeup(operationStartTimeMs, ACTIVE_INTERVAL_MS);
     } else if (enabledRendererCount != 0 && playbackInfo.playbackState != Player.STATE_ENDED) {
       scheduleNextWork(operationStartTimeMs, IDLE_INTERVAL_MS);
     } else {
       handler.removeMessages(MSG_DO_SOME_WORK);
     }
+    requestForRendererSleep = false; // A sleep request is only valid for the current doSomeWork.
 
     TraceUtil.endSection();
   }
@@ -898,6 +900,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
   private void scheduleNextWork(long thisOperationStartTimeMs, long intervalMs) {
     handler.removeMessages(MSG_DO_SOME_WORK);
     handler.sendEmptyMessageAtTime(MSG_DO_SOME_WORK, thisOperationStartTimeMs + intervalMs);
+  }
+
+  private void maybeScheduleWakeup(long operationStartTimeMs, long intervalMs) {
+    if (offloadSchedulingEnabled && requestForRendererSleep) {
+      return;
+    }
+
+    scheduleNextWork(operationStartTimeMs, intervalMs);
   }
 
   private void seekToInternal(SeekPosition seekPosition) throws ExoPlaybackException {
@@ -2068,6 +2078,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
         joining,
         mayRenderStartOfStream,
         periodHolder.getRendererOffset());
+
+    renderer.handleMessage(
+        Renderer.MSG_SET_WAKEUP_LISTENER,
+        new Renderer.WakeupListener() {
+          @Override
+          public void onSleep(long wakeupDeadlineMs) {
+            // Do not sleep if the expected sleep time is not long enough to save significant power.
+            if (wakeupDeadlineMs >= MIN_RENDERER_SLEEP_DURATION_MS) {
+              requestForRendererSleep = true;
+            }
+          }
+
+          @Override
+          public void onWakeup() {
+            handler.sendEmptyMessage(MSG_DO_SOME_WORK);
+          }
+        });
+
     mediaClock.onRendererEnabled(renderer);
     // Start the renderer if playing.
     if (playing) {

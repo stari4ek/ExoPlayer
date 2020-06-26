@@ -54,6 +54,7 @@ import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.ParserException;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.common.base.Ascii;
+import com.google.common.base.Charsets;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
@@ -63,7 +64,6 @@ import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
@@ -396,18 +396,45 @@ public final class Util {
   /**
    * Creates a {@link Handler} on the current {@link Looper} thread.
    *
-   * <p>If the current thread doesn't have a {@link Looper}, the application's main thread {@link
-   * Looper} is used.
+   * @throws IllegalStateException If the current thread doesn't have a {@link Looper}.
    */
-  public static Handler createHandler() {
-    return createHandler(/* callback= */ null);
+  public static Handler createHandlerForCurrentLooper() {
+    return createHandlerForCurrentLooper(/* callback= */ null);
   }
 
   /**
    * Creates a {@link Handler} with the specified {@link Handler.Callback} on the current {@link
-   * Looper} thread. The method accepts partially initialized objects as callback under the
-   * assumption that the Handler won't be used to send messages until the callback is fully
-   * initialized.
+   * Looper} thread.
+   *
+   * <p>The method accepts partially initialized objects as callback under the assumption that the
+   * Handler won't be used to send messages until the callback is fully initialized.
+   *
+   * @param callback A {@link Handler.Callback}. May be a partially initialized class, or null if no
+   *     callback is required.
+   * @return A {@link Handler} with the specified callback on the current {@link Looper} thread.
+   * @throws IllegalStateException If the current thread doesn't have a {@link Looper}.
+   */
+  public static Handler createHandlerForCurrentLooper(
+      @Nullable Handler.@UnknownInitialization Callback callback) {
+    return createHandler(Assertions.checkStateNotNull(Looper.myLooper()), callback);
+  }
+
+  /**
+   * Creates a {@link Handler} on the current {@link Looper} thread.
+   *
+   * <p>If the current thread doesn't have a {@link Looper}, the application's main thread {@link
+   * Looper} is used.
+   */
+  public static Handler createHandlerForCurrentOrMainLooper() {
+    return createHandlerForCurrentOrMainLooper(/* callback= */ null);
+  }
+
+  /**
+   * Creates a {@link Handler} with the specified {@link Handler.Callback} on the current {@link
+   * Looper} thread.
+   *
+   * <p>The method accepts partially initialized objects as callback under the assumption that the
+   * Handler won't be used to send messages until the callback is fully initialized.
    *
    * <p>If the current thread doesn't have a {@link Looper}, the application's main thread {@link
    * Looper} is used.
@@ -416,15 +443,17 @@ public final class Util {
    *     callback is required.
    * @return A {@link Handler} with the specified callback on the current {@link Looper} thread.
    */
-  public static Handler createHandler(@Nullable Handler.@UnknownInitialization Callback callback) {
-    return createHandler(getLooper(), callback);
+  public static Handler createHandlerForCurrentOrMainLooper(
+      @Nullable Handler.@UnknownInitialization Callback callback) {
+    return createHandler(getCurrentOrMainLooper(), callback);
   }
 
   /**
    * Creates a {@link Handler} with the specified {@link Handler.Callback} on the specified {@link
-   * Looper} thread. The method accepts partially initialized objects as callback under the
-   * assumption that the Handler won't be used to send messages until the callback is fully
-   * initialized.
+   * Looper} thread.
+   *
+   * <p>The method accepts partially initialized objects as callback under the assumption that the
+   * Handler won't be used to send messages until the callback is fully initialized.
    *
    * @param looper A {@link Looper} to run the callback on.
    * @param callback A {@link Handler.Callback}. May be a partially initialized class, or null if no
@@ -441,8 +470,8 @@ public final class Util {
    * Returns the {@link Looper} associated with the current thread, or the {@link Looper} of the
    * application's main thread if the current thread doesn't have a {@link Looper}.
    */
-  public static Looper getLooper() {
-    Looper myLooper = Looper.myLooper();
+  public static Looper getCurrentOrMainLooper() {
+    @Nullable Looper myLooper = Looper.myLooper();
     return myLooper != null ? myLooper : Looper.getMainLooper();
   }
 
@@ -566,7 +595,7 @@ public final class Util {
    * @return The string.
    */
   public static String fromUtf8Bytes(byte[] bytes) {
-    return new String(bytes, Charset.forName(C.UTF8_NAME));
+    return new String(bytes, Charsets.UTF_8);
   }
 
   /**
@@ -578,7 +607,7 @@ public final class Util {
    * @return The string.
    */
   public static String fromUtf8Bytes(byte[] bytes, int offset, int length) {
-    return new String(bytes, offset, length, Charset.forName(C.UTF8_NAME));
+    return new String(bytes, offset, length, Charsets.UTF_8);
   }
 
   /**
@@ -588,7 +617,7 @@ public final class Util {
    * @return The code points encoding using UTF-8.
    */
   public static byte[] getUtf8Bytes(String value) {
-    return value.getBytes(Charset.forName(C.UTF8_NAME));
+    return value.getBytes(Charsets.UTF_8);
   }
 
   /**
@@ -1676,6 +1705,7 @@ public final class Util {
    * @param mimeType If not null, used to infer the type.
    * @return The content type.
    */
+  @C.ContentType
   public static int inferContentTypeWithMimeType(Uri uri, @Nullable String mimeType) {
     if (mimeType == null) {
       return Util.inferContentType(uri);

@@ -15,6 +15,9 @@
  */
 package com.google.android.exoplayer2.source;
 
+import static com.google.android.exoplayer2.util.Assertions.checkNotNull;
+
+import android.net.Uri;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.MediaItem;
@@ -27,6 +30,11 @@ import com.google.android.exoplayer2.util.Assertions;
 public final class SinglePeriodTimeline extends Timeline {
 
   private static final Object UID = new Object();
+  private static final MediaItem MEDIA_ITEM =
+      new MediaItem.Builder()
+          .setMediaId("com.google.android.exoplayer2.source.SinglePeriodTimeline")
+          .setUri(Uri.EMPTY)
+          .build();
 
   private final long presentationStartTimeMs;
   private final long windowStartTimeMs;
@@ -38,7 +46,6 @@ public final class SinglePeriodTimeline extends Timeline {
   private final boolean isSeekable;
   private final boolean isDynamic;
   private final boolean isLive;
-  @Nullable private final Object tag;
   @Nullable private final Object manifest;
   @Nullable private final MediaItem mediaItem;
 
@@ -84,7 +91,7 @@ public final class SinglePeriodTimeline extends Timeline {
       boolean isDynamic,
       boolean isLive,
       @Nullable Object manifest,
-      @Nullable MediaItem mediaItem) {
+      MediaItem mediaItem) {
     this(
         durationUs,
         durationUs,
@@ -154,7 +161,7 @@ public final class SinglePeriodTimeline extends Timeline {
       boolean isDynamic,
       boolean isLive,
       @Nullable Object manifest,
-      @Nullable MediaItem mediaItem) {
+      MediaItem mediaItem) {
     this(
         /* presentationStartTimeMs= */ C.TIME_UNSET,
         /* windowStartTimeMs= */ C.TIME_UNSET,
@@ -200,8 +207,7 @@ public final class SinglePeriodTimeline extends Timeline {
         isDynamic,
         isLive,
         manifest,
-        /* mediaItem= */ null,
-        tag);
+        MEDIA_ITEM.buildUpon().setTag(tag).build());
   }
 
   /**
@@ -239,37 +245,7 @@ public final class SinglePeriodTimeline extends Timeline {
       boolean isDynamic,
       boolean isLive,
       @Nullable Object manifest,
-      @Nullable MediaItem mediaItem) {
-    this(
-        presentationStartTimeMs,
-        windowStartTimeMs,
-        elapsedRealtimeEpochOffsetMs,
-        periodDurationUs,
-        windowDurationUs,
-        windowPositionInPeriodUs,
-        windowDefaultStartPositionUs,
-        isSeekable,
-        isDynamic,
-        isLive,
-        manifest,
-        mediaItem,
-        /* tag= */ null);
-  }
-
-  private SinglePeriodTimeline(
-      long presentationStartTimeMs,
-      long windowStartTimeMs,
-      long elapsedRealtimeEpochOffsetMs,
-      long periodDurationUs,
-      long windowDurationUs,
-      long windowPositionInPeriodUs,
-      long windowDefaultStartPositionUs,
-      boolean isSeekable,
-      boolean isDynamic,
-      boolean isLive,
-      @Nullable Object manifest,
-      @Nullable MediaItem mediaItem,
-      @Nullable Object tag) {
+      MediaItem mediaItem) {
     this.presentationStartTimeMs = presentationStartTimeMs;
     this.windowStartTimeMs = windowStartTimeMs;
     this.elapsedRealtimeEpochOffsetMs = elapsedRealtimeEpochOffsetMs;
@@ -281,8 +257,7 @@ public final class SinglePeriodTimeline extends Timeline {
     this.isDynamic = isDynamic;
     this.isLive = isLive;
     this.manifest = manifest;
-    this.mediaItem = mediaItem;
-    this.tag = tag;
+    this.mediaItem = checkNotNull(mediaItem);
   }
 
   @Override
@@ -307,24 +282,6 @@ public final class SinglePeriodTimeline extends Timeline {
           windowDefaultStartPositionUs = C.TIME_UNSET;
         }
       }
-    }
-    if (tag != null) {
-      // Support deprecated constructors.
-      return window.set(
-          Window.SINGLE_WINDOW_UID,
-          tag,
-          manifest,
-          presentationStartTimeMs,
-          windowStartTimeMs,
-          elapsedRealtimeEpochOffsetMs,
-          isSeekable,
-          isDynamic,
-          isLive,
-          windowDefaultStartPositionUs,
-          windowDurationUs,
-          /* firstPeriodIndex= */ 0,
-          /* lastPeriodIndex= */ 0,
-          windowPositionInPeriodUs);
     }
     return window.set(
         Window.SINGLE_WINDOW_UID,
@@ -351,7 +308,7 @@ public final class SinglePeriodTimeline extends Timeline {
   @Override
   public Period getPeriod(int periodIndex, Period period, boolean setIds) {
     Assertions.checkIndex(periodIndex, 0, 1);
-    Object uid = setIds ? UID : null;
+    @Nullable Object uid = setIds ? UID : null;
     return period.set(/* id= */ null, uid, 0, periodDurationUs, -windowPositionInPeriodUs);
   }
 

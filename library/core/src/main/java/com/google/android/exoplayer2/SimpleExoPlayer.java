@@ -199,7 +199,7 @@ public class SimpleExoPlayer extends BasePlayer
       this.loadControl = loadControl;
       this.bandwidthMeter = bandwidthMeter;
       this.analyticsCollector = analyticsCollector;
-      looper = Util.getLooper();
+      looper = Util.getCurrentOrMainLooper();
       audioAttributes = AudioAttributes.DEFAULT;
       wakeMode = C.WAKE_MODE_NONE;
       videoScalingMode = Renderer.VIDEO_SCALING_MODE_DEFAULT;
@@ -631,6 +631,11 @@ public class SimpleExoPlayer extends BasePlayer
     sendRendererMessage(C.TRACK_TYPE_VIDEO, Renderer.MSG_SET_SCALING_MODE, videoScalingMode);
     sendRendererMessage(
         C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_SKIP_SILENCE_ENABLED, skipSilenceEnabled);
+  }
+
+  @Override
+  public void experimental_enableOffloadScheduling(boolean enableOffloadScheduling) {
+    player.experimental_enableOffloadScheduling(enableOffloadScheduling);
   }
 
   @Override

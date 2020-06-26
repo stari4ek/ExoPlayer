@@ -21,9 +21,7 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.drm.DrmInitData;
 import com.google.android.exoplayer2.extractor.DefaultExtractorInput;
-import com.google.android.exoplayer2.extractor.Extractor;
 import com.google.android.exoplayer2.extractor.ExtractorInput;
-import com.google.android.exoplayer2.extractor.PositionHolder;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.id3.Id3Decoder;
 import com.google.android.exoplayer2.metadata.id3.PrivFrame;
@@ -56,12 +54,13 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   /**
    * Creates a new instance.
    *
-   * @param extractorFactory A {@link HlsExtractorFactory} from which the HLS media chunk extractor
-   *     is obtained.
+   * @param extractorFactory A {@link HlsExtractorFactory} from which the {@link
+   *     HlsMediaChunkExtractor} is obtained.
    * @param dataSource The source from which the data should be loaded.
    * @param format The chunk format.
    * @param startOfPlaylistInPeriodUs The position of the playlist in the period in microseconds.
    * @param mediaPlaylist The media playlist from which this chunk was obtained.
+   * @param segmentIndexInPlaylist The index of the segment in the media playlist.
    * @param playlistUrl The url of the playlist from which this chunk was obtained.
    * @param muxedCaptionFormats List of muxed caption {@link Format}s. Null if no closed caption
    *     information is available in the master playlist.
@@ -129,23 +128,27 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
     int discontinuitySequenceNumber =
         mediaPlaylist.discontinuitySequence + mediaSegment.relativeDiscontinuitySequence;
 
-    @Nullable Extractor previousExtractor = null;
+    @Nullable HlsMediaChunkExtractor previousExtractor = null;
     Id3Decoder id3Decoder;
     ParsableByteArray scratchId3Data;
     boolean shouldSpliceIn;
     ImmutableMap<SampleQueue, Integer> sampleQueueDiscardFromIndices = ImmutableMap.of();
     if (previousChunk != null) {
+      boolean isFollowingChunk =
+          playlistUrl.equals(previousChunk.playlistUrl) && previousChunk.loadCompleted;
       id3Decoder = previousChunk.id3Decoder;
       scratchId3Data = previousChunk.scratchId3Data;
-      shouldSpliceIn =
-          !playlistUrl.equals(previousChunk.playlistUrl) || !previousChunk.loadCompleted;
+      boolean canContinueWithoutSplice =
+          isFollowingChunk
+              || (mediaPlaylist.hasIndependentSegments
+                  && segmentStartTimeInPeriodUs >= previousChunk.endTimeUs);
+      shouldSpliceIn = !canContinueWithoutSplice;
       if (shouldSpliceIn) {
         sampleQueueDiscardFromIndices = previousChunk.sampleQueueDiscardFromIndices;
       }
       previousExtractor =
-          previousChunk.isExtractorReusable
+          isFollowingChunk
                   && previousChunk.discontinuitySequenceNumber == discontinuitySequenceNumber
-                  && !shouldSpliceIn
               ? previousChunk.extractor
               : null;
     } else {
@@ -184,7 +187,6 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
   public static final String PRIV_TIMESTAMP_FRAME_OWNER =
       "com.apple.streaming.transportStreamTimestamp";
-  private static final PositionHolder DUMMY_POSITION_HOLDER = new PositionHolder();
 
   private static final AtomicInteger uidSource = new AtomicInteger();
 
@@ -203,7 +205,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
 
   @Nullable private final DataSource initDataSource;
   @Nullable private final DataSpec initDataSpec;
-  @Nullable private final Extractor previousExtractor;
+  @Nullable private final HlsMediaChunkExtractor previousExtractor;
 
   private final boolean isMasterTimestampSource;
   private final boolean hasGapTag;
@@ -217,8 +219,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   private final boolean initSegmentEncrypted;
   private final boolean shouldSpliceIn;
 
-  private @MonotonicNonNull Extractor extractor;
-  private boolean isExtractorReusable;
+  private @MonotonicNonNull HlsMediaChunkExtractor extractor;
   private @MonotonicNonNull HlsSampleStreamWrapper output;
   // nextLoadPosition refers to the init segment if initDataLoadRequired is true.
   // Otherwise, nextLoadPosition refers to the media segment.
@@ -249,7 +250,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       boolean isMasterTimestampSource,
       TimestampAdjuster timestampAdjuster,
       @Nullable DrmInitData drmInitData,
-      @Nullable Extractor previousExtractor,
+      @Nullable HlsMediaChunkExtractor previousExtractor,
       Id3Decoder id3Decoder,
       ParsableByteArray scratchId3Data,
       boolean shouldSpliceIn,
@@ -335,9 +336,8 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
   public void load() throws IOException {
     // output == null means init() hasn't been called.
     Assertions.checkNotNull(output);
-    if (extractor == null && previousExtractor != null) {
+    if (extractor == null && previousExtractor != null && previousExtractor.isReusable()) {
       extractor = previousExtractor;
-      isExtractorReusable = true;
       initDataLoadRequired = false;
     }
     maybeLoadInitData();
@@ -345,7 +345,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       if (!hasGapTag) {
         loadMedia();
       }
-      loadCompleted = true;
+      loadCompleted = !loadCanceled;
     }
   }
 
@@ -406,10 +406,7 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
         input.skipFully(nextLoadPosition);
       }
       try {
-        int result = Extractor.RESULT_CONTINUE;
-        while (result == Extractor.RESULT_CONTINUE && !loadCanceled) {
-          result = extractor.read(input, DUMMY_POSITION_HOLDER);
-        }
+        while (!loadCanceled && extractor.read(input)) {}
       } finally {
         nextLoadPosition = (int) (input.getPosition() - dataSpec.position);
       }
@@ -430,18 +427,17 @@ import org.checkerframework.checker.nullness.qual.RequiresNonNull;
       long id3Timestamp = peekId3PrivTimestamp(extractorInput);
       extractorInput.resetPeekPosition();
 
-      HlsExtractorFactory.Result result =
-          extractorFactory.createExtractor(
-              previousExtractor,
-              dataSpec.uri,
-              trackFormat,
-              muxedCaptionFormats,
-              timestampAdjuster,
-              dataSource.getResponseHeaders(),
-              extractorInput);
-      extractor = result.extractor;
-      isExtractorReusable = result.isReusable;
-      if (result.isPackedAudioExtractor) {
+      extractor =
+          previousExtractor != null
+              ? previousExtractor.recreate()
+              : extractorFactory.createExtractor(
+                  dataSpec.uri,
+                  trackFormat,
+                  muxedCaptionFormats,
+                  timestampAdjuster,
+                  dataSource.getResponseHeaders(),
+                  extractorInput);
+      if (extractor.isPackedAudioExtractor()) {
         output.setSampleOffsetUs(
             id3Timestamp != C.TIME_UNSET
                 ? timestampAdjuster.adjustTsTimestamp(id3Timestamp)

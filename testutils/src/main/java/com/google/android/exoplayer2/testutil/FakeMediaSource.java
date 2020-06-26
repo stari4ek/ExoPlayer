@@ -15,14 +15,15 @@
  */
 package com.google.android.exoplayer2.testutil;
 
+import static com.google.android.exoplayer2.util.Util.castNonNull;
 import static com.google.common.truth.Truth.assertThat;
 
-import android.net.Uri;
 import android.os.Handler;
 import android.os.SystemClock;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Format;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.Timeline.Period;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
@@ -40,9 +41,9 @@ import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Util;
+import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
@@ -68,7 +69,12 @@ public class FakeMediaSource extends BaseMediaSource {
     }
   }
 
-  private static final DataSpec FAKE_DATA_SPEC = new DataSpec(Uri.parse("http://manifest.uri"));
+  /** The media item used by the fake media source. */
+  public static final MediaItem FAKE_MEDIA_ITEM =
+      new MediaItem.Builder().setMediaId("FakeMediaSource").setUri("http://manifest.uri").build();
+
+  private static final DataSpec FAKE_DATA_SPEC =
+      new DataSpec(castNonNull(FAKE_MEDIA_ITEM.playbackProperties).uri);
   private static final int MANIFEST_LOAD_BYTES = 100;
 
   private final TrackGroupArray trackGroupArray;
@@ -128,6 +134,11 @@ public class FakeMediaSource extends BaseMediaSource {
     return timeline;
   }
 
+  /**
+   * @deprecated Use {@link #getMediaItem()} and {@link MediaItem.PlaybackProperties#tag} instead.
+   */
+  @SuppressWarnings("deprecation")
+  @Deprecated
   @Override
   @Nullable
   public Object getTag() {
@@ -135,6 +146,14 @@ public class FakeMediaSource extends BaseMediaSource {
       return null;
     }
     return timeline.getWindow(0, new Timeline.Window()).tag;
+  }
+
+  @Override
+  public MediaItem getMediaItem() {
+    if (timeline == null || timeline.isEmpty()) {
+      return FAKE_MEDIA_ITEM;
+    }
+    return timeline.getWindow(0, new Timeline.Window()).mediaItem;
   }
 
   @Override
@@ -157,9 +176,9 @@ public class FakeMediaSource extends BaseMediaSource {
     drmSessionManager.prepare();
     preparedSource = true;
     releasedSource = false;
-    sourceInfoRefreshHandler = Util.createHandler();
+    sourceInfoRefreshHandler = Util.createHandlerForCurrentLooper();
     if (timeline != null) {
-      finishSourcePreparation();
+      finishSourcePreparation(/* sendManifestLoadEvents= */ true);
     }
   }
 
@@ -172,7 +191,7 @@ public class FakeMediaSource extends BaseMediaSource {
   public MediaPeriod createPeriod(MediaPeriodId id, Allocator allocator, long startPositionUs) {
     assertThat(preparedSource).isTrue();
     assertThat(releasedSource).isFalse();
-    int periodIndex = Util.castNonNull(timeline).getIndexOfPeriod(id.periodUid);
+    int periodIndex = castNonNull(timeline).getIndexOfPeriod(id.periodUid);
     Assertions.checkArgument(periodIndex != C.INDEX_UNSET);
     Period period = timeline.getPeriod(periodIndex, new Period());
     EventDispatcher eventDispatcher =
@@ -202,22 +221,36 @@ public class FakeMediaSource extends BaseMediaSource {
     drmSessionManager.release();
     releasedSource = true;
     preparedSource = false;
-    Util.castNonNull(sourceInfoRefreshHandler).removeCallbacksAndMessages(null);
+    castNonNull(sourceInfoRefreshHandler).removeCallbacksAndMessages(null);
     sourceInfoRefreshHandler = null;
   }
 
   /**
    * Sets a new timeline. If the source is already prepared, this triggers a source info refresh
    * message being sent to the listener.
+   *
+   * @param newTimeline The new {@link Timeline}.
    */
-  public synchronized void setNewSourceInfo(final Timeline newTimeline) {
+  public void setNewSourceInfo(Timeline newTimeline) {
+    setNewSourceInfo(newTimeline, /* sendManifestLoadEvents= */ true);
+  }
+
+  /**
+   * Sets a new timeline. If the source is already prepared, this triggers a source info refresh
+   * message being sent to the listener.
+   *
+   * @param newTimeline The new {@link Timeline}.
+   * @param sendManifestLoadEvents Whether to treat this as a manifest refresh and send manifest
+   *     load events to listeners.
+   */
+  public synchronized void setNewSourceInfo(Timeline newTimeline, boolean sendManifestLoadEvents) {
     if (sourceInfoRefreshHandler != null) {
       sourceInfoRefreshHandler.post(
           () -> {
             assertThat(releasedSource).isFalse();
             assertThat(preparedSource).isTrue();
             timeline = newTimeline;
-            finishSourcePreparation();
+            finishSourcePreparation(sendManifestLoadEvents);
           });
     } else {
       timeline = newTimeline;
@@ -270,9 +303,9 @@ public class FakeMediaSource extends BaseMediaSource {
         trackGroupArray, drmSessionManager, eventDispatcher, /* deferOnPrepared= */ false);
   }
 
-  private void finishSourcePreparation() {
+  private void finishSourcePreparation(boolean sendManifestLoadEvents) {
     refreshSourceInfo(Assertions.checkStateNotNull(timeline));
-    if (!timeline.isEmpty()) {
+    if (!timeline.isEmpty() && sendManifestLoadEvents) {
       MediaLoadData mediaLoadData =
           new MediaLoadData(
               C.DATA_TYPE_MANIFEST,
@@ -290,7 +323,7 @@ public class FakeMediaSource extends BaseMediaSource {
               loadTaskId,
               FAKE_DATA_SPEC,
               FAKE_DATA_SPEC.uri,
-              /* responseHeaders= */ Collections.emptyMap(),
+              /* responseHeaders= */ ImmutableMap.of(),
               elapsedRealTimeMs,
               /* loadDurationMs= */ 0,
               /* bytesLoaded= */ 0),
@@ -300,7 +333,7 @@ public class FakeMediaSource extends BaseMediaSource {
               loadTaskId,
               FAKE_DATA_SPEC,
               FAKE_DATA_SPEC.uri,
-              /* responseHeaders= */ Collections.emptyMap(),
+              /* responseHeaders= */ ImmutableMap.of(),
               elapsedRealTimeMs,
               /* loadDurationMs= */ 0,
               /* bytesLoaded= */ MANIFEST_LOAD_BYTES),

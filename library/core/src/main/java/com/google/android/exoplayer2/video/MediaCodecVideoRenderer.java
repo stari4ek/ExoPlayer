@@ -42,6 +42,7 @@ import com.google.android.exoplayer2.PlayerMessage.Target;
 import com.google.android.exoplayer2.RendererCapabilities;
 import com.google.android.exoplayer2.decoder.DecoderInputBuffer;
 import com.google.android.exoplayer2.drm.DrmInitData;
+import com.google.android.exoplayer2.mediacodec.MediaCodecAdapter;
 import com.google.android.exoplayer2.mediacodec.MediaCodecDecoderException;
 import com.google.android.exoplayer2.mediacodec.MediaCodecInfo;
 import com.google.android.exoplayer2.mediacodec.MediaCodecRenderer;
@@ -552,7 +553,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   @Override
   protected void configureCodec(
       MediaCodecInfo codecInfo,
-      MediaCodec codec,
+      MediaCodecAdapter codecAdapter,
       Format format,
       @Nullable MediaCrypto crypto,
       float codecOperatingRate) {
@@ -575,9 +576,9 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       }
       surface = dummySurface;
     }
-    codec.configure(mediaFormat, surface, crypto, 0);
+    codecAdapter.configure(mediaFormat, surface, crypto, 0);
     if (Util.SDK_INT >= 23 && tunneling) {
-      tunnelingOnFrameRenderedListener = new OnFrameRenderedListenerV23(codec);
+      tunnelingOnFrameRenderedListener = new OnFrameRenderedListenerV23(codecAdapter.getCodec());
     }
   }
 
@@ -642,11 +643,14 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   /**
    * Called immediately before an input buffer is queued into the codec.
    *
+   * <p>In tunneling mode for pre Marshmallow, the buffer is treated as if immediately output.
+   *
    * @param buffer The buffer to be queued.
+   * @throws ExoPlaybackException Thrown if an error occurs handling the input buffer.
    */
   @CallSuper
   @Override
-  protected void onQueueInputBuffer(DecoderInputBuffer buffer) {
+  protected void onQueueInputBuffer(DecoderInputBuffer buffer) throws ExoPlaybackException {
     // In tunneling mode the device may do frame rate conversion, so in general we can't keep track
     // of the number of buffers in the codec.
     if (!tunneling) {
@@ -890,7 +894,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   /** Called when a buffer was processed in tunneling mode. */
-  protected void onProcessedTunneledBuffer(long presentationTimeUs) {
+  protected void onProcessedTunneledBuffer(long presentationTimeUs) throws ExoPlaybackException {
     updateOutputFormatForTime(presentationTimeUs);
     maybeNotifyVideoSizeChanged();
     decoderCounters.renderedOutputBufferCount++;
@@ -1244,7 +1248,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
   }
 
   @RequiresApi(23)
-  private static void setOutputSurfaceV23(MediaCodec codec, Surface surface) {
+  protected void setOutputSurfaceV23(MediaCodec codec, Surface surface) {
     codec.setOutputSurface(surface);
   }
 
@@ -1762,7 +1766,7 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
     private final Handler handler;
 
     public OnFrameRenderedListenerV23(MediaCodec codec) {
-      handler = Util.createHandler(/* callback= */ this);
+      handler = Util.createHandlerForCurrentLooper(/* callback= */ this);
       codec.setOnFrameRenderedListener(/* listener= */ this, handler);
     }
 
@@ -1807,7 +1811,11 @@ public class MediaCodecVideoRenderer extends MediaCodecRenderer {
       if (presentationTimeUs == TUNNELING_EOS_PRESENTATION_TIME_US) {
         onProcessedTunneledEndOfStream();
       } else {
-        onProcessedTunneledBuffer(presentationTimeUs);
+        try {
+          onProcessedTunneledBuffer(presentationTimeUs);
+        } catch (ExoPlaybackException e) {
+          setPendingPlaybackException(e);
+        }
       }
     }
   }
