@@ -466,6 +466,11 @@ public class MediaCodecAudioRenderer extends MediaCodecRenderer implements Media
       mimeType = MimeTypes.AUDIO_E_AC3;
     }
 
+    // TVirl
+    if (mimeType == null) {
+      return C.ENCODING_INVALID;
+    }
+    // !TVirl
     @C.Encoding int encoding = MimeTypes.getEncoding(mimeType, format.codecs);
     if (audioSink.supportsOutput(format, encoding)) {
       return encoding;
