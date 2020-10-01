@@ -75,3 +75,6 @@ extensions/cronet/jniLibs/*
 !extensions/cronet/jniLibs/README.md
 extensions/cronet/libs/*
 !extensions/cronet/libs/README.md
+
+# TVirl: build output produced cmake/gradle
+extensions/ffmpeg/.cxx
