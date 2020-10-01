@@ -35,7 +35,7 @@ public final class FfmpegLibrary {
   private static final String TAG = "FfmpegLibrary";
 
   private static final LibraryLoader LOADER =
-      new LibraryLoader("avutil", "swresample", "avcodec", "ffmpeg");
+      new LibraryLoader("avutil", "swresample", "avcodec", "ffmpeg_jni");
 
   private static @MonotonicNonNull String version;
   private static int inputBufferPaddingSize = C.LENGTH_UNSET;
@@ -45,7 +45,7 @@ public final class FfmpegLibrary {
   /**
    * Override the names of the FFmpeg native libraries. If an application wishes to call this
    * method, it must do so before calling any other method defined by this class, and before
-   * instantiating a {@link FfmpegAudioRenderer} or {@link FfmpegVideoRenderer} instance.
+   * instantiating a {@link FfmpegAudioRenderer} instance.
    *
    * @param libraries The names of the FFmpeg native libraries.
    */

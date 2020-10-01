@@ -41,9 +41,9 @@ import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
 import com.google.android.exoplayer2.util.ConditionVariable;
-import com.google.android.exoplayer2.util.Supplier;
 import com.google.android.exoplayer2.util.SystemClock;
 import com.google.android.exoplayer2.util.Util;
+import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.primitives.Bytes;
 import java.io.File;
@@ -198,17 +198,17 @@ public class TestUtil {
     return ImmutableList.copyOf(Bytes.asList(createByteArray(bytes)));
   }
 
-  /** Writes one byte long dummy test data to the file and returns it. */
+  /** Writes one byte long test data to the file and returns it. */
   public static File createTestFile(File directory, String name) throws IOException {
     return createTestFile(directory, name, /* length= */ 1);
   }
 
-  /** Writes dummy test data with the specified length to the file and returns it. */
+  /** Writes test data with the specified length to the file and returns it. */
   public static File createTestFile(File directory, String name, long length) throws IOException {
     return createTestFile(new File(directory, name), length);
   }
 
-  /** Writes dummy test data with the specified length to the file and returns it. */
+  /** Writes test data with the specified length to the file and returns it. */
   public static File createTestFile(File file, long length) throws IOException {
     FileOutputStream output = new FileOutputStream(file);
     for (long i = 0; i < length; i++) {

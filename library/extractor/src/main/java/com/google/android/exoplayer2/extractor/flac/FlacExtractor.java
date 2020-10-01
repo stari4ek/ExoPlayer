@@ -16,6 +16,8 @@
 package com.google.android.exoplayer2.extractor.flac;
 
 import static com.google.android.exoplayer2.util.Util.castNonNull;
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
@@ -187,7 +189,7 @@ public final class FlacExtractor implements Extractor {
     }
     currentFrameFirstSampleNumber = timeUs == 0 ? 0 : SAMPLE_NUMBER_UNKNOWN;
     currentFrameBytesWritten = 0;
-    buffer.reset();
+    buffer.reset(/* limit= */ 0);
   }
 
   @Override
@@ -224,7 +226,7 @@ public final class FlacExtractor implements Extractor {
     }
 
     Assertions.checkNotNull(flacStreamMetadata);
-    minFrameSize = Math.max(flacStreamMetadata.minFrameSize, FlacConstants.MIN_FRAME_HEADER_SIZE);
+    minFrameSize = max(flacStreamMetadata.minFrameSize, FlacConstants.MIN_FRAME_HEADER_SIZE);
     castNonNull(trackOutput)
         .format(flacStreamMetadata.getFormat(streamMarkerAndInfoBlock, id3Metadata));
 
@@ -265,7 +267,9 @@ public final class FlacExtractor implements Extractor {
     if (currentLimit < BUFFER_LENGTH) {
       int bytesRead =
           input.read(
-              buffer.data, /* offset= */ currentLimit, /* length= */ BUFFER_LENGTH - currentLimit);
+              buffer.getData(),
+              /* offset= */ currentLimit,
+              /* length= */ BUFFER_LENGTH - currentLimit);
       foundEndOfInput = bytesRead == C.RESULT_END_OF_INPUT;
       if (!foundEndOfInput) {
         buffer.setLimit(currentLimit + bytesRead);
@@ -280,7 +284,7 @@ public final class FlacExtractor implements Extractor {
 
     // Skip frame search on the bytes within the minimum frame size.
     if (currentFrameBytesWritten < minFrameSize) {
-      buffer.skipBytes(Math.min(minFrameSize - currentFrameBytesWritten, buffer.bytesLeft()));
+      buffer.skipBytes(min(minFrameSize - currentFrameBytesWritten, buffer.bytesLeft()));
     }
 
     long nextFrameFirstSampleNumber = findFrame(buffer, foundEndOfInput);
@@ -300,7 +304,11 @@ public final class FlacExtractor implements Extractor {
       // The next frame header may not fit in the rest of the buffer, so put the trailing bytes at
       // the start of the buffer, and reset the position and limit.
       System.arraycopy(
-          buffer.data, buffer.getPosition(), buffer.data, /* destPos= */ 0, buffer.bytesLeft());
+          buffer.getData(),
+          buffer.getPosition(),
+          buffer.getData(),
+          /* destPos= */ 0,
+          buffer.bytesLeft());
       buffer.reset(buffer.bytesLeft());
     }
 

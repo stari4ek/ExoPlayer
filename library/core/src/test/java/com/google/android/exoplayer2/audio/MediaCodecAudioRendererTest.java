@@ -15,6 +15,9 @@
  */
 package com.google.android.exoplayer2.audio;
 
+import static com.google.android.exoplayer2.testutil.FakeSampleStream.FakeSampleStreamItem.END_OF_STREAM_ITEM;
+import static com.google.android.exoplayer2.testutil.FakeSampleStream.FakeSampleStreamItem.format;
+import static com.google.android.exoplayer2.testutil.FakeSampleStream.FakeSampleStreamItem.oneByteSample;
 import static org.junit.Assert.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -22,21 +25,23 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.media.MediaFormat;
 import android.os.SystemClock;
+import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.RendererConfiguration;
+import com.google.android.exoplayer2.drm.DrmSessionEventListener;
 import com.google.android.exoplayer2.drm.DrmSessionManager;
 import com.google.android.exoplayer2.mediacodec.MediaCodecInfo;
 import com.google.android.exoplayer2.mediacodec.MediaCodecSelector;
 import com.google.android.exoplayer2.testutil.FakeSampleStream;
-import com.google.android.exoplayer2.testutil.FakeSampleStream.FakeSampleStreamItem;
 import com.google.android.exoplayer2.util.MimeTypes;
+import com.google.common.collect.ImmutableList;
 import java.util.Collections;
-import java.util.List;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -44,8 +49,10 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.annotation.Config;
 
 /** Unit tests for {@link MediaCodecAudioRenderer} */
+@Config(sdk = 29)
 @RunWith(AndroidJUnit4.class)
 public class MediaCodecAudioRendererTest {
   @Rule public final MockitoRule mockito = MockitoJUnit.rule();
@@ -74,11 +81,8 @@ public class MediaCodecAudioRendererTest {
     when(audioSink.handleBuffer(any(), anyLong(), anyInt())).thenReturn(true);
 
     mediaCodecSelector =
-        new MediaCodecSelector() {
-          @Override
-          public List<MediaCodecInfo> getDecoderInfos(
-              String mimeType, boolean requiresSecureDecoder, boolean requiresTunnelingDecoder) {
-            return Collections.singletonList(
+        (mimeType, requiresSecureDecoder, requiresTunnelingDecoder) ->
+            Collections.singletonList(
                 MediaCodecInfo.newInstance(
                     /* name= */ "name",
                     /* mimeType= */ mimeType,
@@ -89,8 +93,6 @@ public class MediaCodecAudioRendererTest {
                     /* vendor= */ false,
                     /* forceDisableAdaptive= */ false,
                     /* forceSecure= */ false));
-          }
-        };
 
     mediaCodecAudioRenderer =
         new MediaCodecAudioRenderer(
@@ -108,19 +110,19 @@ public class MediaCodecAudioRendererTest {
 
     FakeSampleStream fakeSampleStream =
         new FakeSampleStream(
-            /* format= */ AUDIO_AAC,
+            /* mediaSourceEventDispatcher= */ null,
             DrmSessionManager.DUMMY,
-            /* eventDispatcher= */ null,
-            /* firstSampleTimeUs= */ 0,
-            /* timeUsIncrement= */ 50,
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(changedFormat),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            FakeSampleStreamItem.END_OF_STREAM_ITEM);
+            new DrmSessionEventListener.EventDispatcher(),
+            /* initialFormat= */ AUDIO_AAC,
+            ImmutableList.of(
+                oneByteSample(/* timeUs= */ 0, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 50, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 100, C.BUFFER_FLAG_KEY_FRAME),
+                format(changedFormat),
+                oneByteSample(/* timeUs= */ 150, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 200, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 250, C.BUFFER_FLAG_KEY_FRAME),
+                END_OF_STREAM_ITEM));
 
     mediaCodecAudioRenderer.enable(
         RendererConfiguration.DEFAULT,
@@ -129,6 +131,7 @@ public class MediaCodecAudioRendererTest {
         /* positionUs= */ 0,
         /* joining= */ false,
         /* mayRenderStartOfStream= */ false,
+        /* startPositionUs= */ 0,
         /* offsetUs */ 0);
 
     mediaCodecAudioRenderer.start();
@@ -144,23 +147,15 @@ public class MediaCodecAudioRendererTest {
 
     verify(audioSink)
         .configure(
-            AUDIO_AAC.pcmEncoding,
-            AUDIO_AAC.channelCount,
-            AUDIO_AAC.sampleRate,
+            getAudioSinkFormat(AUDIO_AAC),
             /* specifiedBufferSize= */ 0,
-            /* outputChannels= */ null,
-            AUDIO_AAC.encoderDelay,
-            AUDIO_AAC.encoderPadding);
+            /* outputChannels= */ null);
 
     verify(audioSink)
         .configure(
-            changedFormat.pcmEncoding,
-            changedFormat.channelCount,
-            changedFormat.sampleRate,
+            getAudioSinkFormat(changedFormat),
             /* specifiedBufferSize= */ 0,
-            /* outputChannels= */ null,
-            changedFormat.encoderDelay,
-            changedFormat.encoderPadding);
+            /* outputChannels= */ null);
   }
 
   @Test
@@ -170,19 +165,19 @@ public class MediaCodecAudioRendererTest {
 
     FakeSampleStream fakeSampleStream =
         new FakeSampleStream(
-            /* format= */ AUDIO_AAC,
+            /* mediaSourceEventDispatcher= */ null,
             DrmSessionManager.DUMMY,
-            /* eventDispatcher= */ null,
-            /* firstSampleTimeUs= */ 0,
-            /* timeUsIncrement= */ 50,
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(changedFormat),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            FakeSampleStreamItem.END_OF_STREAM_ITEM);
+            new DrmSessionEventListener.EventDispatcher(),
+            /* initialFormat= */ AUDIO_AAC,
+            ImmutableList.of(
+                oneByteSample(/* timeUs= */ 0, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 50, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 100, C.BUFFER_FLAG_KEY_FRAME),
+                format(changedFormat),
+                oneByteSample(/* timeUs= */ 150, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 200, C.BUFFER_FLAG_KEY_FRAME),
+                oneByteSample(/* timeUs= */ 250, C.BUFFER_FLAG_KEY_FRAME),
+                END_OF_STREAM_ITEM));
 
     mediaCodecAudioRenderer.enable(
         RendererConfiguration.DEFAULT,
@@ -191,6 +186,7 @@ public class MediaCodecAudioRendererTest {
         /* positionUs= */ 0,
         /* joining= */ false,
         /* mayRenderStartOfStream= */ false,
+        /* startPositionUs= */ 0,
         /* offsetUs */ 0);
 
     mediaCodecAudioRenderer.start();
@@ -206,23 +202,15 @@ public class MediaCodecAudioRendererTest {
 
     verify(audioSink)
         .configure(
-            AUDIO_AAC.pcmEncoding,
-            AUDIO_AAC.channelCount,
-            AUDIO_AAC.sampleRate,
+            getAudioSinkFormat(AUDIO_AAC),
             /* specifiedBufferSize= */ 0,
-            /* outputChannels= */ null,
-            AUDIO_AAC.encoderDelay,
-            AUDIO_AAC.encoderPadding);
+            /* outputChannels= */ null);
 
     verify(audioSink)
         .configure(
-            changedFormat.pcmEncoding,
-            changedFormat.channelCount,
-            changedFormat.sampleRate,
+            getAudioSinkFormat(changedFormat),
             /* specifiedBufferSize= */ 0,
-            /* outputChannels= */ null,
-            changedFormat.encoderDelay,
-            changedFormat.encoderPadding);
+            /* outputChannels= */ null);
   }
 
   @Test
@@ -234,15 +222,16 @@ public class MediaCodecAudioRendererTest {
             /* eventHandler= */ null,
             /* eventListener= */ null) {
           @Override
-          protected void onOutputFormatChanged(Format outputFormat) throws ExoPlaybackException {
-            super.onOutputFormatChanged(outputFormat);
-            if (!outputFormat.equals(AUDIO_AAC)) {
+          protected void onOutputFormatChanged(Format format, @Nullable MediaFormat mediaFormat)
+              throws ExoPlaybackException {
+            super.onOutputFormatChanged(format, mediaFormat);
+            if (!format.equals(AUDIO_AAC)) {
               setPendingPlaybackException(
                   ExoPlaybackException.createForRenderer(
                       new AudioSink.ConfigurationException("Test"),
                       "rendererName",
                       /* rendererIndex= */ 0,
-                      outputFormat,
+                      format,
                       FORMAT_HANDLED));
             }
           }
@@ -252,13 +241,12 @@ public class MediaCodecAudioRendererTest {
 
     FakeSampleStream fakeSampleStream =
         new FakeSampleStream(
-            /* format= */ AUDIO_AAC,
+            /* mediaSourceEventDispatcher= */ null,
             DrmSessionManager.DUMMY,
-            /* eventDispatcher= */ null,
-            /* firstSampleTimeUs= */ 0,
-            /* timeUsIncrement= */ 50,
-            new FakeSampleStreamItem(new byte[] {0}, C.BUFFER_FLAG_KEY_FRAME),
-            FakeSampleStreamItem.END_OF_STREAM_ITEM);
+            new DrmSessionEventListener.EventDispatcher(),
+            /* initialFormat= */ AUDIO_AAC,
+            ImmutableList.of(
+                oneByteSample(/* timeUs= */ 0, C.BUFFER_FLAG_KEY_FRAME), END_OF_STREAM_ITEM));
 
     exceptionThrowingRenderer.enable(
         RendererConfiguration.DEFAULT,
@@ -267,14 +255,18 @@ public class MediaCodecAudioRendererTest {
         /* positionUs= */ 0,
         /* joining= */ false,
         /* mayRenderStartOfStream= */ false,
+        /* startPositionUs= */ 0,
         /* offsetUs */ 0);
 
     exceptionThrowingRenderer.start();
     exceptionThrowingRenderer.render(/* positionUs= */ 0, SystemClock.elapsedRealtime() * 1000);
     exceptionThrowingRenderer.render(/* positionUs= */ 250, SystemClock.elapsedRealtime() * 1000);
 
+    MediaFormat mediaFormat = new MediaFormat();
+    mediaFormat.setInteger(MediaFormat.KEY_CHANNEL_COUNT, 2);
+    mediaFormat.setInteger(MediaFormat.KEY_SAMPLE_RATE, 32_000);
     // Simulating the exception being thrown when not traceable back to render.
-    exceptionThrowingRenderer.onOutputFormatChanged(changedFormat);
+    exceptionThrowingRenderer.onOutputFormatChanged(changedFormat, mediaFormat);
 
     assertThrows(
         ExoPlaybackException.class,
@@ -285,5 +277,16 @@ public class MediaCodecAudioRendererTest {
     // Doesn't throw an exception because it's cleared after being thrown in the previous call to
     // render.
     exceptionThrowingRenderer.render(/* positionUs= */ 750, SystemClock.elapsedRealtime() * 1000);
+  }
+
+  private static Format getAudioSinkFormat(Format inputFormat) {
+    return new Format.Builder()
+        .setSampleMimeType(MimeTypes.AUDIO_RAW)
+        .setPcmEncoding(C.ENCODING_PCM_16BIT)
+        .setChannelCount(inputFormat.channelCount)
+        .setSampleRate(inputFormat.sampleRate)
+        .setEncoderDelay(inputFormat.encoderDelay)
+        .setEncoderPadding(inputFormat.encoderPadding)
+        .build();
   }
 }

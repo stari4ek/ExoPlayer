@@ -22,6 +22,7 @@ import android.media.AudioManager;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import com.google.android.exoplayer2.util.Util;
 import java.lang.annotation.Documented;
@@ -176,6 +177,7 @@ public final class C {
     ENCODING_AAC_HE_V2,
     ENCODING_AAC_XHE,
     ENCODING_AAC_ELD,
+    ENCODING_AAC_ER_BSAC,
     ENCODING_AC3,
     ENCODING_E_AC3,
     ENCODING_E_AC3_JOC,
@@ -231,6 +233,8 @@ public final class C {
   public static final int ENCODING_AAC_XHE = AudioFormat.ENCODING_AAC_XHE;
   /** @see AudioFormat#ENCODING_AAC_ELD */
   public static final int ENCODING_AAC_ELD = AudioFormat.ENCODING_AAC_ELD;
+  /** AAC Error Resilient Bit-Sliced Arithmetic Coding. */
+  public static final int ENCODING_AAC_ER_BSAC = 0x40000000;
   /** @see AudioFormat#ENCODING_AC3 */
   public static final int ENCODING_AC3 = AudioFormat.ENCODING_AC3;
   /** @see AudioFormat#ENCODING_E_AC3 */
@@ -560,6 +564,7 @@ public final class C {
   // )
 
   /** @deprecated Use {@code Renderer.VideoScalingMode}. */
+  @SuppressWarnings("deprecation")
   @Documented
   @Retention(RetentionPolicy.SOURCE)
   @IntDef(value = {VIDEO_SCALING_MODE_SCALE_TO_FIT, VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING})
@@ -574,7 +579,9 @@ public final class C {
   public static final int VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING =
       MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING;
   /** @deprecated Use {@code Renderer.VIDEO_SCALING_MODE_DEFAULT}. */
-  @Deprecated public static final int VIDEO_SCALING_MODE_DEFAULT = VIDEO_SCALING_MODE_SCALE_TO_FIT;
+  @SuppressWarnings("deprecation")
+  @Deprecated
+  public static final int VIDEO_SCALING_MODE_DEFAULT = VIDEO_SCALING_MODE_SCALE_TO_FIT;
 
   /**
    * Track selection flags. Possible flag values are {@link #SELECTION_FLAG_DEFAULT}, {@link
@@ -686,7 +693,7 @@ public final class C {
   public static final int TRACK_TYPE_METADATA = 4;
   /** A type constant for camera motion tracks. */
   public static final int TRACK_TYPE_CAMERA_MOTION = 5;
-  /** A type constant for a dummy or empty track. */
+  /** A type constant for a fake or empty track. */
   public static final int TRACK_TYPE_NONE = 6;
   /**
    * Applications or extensions may define custom {@code TRACK_TYPE_*} constants greater than or
@@ -1110,8 +1117,9 @@ public final class C {
    */
   @RequiresApi(21)
   public static int generateAudioSessionIdV21(Context context) {
-    return ((AudioManager) context.getSystemService(Context.AUDIO_SERVICE))
-        .generateAudioSessionId();
+    @Nullable
+    AudioManager audioManager = ((AudioManager) context.getSystemService(Context.AUDIO_SERVICE));
+    return audioManager == null ? AudioManager.ERROR : audioManager.generateAudioSessionId();
   }
 
 }

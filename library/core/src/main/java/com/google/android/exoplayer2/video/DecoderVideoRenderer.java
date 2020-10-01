@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.video;
 
+import static java.lang.Math.max;
+
 import android.os.Handler;
 import android.os.SystemClock;
 import android.view.Surface;
@@ -300,12 +302,13 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
   }
 
   @Override
-  protected void onStreamChanged(Format[] formats, long offsetUs) throws ExoPlaybackException {
+  protected void onStreamChanged(Format[] formats, long startPositionUs, long offsetUs)
+      throws ExoPlaybackException {
     // TODO: This shouldn't just update the output stream offset as long as there are still buffers
     // of the previous stream in the decoder. It should also make sure to render the first frame of
     // the next stream if the playback position reached the new stream.
     outputStreamOffsetUs = offsetUs;
-    super.onStreamChanged(formats, offsetUs);
+    super.onStreamChanged(formats, startPositionUs, offsetUs);
   }
 
   /**
@@ -504,7 +507,7 @@ public abstract class DecoderVideoRenderer extends BaseRenderer {
     droppedFrames += droppedBufferCount;
     consecutiveDroppedFrameCount += droppedBufferCount;
     decoderCounters.maxConsecutiveDroppedBufferCount =
-        Math.max(consecutiveDroppedFrameCount, decoderCounters.maxConsecutiveDroppedBufferCount);
+        max(consecutiveDroppedFrameCount, decoderCounters.maxConsecutiveDroppedBufferCount);
     if (maxDroppedFramesToNotify > 0 && droppedFrames >= maxDroppedFramesToNotify) {
       maybeNotifyDroppedFrames();
     }

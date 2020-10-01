@@ -15,6 +15,8 @@
  */
 package com.google.android.exoplayer2.text.cea;
 
+import static java.lang.Math.min;
+
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.text.Layout.Alignment;
@@ -629,7 +631,7 @@ public final class Cea608Decoder extends CeaDecoder {
       @Nullable Cue cue = cueBuilders.get(i).build(/* forcedPositionAnchor= */ Cue.TYPE_UNSET);
       cueBuilderCues.add(cue);
       if (cue != null) {
-        positionAnchor = Math.min(positionAnchor, cue.positionAnchor);
+        positionAnchor = min(positionAnchor, cue.positionAnchor);
       }
     }
 
@@ -880,7 +882,7 @@ public final class Cea608Decoder extends CeaDecoder {
       rolledUpCaptions.add(buildCurrentLine());
       captionStringBuilder.setLength(0);
       cueStyles.clear();
-      int numRows = Math.min(captionRowCount, row);
+      int numRows = min(captionRowCount, row);
       while (rolledUpCaptions.size() >= numRows) {
         rolledUpCaptions.remove(0);
       }
@@ -906,7 +908,6 @@ public final class Cea608Decoder extends CeaDecoder {
       }
 
       int positionAnchor;
-
       // The number of empty columns after the end of the text, in the same range.
       int endPadding = SCREEN_CHARWIDTH - startPadding - cueString.length();
       int startEndPaddingDelta = startPadding - endPadding;
@@ -960,15 +961,13 @@ public final class Cea608Decoder extends CeaDecoder {
         line = captionMode == CC_MODE_ROLL_UP ? row - (captionRowCount - 1) : row;
       }
 
-      return new Cue(
-          cueString,
-          Alignment.ALIGN_NORMAL,
-          line,
-          Cue.LINE_TYPE_NUMBER,
-          /* lineAnchor= */ Cue.TYPE_UNSET,
-          position,
-          positionAnchor,
-          Cue.DIMEN_UNSET);
+      return new Cue.Builder()
+          .setText(cueString)
+          .setTextAlignment(Alignment.ALIGN_NORMAL)
+          .setLine(line, Cue.LINE_TYPE_NUMBER)
+          .setPosition(position)
+          .setPositionAnchor(positionAnchor)
+          .build();
     }
 
     private SpannableString buildCurrentLine() {

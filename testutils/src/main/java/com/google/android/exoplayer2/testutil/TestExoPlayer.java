@@ -20,6 +20,7 @@ import static com.google.android.exoplayer2.testutil.TestUtil.runMainLooperUntil
 import static com.google.common.truth.Truth.assertThat;
 
 import android.content.Context;
+import android.os.Handler;
 import android.os.Looper;
 import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.DefaultLoadControl;
@@ -37,11 +38,13 @@ import com.google.android.exoplayer2.upstream.BandwidthMeter;
 import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.Clock;
+import com.google.android.exoplayer2.util.ConditionVariable;
 import com.google.android.exoplayer2.util.Util;
 import com.google.android.exoplayer2.video.VideoListener;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.checkerframework.checker.nullness.compatqual.NullableType;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /**
@@ -61,7 +64,6 @@ public class TestExoPlayer {
     @Nullable private Renderer[] renderers;
     @Nullable private RenderersFactory renderersFactory;
     private boolean useLazyPreparation;
-    private boolean throwWhenStuckBuffering;
     private @MonotonicNonNull Looper looper;
 
     public Builder(Context context) {
@@ -232,19 +234,6 @@ public class TestExoPlayer {
     }
 
     /**
-     * Sets whether the player should throw when it detects it's stuck buffering.
-     *
-     * <p>This method is experimental, and will be renamed or removed in a future release.
-     *
-     * @param throwWhenStuckBuffering Whether to throw when the player detects it's stuck buffering.
-     * @return This builder.
-     */
-    public Builder experimental_setThrowWhenStuckBuffering(boolean throwWhenStuckBuffering) {
-      this.throwWhenStuckBuffering = throwWhenStuckBuffering;
-      return this;
-    }
-
-    /**
      * Builds an {@link SimpleExoPlayer} using the provided values or their defaults.
      *
      * @return The built {@link ExoPlayerTestRunner}.
@@ -278,7 +267,6 @@ public class TestExoPlayer {
           .setClock(clock)
           .setUseLazyPreparation(useLazyPreparation)
           .setLooper(looper)
-          .experimental_setThrowWhenStuckBuffering(throwWhenStuckBuffering)
           .build();
     }
   }
@@ -411,6 +399,7 @@ public class TestExoPlayer {
    */
   public static void runUntilPositionDiscontinuity(
       Player player, @Player.DiscontinuityReason int expectedReason) throws TimeoutException {
+    verifyMainTestThread(player);
     AtomicBoolean receivedCallback = new AtomicBoolean(false);
     Player.EventListener listener =
         new Player.EventListener() {
@@ -451,6 +440,33 @@ public class TestExoPlayer {
   }
 
   /**
+   * Runs tasks of the main {@link Looper} until a {@link
+   * Player.EventListener#onExperimentalOffloadSchedulingEnabledChanged} callback occurred.
+   *
+   * @param player The {@link Player}.
+   * @return The new offloadSchedulingEnabled state.
+   * @throws TimeoutException If the {@link TestUtil#DEFAULT_TIMEOUT_MS default timeout} is
+   *     exceeded.
+   */
+  public static boolean runUntilReceiveOffloadSchedulingEnabledNewState(Player player)
+      throws TimeoutException {
+    verifyMainTestThread(player);
+    AtomicReference<@NullableType Boolean> offloadSchedulingEnabledReceiver =
+        new AtomicReference<>();
+    Player.EventListener listener =
+        new Player.EventListener() {
+          @Override
+          public void onExperimentalOffloadSchedulingEnabledChanged(
+              boolean offloadSchedulingEnabled) {
+            offloadSchedulingEnabledReceiver.set(offloadSchedulingEnabled);
+          }
+        };
+    player.addListener(listener);
+    runMainLooperUntil(() -> offloadSchedulingEnabledReceiver.get() != null);
+    return Assertions.checkNotNull(offloadSchedulingEnabledReceiver.get());
+  }
+
+  /**
    * Runs tasks of the main {@link Looper} until the {@link VideoListener#onRenderedFirstFrame}
    * callback has been called.
    *
@@ -471,6 +487,59 @@ public class TestExoPlayer {
         };
     player.addVideoListener(listener);
     runMainLooperUntil(receivedCallback::get);
+  }
+
+  /**
+   * Calls {@link Player#play()}, runs tasks of the main {@link Looper} until the {@code player}
+   * reaches the specified position and then pauses the {@code player}.
+   *
+   * @param player The {@link Player}.
+   * @param windowIndex The window.
+   * @param positionMs The position within the window, in milliseconds.
+   * @throws TimeoutException If the {@link TestUtil#DEFAULT_TIMEOUT_MS default timeout} is
+   *     exceeded.
+   */
+  public static void playUntilPosition(ExoPlayer player, int windowIndex, long positionMs)
+      throws TimeoutException {
+    verifyMainTestThread(player);
+    Handler testHandler = Util.createHandlerForCurrentOrMainLooper();
+
+    AtomicBoolean messageHandled = new AtomicBoolean();
+    player
+        .createMessage(
+            (messageType, payload) -> {
+              // Block playback thread until pause command has been sent from test thread.
+              ConditionVariable blockPlaybackThreadCondition = new ConditionVariable();
+              testHandler.post(
+                  () -> {
+                    player.pause();
+                    messageHandled.set(true);
+                    blockPlaybackThreadCondition.open();
+                  });
+              try {
+                blockPlaybackThreadCondition.block();
+              } catch (InterruptedException e) {
+                // Ignore.
+              }
+            })
+        .setPosition(windowIndex, positionMs)
+        .send();
+    player.play();
+    runMainLooperUntil(messageHandled::get);
+  }
+
+  /**
+   * Calls {@link Player#play()}, runs tasks of the main {@link Looper} until the {@code player}
+   * reaches the specified window and then pauses the {@code player}.
+   *
+   * @param player The {@link Player}.
+   * @param windowIndex The window.
+   * @throws TimeoutException If the {@link TestUtil#DEFAULT_TIMEOUT_MS default timeout} is
+   *     exceeded.
+   */
+  public static void playUntilStartOfWindow(ExoPlayer player, int windowIndex)
+      throws TimeoutException {
+    playUntilPosition(player, windowIndex, /* positionMs= */ 0);
   }
 
   /**

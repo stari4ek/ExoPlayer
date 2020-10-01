@@ -18,9 +18,11 @@ package com.google.android.exoplayer2;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
-import static org.robolectric.annotation.LooperMode.Mode.LEGACY;
+import static org.robolectric.Shadows.shadowOf;
 
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.SinglePeriodTimeline;
@@ -34,15 +36,12 @@ import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.trackselection.TrackSelector;
 import com.google.android.exoplayer2.trackselection.TrackSelectorResult;
 import com.google.android.exoplayer2.upstream.Allocator;
-import com.google.android.exoplayer2.util.Util;
 import com.google.common.collect.ImmutableList;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.annotation.LooperMode;
 
 /** Unit tests for {@link MediaPeriodQueue}. */
-@LooperMode(LEGACY)
 @RunWith(AndroidJUnit4.class)
 public final class MediaPeriodQueueTest {
 
@@ -74,12 +73,13 @@ public final class MediaPeriodQueueTest {
 
   @Before
   public void setUp() {
-    mediaPeriodQueue = new MediaPeriodQueue();
+    mediaPeriodQueue =
+        new MediaPeriodQueue(/* analyticsCollector= */ null, new Handler(Looper.getMainLooper()));
     mediaSourceList =
         new MediaSourceList(
             mock(MediaSourceList.MediaSourceListInfoRefreshListener.class),
             /* analyticsCollector= */ null,
-            Util.createHandlerForCurrentOrMainLooper());
+            new Handler(Looper.getMainLooper()));
     rendererCapabilities = new RendererCapabilities[0];
     trackSelector = mock(TrackSelector.class);
     allocator = mock(Allocator.class);
@@ -435,22 +435,11 @@ public final class MediaPeriodQueueTest {
             /* loadingMediaPeriodId= */ null,
             /* playWhenReady= */ false,
             Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+            /* playbackParameters= */ PlaybackParameters.DEFAULT,
             /* bufferedPositionUs= */ 0,
             /* totalBufferedDurationUs= */ 0,
-            /* positionUs= */ 0);
-  }
-
-  private void updateAdPlaybackStateAndTimeline(long... adGroupTimesUs) {
-    adPlaybackState =
-        new AdPlaybackState(adGroupTimesUs).withContentDurationUs(CONTENT_DURATION_US);
-    updateTimeline();
-  }
-
-  private void updateTimeline() {
-    SinglePeriodAdTimeline adTimeline =
-        new SinglePeriodAdTimeline(CONTENT_TIMELINE, adPlaybackState);
-    fakeMediaSource.setNewSourceInfo(adTimeline);
-    playbackInfo = playbackInfo.copyWithTimeline(mediaSourceList.createTimeline());
+            /* positionUs= */ 0,
+            /* offloadSchedulingEnabled= */ false);
   }
 
   private void advance() {
@@ -503,6 +492,21 @@ public final class MediaPeriodQueueTest {
             .withAdCount(adGroupIndex, /* adCount= */ 1)
             .withAdLoadError(adGroupIndex, /* adIndexInAdGroup= */ 0);
     updateTimeline();
+  }
+
+  private void updateAdPlaybackStateAndTimeline(long... adGroupTimesUs) {
+    adPlaybackState =
+        new AdPlaybackState(adGroupTimesUs).withContentDurationUs(CONTENT_DURATION_US);
+    updateTimeline();
+  }
+
+  private void updateTimeline() {
+    SinglePeriodAdTimeline adTimeline =
+        new SinglePeriodAdTimeline(CONTENT_TIMELINE, adPlaybackState);
+    fakeMediaSource.setNewSourceInfo(adTimeline);
+    // Progress the looper so that the source info events have been executed.
+    shadowOf(Looper.getMainLooper()).idle();
+    playbackInfo = playbackInfo.copyWithTimeline(mediaSourceList.createTimeline());
   }
 
   private void assertGetNextMediaPeriodInfoReturnsContentMediaPeriod(
