@@ -22,12 +22,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.robolectric.Shadows.shadowOf;
-import static org.robolectric.annotation.LooperMode.Mode.PAUSED;
 
 import android.net.Uri;
 import android.os.Looper;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
@@ -46,11 +46,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
-import org.robolectric.annotation.LooperMode;
 
 /** Unit tests for {@link AdsMediaSource}. */
 @RunWith(AndroidJUnit4.class)
-@LooperMode(PAUSED)
 public final class AdsMediaSourceTest {
 
   private static final long PREROLL_AD_DURATION_US = 10 * C.MICROS_PER_SECOND;
@@ -61,7 +59,7 @@ public final class AdsMediaSourceTest {
           /* isDynamic= */ false,
           /* isLive= */ false,
           /* manifest= */ null,
-          /* mediaItem= */ null);
+          MediaItem.fromUri(Uri.EMPTY));
   private static final Object PREROLL_AD_PERIOD_UID =
       PREROLL_AD_TIMELINE.getUidOfPeriod(/* periodIndex= */ 0);
 
@@ -73,7 +71,7 @@ public final class AdsMediaSourceTest {
           /* isDynamic= */ false,
           /* isLive= */ false,
           /* manifest= */ null,
-          /* mediaItem= */ null);
+          MediaItem.fromUri(Uri.EMPTY));
   private static final Object CONTENT_PERIOD_UID =
       CONTENT_TIMELINE.getUidOfPeriod(/* periodIndex= */ 0);
 
@@ -99,7 +97,8 @@ public final class AdsMediaSourceTest {
     contentMediaSource = new FakeMediaSource(/* timeline= */ null);
     prerollAdMediaSource = new FakeMediaSource(/* timeline= */ null);
     MediaSourceFactory adMediaSourceFactory = mock(MediaSourceFactory.class);
-    when(adMediaSourceFactory.createMediaSource(any(Uri.class))).thenReturn(prerollAdMediaSource);
+    when(adMediaSourceFactory.createMediaSource(any(MediaItem.class)))
+        .thenReturn(prerollAdMediaSource);
 
     // Prepare the AdsMediaSource and capture its ads loader listener.
     AdsLoader mockAdsLoader = mock(AdsLoader.class);

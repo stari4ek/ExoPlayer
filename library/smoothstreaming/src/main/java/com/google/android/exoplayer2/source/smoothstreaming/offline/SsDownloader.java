@@ -24,10 +24,11 @@ import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest.StreamElement;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifestParser;
-import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsUtil;
 import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
+import com.google.android.exoplayer2.upstream.ParsingLoadable.Parser;
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource;
+import com.google.android.exoplayer2.util.Util;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -108,14 +109,35 @@ public final class SsDownloader extends SegmentDownloader<SsManifest> {
    */
   public SsDownloader(
       MediaItem mediaItem, CacheDataSource.Factory cacheDataSourceFactory, Executor executor) {
-    super(
+    this(
         mediaItem
             .buildUpon()
-            .setUri(SsUtil.fixManifestUri(checkNotNull(mediaItem.playbackProperties).uri))
+            .setUri(
+                Util.fixSmoothStreamingIsmManifestUri(
+                    checkNotNull(mediaItem.playbackProperties).uri))
             .build(),
         new SsManifestParser(),
         cacheDataSourceFactory,
         executor);
+  }
+
+  /**
+   * Creates a new instance.
+   *
+   * @param mediaItem The {@link MediaItem} to be downloaded.
+   * @param manifestParser A parser for SmoothStreaming manifests.
+   * @param cacheDataSourceFactory A {@link CacheDataSource.Factory} for the cache into which the
+   *     download will be written.
+   * @param executor An {@link Executor} used to make requests for the media being downloaded.
+   *     Providing an {@link Executor} that uses multiple threads will speed up the download by
+   *     allowing parts of it to be executed in parallel.
+   */
+  public SsDownloader(
+      MediaItem mediaItem,
+      Parser<SsManifest> manifestParser,
+      CacheDataSource.Factory cacheDataSourceFactory,
+      Executor executor) {
+    super(mediaItem, manifestParser, cacheDataSourceFactory, executor);
   }
 
   @Override

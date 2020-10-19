@@ -13,9 +13,11 @@ import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSourceFactory;
 import com.google.android.exoplayer2.source.ProgressiveMediaSource;
+import com.google.android.exoplayer2.source.ads.AdsLoader;
 import com.google.android.exoplayer2.source.hls.DefaultHlsExtractorFactory;
 import com.google.android.exoplayer2.source.hls.HlsMediaSource;
 import com.google.android.exoplayer2.upstream.DataSource;
+import com.google.android.exoplayer2.upstream.HttpDataSource;
 import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.MimeTypes;
@@ -25,13 +27,33 @@ public class CustomMediaSourceFactory implements MediaSourceFactory {
   private final DataSource.Factory dataSourceFactory;
   private final DefaultMediaSourceFactory fallback;
 
-  CustomMediaSourceFactory(
-      Context context,
-      DataSource.Factory dataSourceFactory,
-      DefaultMediaSourceFactory.AdSupportProvider adSupportProvider) {
-
+  CustomMediaSourceFactory(DataSource.Factory dataSourceFactory) {
     this.dataSourceFactory = dataSourceFactory;
-    fallback = DefaultMediaSourceFactory.newInstance(context, dataSourceFactory, adSupportProvider);
+    fallback = new DefaultMediaSourceFactory(dataSourceFactory);
+  }
+
+  @NonNull
+  public DefaultMediaSourceFactory setAdsLoaderProvider(
+      @Nullable DefaultMediaSourceFactory.AdsLoaderProvider adsLoaderProvider) {
+    return fallback.setAdsLoaderProvider(adsLoaderProvider);
+  }
+
+  @NonNull
+  public DefaultMediaSourceFactory setAdViewProvider(@Nullable AdsLoader.AdViewProvider adViewProvider) {
+    return fallback.setAdViewProvider(adViewProvider);
+  }
+
+  @NonNull
+  @Override
+  public DefaultMediaSourceFactory setDrmHttpDataSourceFactory(
+      @Nullable HttpDataSource.Factory drmHttpDataSourceFactory) {
+    return fallback.setDrmHttpDataSourceFactory(drmHttpDataSourceFactory);
+  }
+
+  @NonNull
+  @Override
+  public DefaultMediaSourceFactory setDrmUserAgent(@Nullable String userAgent) {
+    return fallback.setDrmUserAgent(userAgent);
   }
 
   @NonNull

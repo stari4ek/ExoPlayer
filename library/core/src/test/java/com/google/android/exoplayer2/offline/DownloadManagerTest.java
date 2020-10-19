@@ -15,7 +15,9 @@
  */
 package com.google.android.exoplayer2.offline;
 
+import static com.google.android.exoplayer2.robolectric.RobolectricUtil.createRobolectricConditionVariable;
 import static com.google.common.truth.Truth.assertThat;
+import static java.util.Arrays.asList;
 
 import android.net.Uri;
 import androidx.annotation.GuardedBy;
@@ -23,17 +25,16 @@ import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.android.exoplayer2.C;
+import com.google.android.exoplayer2.robolectric.TestDownloadManagerListener;
 import com.google.android.exoplayer2.scheduler.Requirements;
 import com.google.android.exoplayer2.testutil.DownloadBuilder;
 import com.google.android.exoplayer2.testutil.DummyMainThread;
 import com.google.android.exoplayer2.testutil.DummyMainThread.TestRunnable;
-import com.google.android.exoplayer2.testutil.TestDownloadManagerListener;
 import com.google.android.exoplayer2.testutil.TestUtil;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.ConditionVariable;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,13 +42,10 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.annotation.LooperMode;
-import org.robolectric.annotation.LooperMode.Mode;
 import org.robolectric.shadows.ShadowLog;
 
 /** Tests {@link DownloadManager}. */
 @RunWith(AndroidJUnit4.class)
-@LooperMode(Mode.PAUSED)
 public class DownloadManagerTest {
 
   /** Timeout to use when blocking on conditions that we expect to become unblocked. */
@@ -56,7 +54,7 @@ public class DownloadManagerTest {
   private static final int APP_STOP_REASON = 1;
   /** The minimum number of times a download must be retried before failing. */
   private static final int MIN_RETRY_COUNT = 3;
-  /** Dummy value for the current time. */
+  /** Test value for the current time. */
   private static final long NOW_MS = 1234;
 
   private static final String ID1 = "id1";
@@ -68,19 +66,19 @@ public class DownloadManagerTest {
 
   private DownloadManager downloadManager;
   private TestDownloadManagerListener downloadManagerListener;
-  private DummyMainThread dummyMainThread;
+  private DummyMainThread testThread;
 
   @Before
   public void setUp() throws Exception {
     ShadowLog.stream = System.out;
-    dummyMainThread = new DummyMainThread();
+    testThread = new DummyMainThread();
     setupDownloadManager(/* maxParallelDownloads= */ 100);
   }
 
   @After
   public void tearDown() throws Exception {
     releaseDownloadManager();
-    dummyMainThread.release();
+    testThread.release();
   }
 
   @Test
@@ -711,24 +709,18 @@ public class DownloadManagerTest {
 
   private List<Download> postGetCurrentDownloads() {
     AtomicReference<List<Download>> currentDownloadsReference = new AtomicReference<>();
-    runOnMainThread(
-        () -> {
-          currentDownloadsReference.set(downloadManager.getCurrentDownloads());
-        });
+    runOnMainThread(() -> currentDownloadsReference.set(downloadManager.getCurrentDownloads()));
     return currentDownloadsReference.get();
   }
 
   private DownloadIndex postGetDownloadIndex() {
     AtomicReference<DownloadIndex> downloadIndexReference = new AtomicReference<>();
-    runOnMainThread(
-        () -> {
-          downloadIndexReference.set(downloadManager.getDownloadIndex());
-        });
+    runOnMainThread(() -> downloadIndexReference.set(downloadManager.getDownloadIndex()));
     return downloadIndexReference.get();
   }
 
   private void runOnMainThread(TestRunnable r) {
-    dummyMainThread.runTestOnMainThread(r);
+    testThread.runTestOnMainThread(r);
   }
 
   private FakeDownloader getDownloaderAt(int index) throws InterruptedException {
@@ -794,13 +786,9 @@ public class DownloadManagerTest {
   }
 
   private static DownloadRequest createDownloadRequest(String id, StreamKey... keys) {
-    return new DownloadRequest(
-        id,
-        DownloadRequest.TYPE_DASH,
-        Uri.parse("http://abc.com/ " + id),
-        Arrays.asList(keys),
-        /* customCacheKey= */ null,
-        /* data= */ null);
+    return new DownloadRequest.Builder(id, Uri.parse("http://abc.com/ " + id))
+        .setStreamKeys(asList(keys))
+        .build();
   }
 
   // Internal methods.
@@ -847,10 +835,10 @@ public class DownloadManagerTest {
 
     private FakeDownloader(DownloadRequest request) {
       this.request = request;
-      downloadStarted = TestUtil.createRobolectricConditionVariable();
-      removeStarted = TestUtil.createRobolectricConditionVariable();
-      finished = TestUtil.createRobolectricConditionVariable();
-      blocker = TestUtil.createRobolectricConditionVariable();
+      downloadStarted = createRobolectricConditionVariable();
+      removeStarted = createRobolectricConditionVariable();
+      finished = createRobolectricConditionVariable();
+      blocker = createRobolectricConditionVariable();
       startCount = new AtomicInteger();
       bytesDownloaded = new AtomicInteger();
     }
@@ -917,7 +905,7 @@ public class DownloadManagerTest {
     }
 
     public void assertStreamKeys(StreamKey... streamKeys) {
-      assertThat(request.streamKeys).containsExactly(streamKeys);
+      assertThat(request.streamKeys).containsExactlyElementsIn(streamKeys);
     }
 
     public void assertDownloadStarted() throws InterruptedException {

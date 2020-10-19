@@ -21,23 +21,28 @@ import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource;
-import com.google.android.exoplayer2.upstream.cache.CacheUtil;
+import com.google.android.exoplayer2.upstream.cache.CacheWriter;
 import com.google.android.exoplayer2.util.Assertions;
 import com.google.android.exoplayer2.util.PriorityTaskManager;
+import com.google.android.exoplayer2.util.PriorityTaskManager.PriorityTooLowException;
+import com.google.android.exoplayer2.util.RunnableFutureTask;
+import com.google.android.exoplayer2.util.Util;
 import java.io.IOException;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicBoolean;
+import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 
 /** A downloader for progressive media streams. */
 public final class ProgressiveDownloader implements Downloader {
 
-  private static final int BUFFER_SIZE_BYTES = 128 * 1024;
-
+  private final Executor executor;
   private final DataSpec dataSpec;
   private final CacheDataSource dataSource;
-  private final AtomicBoolean isCanceled;
+  @Nullable private final PriorityTaskManager priorityTaskManager;
 
-  @Nullable private volatile Thread downloadThread;
+  @Nullable private ProgressListener progressListener;
+  private volatile @MonotonicNonNull RunnableFutureTask<Void, IOException> downloadRunnable;
+  private volatile boolean isCanceled;
 
   /** @deprecated Use {@link #ProgressiveDownloader(MediaItem, CacheDataSource.Factory)} instead. */
   @SuppressWarnings("deprecation")
@@ -87,6 +92,7 @@ public final class ProgressiveDownloader implements Downloader {
    */
   public ProgressiveDownloader(
       MediaItem mediaItem, CacheDataSource.Factory cacheDataSourceFactory, Executor executor) {
+    this.executor = Assertions.checkNotNull(executor);
     Assertions.checkNotNull(mediaItem.playbackProperties);
     dataSpec =
         new DataSpec.Builder()
@@ -95,28 +101,65 @@ public final class ProgressiveDownloader implements Downloader {
             .setFlags(DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
             .build();
     dataSource = cacheDataSourceFactory.createDataSourceForDownloading();
-    isCanceled = new AtomicBoolean();
+    priorityTaskManager = cacheDataSourceFactory.getUpstreamPriorityTaskManager();
   }
 
   @Override
-  public void download(@Nullable ProgressListener progressListener) throws IOException {
-    downloadThread = Thread.currentThread();
-    if (isCanceled.get()) {
-      return;
+  public void download(@Nullable ProgressListener progressListener)
+      throws IOException, InterruptedException {
+    this.progressListener = progressListener;
+    if (downloadRunnable == null) {
+      CacheWriter cacheWriter =
+          new CacheWriter(
+              dataSource,
+              dataSpec,
+              /* allowShortContent= */ false,
+              /* temporaryBuffer= */ null,
+              this::onProgress);
+      downloadRunnable =
+          new RunnableFutureTask<Void, IOException>() {
+            @Override
+            protected Void doWork() throws IOException {
+              cacheWriter.cache();
+              return null;
+            }
+
+            @Override
+            protected void cancelWork() {
+              cacheWriter.cancel();
+            }
+          };
     }
-    @Nullable PriorityTaskManager priorityTaskManager = dataSource.getUpstreamPriorityTaskManager();
+
     if (priorityTaskManager != null) {
       priorityTaskManager.add(C.PRIORITY_DOWNLOAD);
     }
     try {
-      CacheUtil.cache(
-          dataSource,
-          dataSpec,
-          progressListener == null ? null : new ProgressForwarder(progressListener),
-          isCanceled,
-          /* enableEOFException= */ true,
-          /* temporaryBuffer= */ new byte[BUFFER_SIZE_BYTES]);
+      boolean finished = false;
+      while (!finished && !isCanceled) {
+        if (priorityTaskManager != null) {
+          priorityTaskManager.proceed(C.PRIORITY_DOWNLOAD);
+        }
+        executor.execute(downloadRunnable);
+        try {
+          downloadRunnable.get();
+          finished = true;
+        } catch (ExecutionException e) {
+          Throwable cause = Assertions.checkNotNull(e.getCause());
+          if (cause instanceof PriorityTooLowException) {
+            // The next loop iteration will block until the task is able to proceed.
+          } else if (cause instanceof IOException) {
+            throw (IOException) cause;
+          } else {
+            // The cause must be an uncaught Throwable type.
+            Util.sneakyThrow(cause);
+          }
+        }
+      }
     } finally {
+      // If the main download thread was interrupted as part of cancelation, then it's possible that
+      // the runnable is still doing work. We need to wait until it's finished before returning.
+      downloadRunnable.blockUntilFinished();
       if (priorityTaskManager != null) {
         priorityTaskManager.remove(C.PRIORITY_DOWNLOAD);
       }
@@ -125,10 +168,10 @@ public final class ProgressiveDownloader implements Downloader {
 
   @Override
   public void cancel() {
-    isCanceled.set(true);
-    @Nullable Thread downloadThread = this.downloadThread;
-    if (downloadThread != null) {
-      downloadThread.interrupt();
+    isCanceled = true;
+    RunnableFutureTask<Void, IOException> downloadRunnable = this.downloadRunnable;
+    if (downloadRunnable != null) {
+      downloadRunnable.cancel(/* interruptIfRunning= */ true);
     }
   }
 
@@ -137,21 +180,14 @@ public final class ProgressiveDownloader implements Downloader {
     dataSource.getCache().removeResource(dataSource.getCacheKeyFactory().buildCacheKey(dataSpec));
   }
 
-  private static final class ProgressForwarder implements CacheUtil.ProgressListener {
-
-    private final ProgressListener progressListener;
-
-    public ProgressForwarder(ProgressListener progressListener) {
-      this.progressListener = progressListener;
+  private void onProgress(long contentLength, long bytesCached, long newBytesCached) {
+    if (progressListener == null) {
+      return;
     }
-
-    @Override
-    public void onProgress(long contentLength, long bytesCached, long newBytesCached) {
-      float percentDownloaded =
-          contentLength == C.LENGTH_UNSET || contentLength == 0
-              ? C.PERCENTAGE_UNSET
-              : ((bytesCached * 100f) / contentLength);
-      progressListener.onProgress(contentLength, bytesCached, percentDownloaded);
-    }
+    float percentDownloaded =
+        contentLength == C.LENGTH_UNSET || contentLength == 0
+            ? C.PERCENTAGE_UNSET
+            : ((bytesCached * 100f) / contentLength);
+    progressListener.onProgress(contentLength, bytesCached, percentDownloaded);
   }
 }

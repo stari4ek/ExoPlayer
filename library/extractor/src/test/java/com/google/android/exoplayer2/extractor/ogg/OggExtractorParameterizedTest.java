@@ -36,27 +36,51 @@ public final class OggExtractorParameterizedTest {
     return ExtractorAsserts.configs();
   }
 
-  @Parameter(0)
-  public ExtractorAsserts.SimulationConfig simulationConfig;
+  @Parameter public ExtractorAsserts.SimulationConfig simulationConfig;
 
   @Test
   public void opus() throws Exception {
-    ExtractorAsserts.assertBehavior(OggExtractor::new, "ogg/bear.opus", simulationConfig);
+    ExtractorAsserts.assertBehavior(OggExtractor::new, "media/ogg/bear.opus", simulationConfig);
   }
 
   @Test
   public void flac() throws Exception {
-    ExtractorAsserts.assertBehavior(OggExtractor::new, "ogg/bear_flac.ogg", simulationConfig);
+    ExtractorAsserts.assertBehavior(OggExtractor::new, "media/ogg/bear_flac.ogg", simulationConfig);
   }
 
   @Test
   public void flacNoSeektable() throws Exception {
     ExtractorAsserts.assertBehavior(
-        OggExtractor::new, "ogg/bear_flac_noseektable.ogg", simulationConfig);
+        OggExtractor::new, "media/ogg/bear_flac_noseektable.ogg", simulationConfig);
   }
 
   @Test
   public void vorbis() throws Exception {
-    ExtractorAsserts.assertBehavior(OggExtractor::new, "ogg/bear_vorbis.ogg", simulationConfig);
+    ExtractorAsserts.assertBehavior(
+        OggExtractor::new, "media/ogg/bear_vorbis.ogg", simulationConfig);
+  }
+
+  /**
+   * Ensure the extractor can handle non-contiguous pages by using a file with 10 bytes of garbage
+   * data before the start of the second page.
+   *
+   * <p>https://github.com/google/ExoPlayer/issues/7230
+   */
+  @Test
+  public void vorbisWithGapBeforeSecondPage() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        OggExtractor::new, "media/ogg/bear_vorbis_gap.ogg", simulationConfig);
+  }
+
+  /**
+   * Use some very large Vorbis Comment metadata to create a packet that is larger than a single Ogg
+   * page.
+   *
+   * <p>https://github.com/google/ExoPlayer/issues/7992
+   */
+  @Test
+  public void vorbisWithPacketSpanningBetweenPages() throws Exception {
+    ExtractorAsserts.assertBehavior(
+        OggExtractor::new, "media/ogg/bear_vorbis_with_large_metadata.ogg", simulationConfig);
   }
 }

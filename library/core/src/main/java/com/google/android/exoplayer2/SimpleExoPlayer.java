@@ -38,6 +38,8 @@ import com.google.android.exoplayer2.audio.AuxEffectInfo;
 import com.google.android.exoplayer2.decoder.DecoderCounters;
 import com.google.android.exoplayer2.device.DeviceInfo;
 import com.google.android.exoplayer2.device.DeviceListener;
+import com.google.android.exoplayer2.extractor.DefaultExtractorsFactory;
+import com.google.android.exoplayer2.extractor.ExtractorsFactory;
 import com.google.android.exoplayer2.metadata.Metadata;
 import com.google.android.exoplayer2.metadata.MetadataOutput;
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
@@ -65,6 +67,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.TimeoutException;
 
 /**
  * An {@link ExoPlayer} implementation that uses default {@link Renderer} components. Instances can
@@ -77,6 +80,9 @@ public class SimpleExoPlayer extends BasePlayer
         Player.TextComponent,
         Player.MetadataComponent,
         Player.DeviceComponent {
+
+  /** The default timeout for detaching a surface from the player, in milliseconds. */
+  public static final long DEFAULT_DETACH_SURFACE_TIMEOUT_MS = 2_000;
 
   /** @deprecated Use {@link com.google.android.exoplayer2.video.VideoListener}. */
   @Deprecated
@@ -108,6 +114,9 @@ public class SimpleExoPlayer extends BasePlayer
     @Renderer.VideoScalingMode private int videoScalingMode;
     private boolean useLazyPreparation;
     private SeekParameters seekParameters;
+    private LivePlaybackSpeedControl livePlaybackSpeedControl;
+    private long releaseTimeoutMs;
+    private long detachSurfaceTimeoutMs;
     private boolean pauseAtEndOfMediaItems;
     private boolean throwWhenStuckBuffering;
     private boolean buildCalled;
@@ -115,9 +124,11 @@ public class SimpleExoPlayer extends BasePlayer
     /**
      * Creates a builder.
      *
-     * <p>Use {@link #Builder(Context, RenderersFactory)} instead, if you intend to provide a custom
-     * {@link RenderersFactory}. This is to ensure that ProGuard or R8 can remove ExoPlayer's {@link
-     * DefaultRenderersFactory} from the APK.
+     * <p>Use {@link #Builder(Context, RenderersFactory)}, {@link #Builder(Context,
+     * RenderersFactory)} or {@link #Builder(Context, RenderersFactory, ExtractorsFactory)} instead,
+     * if you intend to provide a custom {@link RenderersFactory} or a custom {@link
+     * ExtractorsFactory}. This is to ensure that ProGuard or R8 can remove ExoPlayer's {@link
+     * DefaultRenderersFactory} and {@link DefaultExtractorsFactory} from the APK.
      *
      * <p>The builder uses the following default values:
      *
@@ -127,6 +138,7 @@ public class SimpleExoPlayer extends BasePlayer
      *   <li>{@link MediaSourceFactory}: {@link DefaultMediaSourceFactory}
      *   <li>{@link LoadControl}: {@link DefaultLoadControl}
      *   <li>{@link BandwidthMeter}: {@link DefaultBandwidthMeter#getSingletonInstance(Context)}
+     *   <li>{@link LivePlaybackSpeedControl}: {@link DefaultLivePlaybackSpeedControl}
      *   <li>{@link Looper}: The {@link Looper} associated with the current thread, or the {@link
      *       Looper} of the application's main thread if the current thread doesn't have a {@link
      *       Looper}
@@ -139,6 +151,8 @@ public class SimpleExoPlayer extends BasePlayer
      *   <li>{@link Renderer.VideoScalingMode}: {@link Renderer#VIDEO_SCALING_MODE_DEFAULT}
      *   <li>{@code useLazyPreparation}: {@code true}
      *   <li>{@link SeekParameters}: {@link SeekParameters#DEFAULT}
+     *   <li>{@code releaseTimeoutMs}: {@link ExoPlayer#DEFAULT_RELEASE_TIMEOUT_MS}
+     *   <li>{@code detachSurfaceTimeoutMs}: {@link #DEFAULT_DETACH_SURFACE_TIMEOUT_MS}
      *   <li>{@code pauseAtEndOfMediaItems}: {@code false}
      *   <li>{@link Clock}: {@link Clock#DEFAULT}
      * </ul>
@@ -146,7 +160,7 @@ public class SimpleExoPlayer extends BasePlayer
      * @param context A {@link Context}.
      */
     public Builder(Context context) {
-      this(context, new DefaultRenderersFactory(context));
+      this(context, new DefaultRenderersFactory(context), new DefaultExtractorsFactory());
     }
 
     /**
@@ -159,11 +173,40 @@ public class SimpleExoPlayer extends BasePlayer
      *     player.
      */
     public Builder(Context context, RenderersFactory renderersFactory) {
+      this(context, renderersFactory, new DefaultExtractorsFactory());
+    }
+
+    /**
+     * Creates a builder with a custom {@link ExtractorsFactory}.
+     *
+     * <p>See {@link #Builder(Context)} for a list of default values.
+     *
+     * @param context A {@link Context}.
+     * @param extractorsFactory An {@link ExtractorsFactory} used to extract progressive media from
+     *     its container.
+     */
+    public Builder(Context context, ExtractorsFactory extractorsFactory) {
+      this(context, new DefaultRenderersFactory(context), extractorsFactory);
+    }
+
+    /**
+     * Creates a builder with a custom {@link RenderersFactory} and {@link ExtractorsFactory}.
+     *
+     * <p>See {@link #Builder(Context)} for a list of default values.
+     *
+     * @param context A {@link Context}.
+     * @param renderersFactory A factory for creating {@link Renderer Renderers} to be used by the
+     *     player.
+     * @param extractorsFactory An {@link ExtractorsFactory} used to extract progressive media from
+     *     its container.
+     */
+    public Builder(
+        Context context, RenderersFactory renderersFactory, ExtractorsFactory extractorsFactory) {
       this(
           context,
           renderersFactory,
           new DefaultTrackSelector(context),
-          DefaultMediaSourceFactory.newInstance(context),
+          new DefaultMediaSourceFactory(context, extractorsFactory),
           new DefaultLoadControl(),
           DefaultBandwidthMeter.getSingletonInstance(context),
           new AnalyticsCollector(Clock.DEFAULT));
@@ -199,13 +242,17 @@ public class SimpleExoPlayer extends BasePlayer
       this.loadControl = loadControl;
       this.bandwidthMeter = bandwidthMeter;
       this.analyticsCollector = analyticsCollector;
-      looper = Util.getLooper();
+      looper = Util.getCurrentOrMainLooper();
       audioAttributes = AudioAttributes.DEFAULT;
       wakeMode = C.WAKE_MODE_NONE;
       videoScalingMode = Renderer.VIDEO_SCALING_MODE_DEFAULT;
       useLazyPreparation = true;
       seekParameters = SeekParameters.DEFAULT;
+      livePlaybackSpeedControl = new DefaultLivePlaybackSpeedControl.Builder().build();
       clock = Clock.DEFAULT;
+      throwWhenStuckBuffering = true;
+      releaseTimeoutMs = ExoPlayer.DEFAULT_RELEASE_TIMEOUT_MS;
+      detachSurfaceTimeoutMs = DEFAULT_DETACH_SURFACE_TIMEOUT_MS;
     }
 
     /**
@@ -311,7 +358,7 @@ public class SimpleExoPlayer extends BasePlayer
      * IllegalArgumentException}.
      *
      * @param audioAttributes {@link AudioAttributes}.
-     * @param handleAudioFocus Whether the player should hanlde audio focus.
+     * @param handleAudioFocus Whether the player should handle audio focus.
      * @return This builder.
      * @throws IllegalStateException If {@link #build()} has already been called.
      */
@@ -423,6 +470,40 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     /**
+     * Sets a timeout for calls to {@link #release} and {@link #setForegroundMode}.
+     *
+     * <p>If a call to {@link #release} or {@link #setForegroundMode} takes more than {@code
+     * timeoutMs} to complete, the player will report an error via {@link
+     * Player.EventListener#onPlayerError}.
+     *
+     * @param releaseTimeoutMs The release timeout, in milliseconds.
+     * @return This builder.
+     * @throws IllegalStateException If {@link #build()} has already been called.
+     */
+    public Builder setReleaseTimeoutMs(long releaseTimeoutMs) {
+      Assertions.checkState(!buildCalled);
+      this.releaseTimeoutMs = releaseTimeoutMs;
+      return this;
+    }
+
+    /**
+     * Sets a timeout for detaching a surface from the player.
+     *
+     * <p>If detaching a surface or replacing a surface takes more than {@code
+     * detachSurfaceTimeoutMs} to complete, the player will report an error via {@link
+     * Player.EventListener#onPlayerError}.
+     *
+     * @param detachSurfaceTimeoutMs The timeout for detaching a surface, in milliseconds.
+     * @return This builder.
+     * @throws IllegalStateException If {@link #build()} has already been called.
+     */
+    public Builder setDetachSurfaceTimeoutMs(long detachSurfaceTimeoutMs) {
+      Assertions.checkState(!buildCalled);
+      this.detachSurfaceTimeoutMs = detachSurfaceTimeoutMs;
+      return this;
+    }
+
+    /**
      * Sets whether to pause playback at the end of each media item.
      *
      * <p>This means the player will pause at the end of each window in the current {@link
@@ -441,14 +522,30 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     /**
+     * Sets the {@link LivePlaybackSpeedControl} that will control the playback speed when playing
+     * live streams, in order to maintain a steady target offset from the live stream edge.
+     *
+     * @param livePlaybackSpeedControl The {@link LivePlaybackSpeedControl}.
+     * @return This builder.
+     * @throws IllegalStateException If {@link #build()} has already been called.
+     */
+    public Builder setLivePlaybackSpeedControl(LivePlaybackSpeedControl livePlaybackSpeedControl) {
+      Assertions.checkState(!buildCalled);
+      this.livePlaybackSpeedControl = livePlaybackSpeedControl;
+      return this;
+    }
+
+    /**
      * Sets whether the player should throw when it detects it's stuck buffering.
      *
      * <p>This method is experimental, and will be renamed or removed in a future release.
      *
      * @param throwWhenStuckBuffering Whether to throw when the player detects it's stuck buffering.
      * @return This builder.
+     * @throws IllegalStateException If {@link #build()} has already been called.
      */
-    public Builder experimental_setThrowWhenStuckBuffering(boolean throwWhenStuckBuffering) {
+    public Builder experimentalSetThrowWhenStuckBuffering(boolean throwWhenStuckBuffering) {
+      Assertions.checkState(!buildCalled);
       this.throwWhenStuckBuffering = throwWhenStuckBuffering;
       return this;
     }
@@ -497,13 +594,13 @@ public class SimpleExoPlayer extends BasePlayer
   private final CopyOnWriteArraySet<DeviceListener> deviceListeners;
   private final CopyOnWriteArraySet<VideoRendererEventListener> videoDebugListeners;
   private final CopyOnWriteArraySet<AudioRendererEventListener> audioDebugListeners;
-  private final BandwidthMeter bandwidthMeter;
   private final AnalyticsCollector analyticsCollector;
   private final AudioBecomingNoisyManager audioBecomingNoisyManager;
   private final AudioFocusManager audioFocusManager;
   private final StreamVolumeManager streamVolumeManager;
   private final WakeLockManager wakeLockManager;
   private final WifiLockManager wifiLockManager;
+  private final long detachSurfaceTimeoutMs;
 
   @Nullable private Format videoFormat;
   @Nullable private Format audioFormat;
@@ -559,12 +656,12 @@ public class SimpleExoPlayer extends BasePlayer
 
   /** @param builder The {@link Builder} to obtain all construction parameters. */
   protected SimpleExoPlayer(Builder builder) {
-    bandwidthMeter = builder.bandwidthMeter;
     analyticsCollector = builder.analyticsCollector;
     priorityTaskManager = builder.priorityTaskManager;
     audioAttributes = builder.audioAttributes;
     videoScalingMode = builder.videoScalingMode;
     skipSilenceEnabled = builder.skipSilenceEnabled;
+    detachSurfaceTimeoutMs = builder.detachSurfaceTimeoutMs;
     componentListener = new ComponentListener();
     videoListeners = new CopyOnWriteArraySet<>();
     audioListeners = new CopyOnWriteArraySet<>();
@@ -586,6 +683,7 @@ public class SimpleExoPlayer extends BasePlayer
     audioVolume = 1;
     audioSessionId = C.AUDIO_SESSION_ID_UNSET;
     currentCues = Collections.emptyList();
+    throwsWhenUsingWrongThread = true;
 
     // Build the player and associated objects.
     player =
@@ -594,22 +692,21 @@ public class SimpleExoPlayer extends BasePlayer
             builder.trackSelector,
             builder.mediaSourceFactory,
             builder.loadControl,
-            bandwidthMeter,
+            builder.bandwidthMeter,
             analyticsCollector,
             builder.useLazyPreparation,
             builder.seekParameters,
+            builder.livePlaybackSpeedControl,
+            builder.releaseTimeoutMs,
             builder.pauseAtEndOfMediaItems,
             builder.clock,
             builder.looper);
-    analyticsCollector.setPlayer(player);
-    player.addListener(analyticsCollector);
     player.addListener(componentListener);
     videoDebugListeners.add(analyticsCollector);
     videoListeners.add(analyticsCollector);
     audioDebugListeners.add(analyticsCollector);
     audioListeners.add(analyticsCollector);
     addMetadataOutput(analyticsCollector);
-    bandwidthMeter.addEventListener(eventHandler, analyticsCollector);
 
     audioBecomingNoisyManager =
         new AudioBecomingNoisyManager(builder.context, eventHandler, componentListener);
@@ -623,14 +720,26 @@ public class SimpleExoPlayer extends BasePlayer
     wifiLockManager = new WifiLockManager(builder.context);
     wifiLockManager.setEnabled(builder.wakeMode == C.WAKE_MODE_NETWORK);
     deviceInfo = createDeviceInfo(streamVolumeManager);
-    if (builder.throwWhenStuckBuffering) {
-      player.experimental_throwWhenStuckBuffering();
+    if (!builder.throwWhenStuckBuffering) {
+      player.experimentalDisableThrowWhenStuckBuffering();
     }
 
     sendRendererMessage(C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_AUDIO_ATTRIBUTES, audioAttributes);
     sendRendererMessage(C.TRACK_TYPE_VIDEO, Renderer.MSG_SET_SCALING_MODE, videoScalingMode);
     sendRendererMessage(
         C.TRACK_TYPE_AUDIO, Renderer.MSG_SET_SKIP_SILENCE_ENABLED, skipSilenceEnabled);
+  }
+
+  @Override
+  public void experimentalSetOffloadSchedulingEnabled(boolean offloadSchedulingEnabled) {
+    verifyApplicationThread();
+    player.experimentalSetOffloadSchedulingEnabled(offloadSchedulingEnabled);
+  }
+
+  @Override
+  public boolean experimentalIsSleepingForOffload() {
+    verifyApplicationThread();
+    return player.experimentalIsSleepingForOffload();
   }
 
   @Override
@@ -820,6 +929,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void addAudioListener(AudioListener listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     audioListeners.add(listener);
   }
 
@@ -970,6 +1080,7 @@ public class SimpleExoPlayer extends BasePlayer
    */
   public void addAnalyticsListener(AnalyticsListener listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     analyticsCollector.addListener(listener);
   }
 
@@ -1027,19 +1138,23 @@ public class SimpleExoPlayer extends BasePlayer
     this.priorityTaskManager = priorityTaskManager;
   }
 
-  /** @deprecated Use {@link #setPlaybackSpeed(float)} instead. */
-  @SuppressWarnings("deprecation")
+  /**
+   * Sets the {@link PlaybackParams} governing audio playback.
+   *
+   * @param params The {@link PlaybackParams}, or null to clear any previously set parameters.
+   * @deprecated Use {@link #setPlaybackParameters(PlaybackParameters)}.
+   */
   @Deprecated
   @RequiresApi(23)
   public void setPlaybackParams(@Nullable PlaybackParams params) {
-    float playbackSpeed;
+    PlaybackParameters playbackParameters;
     if (params != null) {
       params.allowDefaults();
-      playbackSpeed = params.getSpeed();
+      playbackParameters = new PlaybackParameters(params.getSpeed(), params.getPitch());
     } else {
-      playbackSpeed = 1.0f;
+      playbackParameters = null;
     }
-    setPlaybackSpeed(playbackSpeed);
+    setPlaybackParameters(playbackParameters);
   }
 
   /** Returns the video format currently being played, or null if no video is being played. */
@@ -1069,6 +1184,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void addVideoListener(com.google.android.exoplayer2.video.VideoListener listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     videoListeners.add(listener);
   }
 
@@ -1122,7 +1238,7 @@ public class SimpleExoPlayer extends BasePlayer
    */
   @Deprecated
   @SuppressWarnings("deprecation")
-  public void setVideoListener(VideoListener listener) {
+  public void setVideoListener(@Nullable VideoListener listener) {
     videoListeners.clear();
     if (listener != null) {
       addVideoListener(listener);
@@ -1145,6 +1261,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void addTextOutput(TextOutput listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     textOutputs.add(listener);
   }
 
@@ -1188,6 +1305,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void addMetadataOutput(MetadataOutput listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     metadataOutputs.add(listener);
   }
 
@@ -1228,7 +1346,7 @@ public class SimpleExoPlayer extends BasePlayer
    */
   @Deprecated
   @SuppressWarnings("deprecation")
-  public void setVideoDebugListener(VideoRendererEventListener listener) {
+  public void setVideoDebugListener(@Nullable VideoRendererEventListener listener) {
     videoDebugListeners.retainAll(Collections.singleton(analyticsCollector));
     if (listener != null) {
       addVideoDebugListener(listener);
@@ -1241,6 +1359,7 @@ public class SimpleExoPlayer extends BasePlayer
    */
   @Deprecated
   public void addVideoDebugListener(VideoRendererEventListener listener) {
+    Assertions.checkNotNull(listener);
     videoDebugListeners.add(listener);
   }
 
@@ -1259,7 +1378,7 @@ public class SimpleExoPlayer extends BasePlayer
    */
   @Deprecated
   @SuppressWarnings("deprecation")
-  public void setAudioDebugListener(AudioRendererEventListener listener) {
+  public void setAudioDebugListener(@Nullable AudioRendererEventListener listener) {
     audioDebugListeners.retainAll(Collections.singleton(analyticsCollector));
     if (listener != null) {
       addAudioDebugListener(listener);
@@ -1272,6 +1391,7 @@ public class SimpleExoPlayer extends BasePlayer
    */
   @Deprecated
   public void addAudioDebugListener(AudioRendererEventListener listener) {
+    Assertions.checkNotNull(listener);
     audioDebugListeners.add(listener);
   }
 
@@ -1299,6 +1419,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void addListener(Player.EventListener listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     player.addListener(listener);
   }
 
@@ -1615,37 +1736,16 @@ public class SimpleExoPlayer extends BasePlayer
     player.seekTo(windowIndex, positionMs);
   }
 
-  /**
-   * @deprecated Use {@link #setPlaybackSpeed(float)} and {@link #setSkipSilenceEnabled(boolean)}
-   *     instead.
-   */
-  @SuppressWarnings("deprecation")
-  @Deprecated
   @Override
   public void setPlaybackParameters(@Nullable PlaybackParameters playbackParameters) {
     verifyApplicationThread();
     player.setPlaybackParameters(playbackParameters);
   }
 
-  /** @deprecated Use {@link #getPlaybackSpeed()} and {@link #getSkipSilenceEnabled()} instead. */
-  @SuppressWarnings("deprecation")
-  @Deprecated
   @Override
   public PlaybackParameters getPlaybackParameters() {
     verifyApplicationThread();
     return player.getPlaybackParameters();
-  }
-
-  @Override
-  public void setPlaybackSpeed(float playbackSpeed) {
-    verifyApplicationThread();
-    player.setPlaybackSpeed(playbackSpeed);
-  }
-
-  @Override
-  public float getPlaybackSpeed() {
-    verifyApplicationThread();
-    return player.getPlaybackSpeed();
   }
 
   @Override
@@ -1694,7 +1794,6 @@ public class SimpleExoPlayer extends BasePlayer
       Assertions.checkNotNull(priorityTaskManager).remove(C.PRIORITY_PLAYBACK);
       isPriorityTaskManagerRegistered = false;
     }
-    bandwidthMeter.removeEventListener(analyticsCollector);
     currentCues = Collections.emptyList();
     playerReleased = true;
   }
@@ -1734,6 +1833,12 @@ public class SimpleExoPlayer extends BasePlayer
   public TrackSelectionArray getCurrentTrackSelections() {
     verifyApplicationThread();
     return player.getCurrentTrackSelections();
+  }
+
+  @Override
+  public List<Metadata> getCurrentStaticMetadata() {
+    verifyApplicationThread();
+    return player.getCurrentStaticMetadata();
   }
 
   @Override
@@ -1868,6 +1973,7 @@ public class SimpleExoPlayer extends BasePlayer
   @Override
   public void addDeviceListener(DeviceListener listener) {
     // Don't verify application thread. We allow calls to this method from any thread.
+    Assertions.checkNotNull(listener);
     deviceListeners.add(listener);
   }
 
@@ -1923,7 +2029,7 @@ public class SimpleExoPlayer extends BasePlayer
    * Sets whether the player should throw an {@link IllegalStateException} when methods are called
    * from a thread other than the one associated with {@link #getApplicationLooper()}.
    *
-   * <p>The default is {@code false}, but will change to {@code true} in the future.
+   * <p>The default is {@code true} and this method will be removed in the future.
    *
    * @param throwsWhenUsingWrongThread Whether to throw when methods are called from a wrong thread.
    */
@@ -1966,10 +2072,16 @@ public class SimpleExoPlayer extends BasePlayer
       // We're replacing a surface. Block to ensure that it's not accessed after the method returns.
       try {
         for (PlayerMessage message : messages) {
-          message.blockUntilDelivered();
+          message.blockUntilDelivered(detachSurfaceTimeoutMs);
         }
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
+      } catch (TimeoutException e) {
+        player.stop(
+            /* reset= */ false,
+            ExoPlaybackException.createForTimeout(
+                new TimeoutException("Detaching surface timed out."),
+                ExoPlaybackException.TIMEOUT_OPERATION_DETACH_SURFACE));
       }
       // If we created the previous surface, we are responsible for releasing it.
       if (this.ownsSurface) {
@@ -2049,7 +2161,9 @@ public class SimpleExoPlayer extends BasePlayer
     switch (playbackState) {
       case Player.STATE_READY:
       case Player.STATE_BUFFERING:
-        wakeLockManager.setStayAwake(getPlayWhenReady());
+        boolean isSleeping = experimentalIsSleepingForOffload();
+        wakeLockManager.setStayAwake(getPlayWhenReady() && !isSleeping);
+        // The wifi lock is not released while sleeping to avoid interrupting downloads.
         wifiLockManager.setStayAwake(getPlayWhenReady());
         break;
       case Player.STATE_ENDED:
@@ -2181,11 +2295,9 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     @Override
-    public void onVideoFrameProcessingOffset(
-        long totalProcessingOffsetUs, int frameCount, Format format) {
+    public void onVideoFrameProcessingOffset(long totalProcessingOffsetUs, int frameCount) {
       for (VideoRendererEventListener videoDebugListener : videoDebugListeners) {
-        videoDebugListener.onVideoFrameProcessingOffset(
-            totalProcessingOffsetUs, frameCount, format);
+        videoDebugListener.onVideoFrameProcessingOffset(totalProcessingOffsetUs, frameCount);
       }
     }
 
@@ -2226,10 +2338,16 @@ public class SimpleExoPlayer extends BasePlayer
     }
 
     @Override
-    public void onAudioSinkUnderrun(
-        int bufferSize, long bufferSizeMs, long elapsedSinceLastFeedMs) {
+    public void onAudioPositionAdvancing(long playoutStartSystemTimeMs) {
       for (AudioRendererEventListener audioDebugListener : audioDebugListeners) {
-        audioDebugListener.onAudioSinkUnderrun(bufferSize, bufferSizeMs, elapsedSinceLastFeedMs);
+        audioDebugListener.onAudioPositionAdvancing(playoutStartSystemTimeMs);
+      }
+    }
+
+    @Override
+    public void onAudioUnderrun(int bufferSize, long bufferSizeMs, long elapsedSinceLastFeedMs) {
+      for (AudioRendererEventListener audioDebugListener : audioDebugListeners) {
+        audioDebugListener.onAudioUnderrun(bufferSize, bufferSizeMs, elapsedSinceLastFeedMs);
       }
     }
 
@@ -2381,6 +2499,11 @@ public class SimpleExoPlayer extends BasePlayer
     @Override
     public void onPlayWhenReadyChanged(
         boolean playWhenReady, @PlayWhenReadyChangeReason int reason) {
+      updateWakeAndWifiLock();
+    }
+
+    @Override
+    public void onExperimentalSleepingForOffloadChanged(boolean sleepingForOffload) {
       updateWakeAndWifiLock();
     }
   }

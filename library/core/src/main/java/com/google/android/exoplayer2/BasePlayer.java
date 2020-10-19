@@ -45,12 +45,6 @@ public abstract class BasePlayer implements Player {
   }
 
   @Override
-  public void setMediaItems(List<MediaItem> mediaItems, boolean resetPosition) {
-    setMediaItems(
-        mediaItems, /* startWindowIndex= */ C.INDEX_UNSET, /* startPositionMs= */ C.TIME_UNSET);
-  }
-
-  @Override
   public void setMediaItems(List<MediaItem> mediaItems) {
     setMediaItems(mediaItems, /* resetPosition= */ true);
   }
@@ -158,11 +152,41 @@ public abstract class BasePlayer implements Player {
             getCurrentWindowIndex(), getRepeatModeForNavigation(), getShuffleModeEnabled());
   }
 
+  /**
+   * @deprecated Use {@link #getCurrentMediaItem()} and {@link MediaItem.PlaybackProperties#tag}
+   *     instead.
+   */
+  @Deprecated
   @Override
   @Nullable
   public final Object getCurrentTag() {
     Timeline timeline = getCurrentTimeline();
-    return timeline.isEmpty() ? null : timeline.getWindow(getCurrentWindowIndex(), window).tag;
+    if (timeline.isEmpty()) {
+      return null;
+    }
+    @Nullable
+    MediaItem.PlaybackProperties playbackProperties =
+        timeline.getWindow(getCurrentWindowIndex(), window).mediaItem.playbackProperties;
+    return playbackProperties != null ? playbackProperties.tag : null;
+  }
+
+  @Override
+  @Nullable
+  public final MediaItem getCurrentMediaItem() {
+    Timeline timeline = getCurrentTimeline();
+    return timeline.isEmpty()
+        ? null
+        : timeline.getWindow(getCurrentWindowIndex(), window).mediaItem;
+  }
+
+  @Override
+  public int getMediaItemCount() {
+    return getCurrentTimeline().getWindowCount();
+  }
+
+  @Override
+  public MediaItem getMediaItemAt(int index) {
+    return getCurrentTimeline().getWindow(index, window).mediaItem;
   }
 
   @Override

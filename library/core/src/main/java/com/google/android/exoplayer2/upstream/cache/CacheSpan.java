@@ -32,9 +32,7 @@ public class CacheSpan implements Comparable<CacheSpan> {
    * The length of the {@link CacheSpan}, or {@link C#LENGTH_UNSET} if this is an open-ended hole.
    */
   public final long length;
-  /**
-   * Whether the {@link CacheSpan} is cached.
-   */
+  /** Whether the {@link CacheSpan} is cached. */
   public final boolean isCached;
   /** The file corresponding to this {@link CacheSpan}, or null if {@link #isCached} is false. */
   @Nullable public final File file;
@@ -98,4 +96,8 @@ public class CacheSpan implements Comparable<CacheSpan> {
     return startOffsetDiff == 0 ? 0 : ((startOffsetDiff < 0) ? -1 : 1);
   }
 
+  @Override
+  public String toString() {
+    return "[" + position + ", " + length + "]";
+  }
 }

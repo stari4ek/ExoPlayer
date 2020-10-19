@@ -50,7 +50,7 @@ public final class SinglePeriodTimelineTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     // Should return null with any positive position projection.
     Pair<Object, Long> position = timeline.getPeriodPosition(window, period, 0, C.TIME_UNSET, 1);
     assertThat(position).isNull();
@@ -73,7 +73,7 @@ public final class SinglePeriodTimelineTest {
             /* isDynamic= */ true,
             /* isLive= */ true,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     // Should return null with a positive position projection beyond window duration.
     Pair<Object, Long> position =
         timeline.getPeriodPosition(window, period, 0, C.TIME_UNSET, windowDurationUs + 1);
@@ -89,6 +89,7 @@ public final class SinglePeriodTimelineTest {
   }
 
   @Test
+  @SuppressWarnings("deprecation") // Testing deprecated Window.tag is still populated correctly.
   public void setNullTag_returnsNullTag_butUsesDefaultUid() {
     SinglePeriodTimeline timeline =
         new SinglePeriodTimeline(
@@ -97,9 +98,11 @@ public final class SinglePeriodTimelineTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* tag= */ (Object) null);
+            new MediaItem.Builder().setUri(Uri.EMPTY).setTag(null).build());
 
     assertThat(timeline.getWindow(/* windowIndex= */ 0, window).tag).isNull();
+    assertThat(timeline.getWindow(/* windowIndex= */ 0, window).mediaItem.playbackProperties.tag)
+        .isNull();
     assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ false).id).isNull();
     assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ true).id).isNull();
     assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ false).uid).isNull();
@@ -108,25 +111,7 @@ public final class SinglePeriodTimelineTest {
   }
 
   @Test
-  public void setNullMediaItem_returnsNullMediaItem_butUsesDefaultUid() {
-    SinglePeriodTimeline timeline =
-        new SinglePeriodTimeline(
-            /* durationUs= */ C.TIME_UNSET,
-            /* isSeekable= */ false,
-            /* isDynamic= */ false,
-            /* isLive= */ false,
-            /* manifest= */ null,
-            /* mediaItem= */ null);
-
-    assertThat(timeline.getWindow(/* windowIndex= */ 0, window).mediaItem).isNull();
-    assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ false).id).isNull();
-    assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ true).id).isNull();
-    assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ false).uid).isNull();
-    assertThat(timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ true).uid)
-        .isNotNull();
-  }
-
-  @Test
+  @SuppressWarnings("deprecation") // Testing deprecated Window.tag is still populated correctly.
   public void getWindow_setsTag() {
     Object tag = new Object();
     SinglePeriodTimeline timeline =
@@ -136,7 +121,7 @@ public final class SinglePeriodTimelineTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            tag);
+            new MediaItem.Builder().setUri(Uri.EMPTY).setTag(tag).build());
 
     assertThat(timeline.getWindow(/* windowIndex= */ 0, window).tag).isEqualTo(tag);
   }
@@ -170,7 +155,7 @@ public final class SinglePeriodTimelineTest {
             /* isDynamic= */ false,
             /* isLive= */ false,
             /* manifest= */ null,
-            /* mediaItem= */ null);
+            MediaItem.fromUri(Uri.EMPTY));
     Object uid = timeline.getPeriod(/* periodIndex= */ 0, period, /* setIds= */ true).uid;
 
     assertThat(timeline.getIndexOfPeriod(uid)).isEqualTo(0);

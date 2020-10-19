@@ -49,6 +49,9 @@ cmake-build-debug
 dist
 tmp
 
+# TVirl
+.cxx
+
 # External native builds
 .externalNativeBuild
 
