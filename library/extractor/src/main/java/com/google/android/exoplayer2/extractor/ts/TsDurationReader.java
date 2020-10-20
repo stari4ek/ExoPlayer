@@ -170,7 +170,16 @@ import java.io.IOException;
 
     packetBuffer.reset(bytesToSearch);
     input.resetPeekPosition();
-    input.peekFully(packetBuffer.getData(), /* offset= */ 0, bytesToSearch);
+    // TVirl
+    // input.peekFully(packetBuffer.getData(), /* offset= */ 0, bytesToSearch);
+    try {
+      input.peekFully(packetBuffer.getData(), /* offset= */ 0, bytesToSearch);
+    } catch (IOException e) {
+      // do not read duration anymore, if LoadErrorHandlingPolicy will retry stream loading
+      lastPcrValue = C.TIME_UNSET;
+      isLastPcrValueRead = true;
+      throw e;
+    }
 
     lastPcrValue = readLastPcrValueFromBuffer(packetBuffer, pcrPid);
     isLastPcrValueRead = true;

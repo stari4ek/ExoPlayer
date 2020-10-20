@@ -413,6 +413,17 @@ public class OkHttpDataSource extends BaseDataSource implements HttpDataSource {
       return;
     }
 
+    // TVIRL:
+    // https://github.com/google/ExoPlayer/issues/8090
+    // bytesToSkip is set only when we requested range but server does not support it,
+    // so we have to reach position by skipping
+    // we can spend too much time reading bytes to skip
+    long pendingBytes = bytesToSkip - bytesSkipped;
+    if (pendingBytes > 64*1024*1024) { // 64Mb
+      throw new EOFException("Skip range it too big (" + pendingBytes + " bytes)");
+    }
+    // !TVIRL
+
     while (bytesSkipped != bytesToSkip) {
       int readLength = (int) min(bytesToSkip - bytesSkipped, SKIP_BUFFER.length);
       int read = castNonNull(responseByteStream).read(SKIP_BUFFER, 0, readLength);
