@@ -156,7 +156,7 @@ import static java.lang.Math.min;
         new TrackSelectorResult(
             new RendererConfiguration[renderers.length],
             new TrackSelection[renderers.length],
-            null);
+            /* info= */ null);
     period = new Timeline.Period();
     maskingWindowIndex = C.INDEX_UNSET;
     playbackInfoUpdateHandler = new Handler(applicationLooper);
@@ -348,6 +348,11 @@ import static java.lang.Math.min;
   public void prepare(MediaSource mediaSource, boolean resetPosition, boolean resetState) {
     setMediaSource(mediaSource, resetPosition);
     prepare();
+  }
+
+  @Override
+  public void setMediaItems(List<MediaItem> mediaItems, boolean resetPosition) {
+    setMediaSources(createMediaSources(mediaItems), resetPosition);
   }
 
   @Override
