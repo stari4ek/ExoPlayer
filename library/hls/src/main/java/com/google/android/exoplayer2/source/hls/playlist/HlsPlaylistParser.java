@@ -688,7 +688,8 @@ public final class HlsPlaylistParser implements ParsingLoadable.Parser<HlsPlayli
         } catch (ParserException e) {
           // since we know that it's TAG_MEDIA_SEQUENCE already - try to be more patient
           try {
-            mediaSequence = Long.parseLong(line.substring(TAG_MEDIA_SEQUENCE.length()).trim());
+            int skipTag = TAG_MEDIA_SEQUENCE.length() + 1;  // tag and ":"
+            mediaSequence = Long.parseLong(line.substring(skipTag).trim());
           } catch (NumberFormatException ignored) {
             // throw original one
             throw e;
