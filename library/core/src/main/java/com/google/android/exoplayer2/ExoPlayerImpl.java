@@ -604,8 +604,10 @@ import static java.lang.Math.min;
       // general because the midroll ad preceding the seek destination must be played before the
       // content position can be played, if a different ad is playing at the moment.
       Log.w(TAG, "seekTo ignored because an ad is playing");
-      playbackInfoUpdateListener.onPlaybackInfoUpdate(
-          new ExoPlayerImplInternal.PlaybackInfoUpdate(playbackInfo));
+      ExoPlayerImplInternal.PlaybackInfoUpdate playbackInfoUpdate =
+          new ExoPlayerImplInternal.PlaybackInfoUpdate(this.playbackInfo);
+      playbackInfoUpdate.incrementPendingOperationAcks(1);
+      playbackInfoUpdateListener.onPlaybackInfoUpdate(playbackInfoUpdate);
       return;
     }
     @Player.State
