@@ -35,9 +35,7 @@ import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.MediaSource.MediaPeriodId;
 import com.google.android.exoplayer2.source.MediaSourceEventListener;
 import com.google.android.exoplayer2.source.MediaSourceFactory;
-import com.google.android.exoplayer2.source.ProgressiveMediaSource;
 import com.google.android.exoplayer2.upstream.Allocator;
-import com.google.android.exoplayer2.upstream.DataSource;
 import com.google.android.exoplayer2.upstream.DataSpec;
 import com.google.android.exoplayer2.upstream.TransferListener;
 import com.google.android.exoplayer2.util.Assertions;
@@ -130,7 +128,8 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   private final MediaSourceFactory adMediaSourceFactory;
   private final AdsLoader adsLoader;
   private final AdsLoader.AdViewProvider adViewProvider;
-  @Nullable private final DataSpec adTagDataSpec;
+  private final DataSpec adTagDataSpec;
+  private final Object adsId;
   private final Handler mainHandler;
   private final Timeline.Period period;
 
@@ -142,60 +141,14 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
 
   /**
    * Constructs a new source that inserts ads linearly with the content specified by {@code
-   * contentMediaSource}. Ad media is loaded using {@link ProgressiveMediaSource}.
-   *
-   * @param contentMediaSource The {@link MediaSource} providing the content to play.
-   * @param dataSourceFactory Factory for data sources used to load ad media.
-   * @param adsLoader The loader for ads.
-   * @param adViewProvider Provider of views for the ad UI.
-   * @deprecated Use {@link AdsMediaSource#AdsMediaSource(MediaSource, DataSpec, MediaSourceFactory,
-   *     AdsLoader, AdsLoader.AdViewProvider)} instead.
-   */
-  @Deprecated
-  public AdsMediaSource(
-      MediaSource contentMediaSource,
-      DataSource.Factory dataSourceFactory,
-      AdsLoader adsLoader,
-      AdsLoader.AdViewProvider adViewProvider) {
-    this(
-        contentMediaSource,
-        new ProgressiveMediaSource.Factory(dataSourceFactory),
-        adsLoader,
-        adViewProvider,
-        /* adTagDataSpec= */ null);
-  }
-
-  /**
-   * Constructs a new source that inserts ads linearly with the content specified by {@code
-   * contentMediaSource}.
-   *
-   * @param contentMediaSource The {@link MediaSource} providing the content to play.
-   * @param adMediaSourceFactory Factory for media sources used to load ad media.
-   * @param adsLoader The loader for ads.
-   * @param adViewProvider Provider of views for the ad UI.
-   * @deprecated Use {@link AdsMediaSource#AdsMediaSource(MediaSource, DataSpec, MediaSourceFactory,
-   *     AdsLoader, AdsLoader.AdViewProvider)} instead.
-   */
-  @Deprecated
-  public AdsMediaSource(
-      MediaSource contentMediaSource,
-      MediaSourceFactory adMediaSourceFactory,
-      AdsLoader adsLoader,
-      AdsLoader.AdViewProvider adViewProvider) {
-    this(
-        contentMediaSource,
-        adMediaSourceFactory,
-        adsLoader,
-        adViewProvider,
-        /* adTagDataSpec= */ null);
-  }
-
-  /**
-   * Constructs a new source that inserts ads linearly with the content specified by {@code
    * contentMediaSource}.
    *
    * @param contentMediaSource The {@link MediaSource} providing the content to play.
    * @param adTagDataSpec The data specification of the ad tag to load.
+   * @param adsId An opaque identifier for ad playback state associated with this instance. Ad
+   *     loading and playback state is shared among all playlist items that have the same ads id (by
+   *     {@link Object#equals(Object) equality}), so it is important to pass the same identifiers
+   *     when constructing playlist items each time the player returns to the foreground.
    * @param adMediaSourceFactory Factory for media sources used to load ad media.
    * @param adsLoader The loader for ads.
    * @param adViewProvider Provider of views for the ad UI.
@@ -203,23 +156,16 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   public AdsMediaSource(
       MediaSource contentMediaSource,
       DataSpec adTagDataSpec,
+      Object adsId,
       MediaSourceFactory adMediaSourceFactory,
       AdsLoader adsLoader,
       AdsLoader.AdViewProvider adViewProvider) {
-    this(contentMediaSource, adMediaSourceFactory, adsLoader, adViewProvider, adTagDataSpec);
-  }
-
-  private AdsMediaSource(
-      MediaSource contentMediaSource,
-      MediaSourceFactory adMediaSourceFactory,
-      AdsLoader adsLoader,
-      AdsLoader.AdViewProvider adViewProvider,
-      @Nullable DataSpec adTagDataSpec) {
     this.contentMediaSource = contentMediaSource;
     this.adMediaSourceFactory = adMediaSourceFactory;
     this.adsLoader = adsLoader;
     this.adViewProvider = adViewProvider;
     this.adTagDataSpec = adTagDataSpec;
+    this.adsId = adsId;
     mainHandler = new Handler(Looper.getMainLooper());
     period = new Timeline.Period();
     adMediaSourceHolders = new AdMediaSourceHolder[0][];
@@ -249,12 +195,13 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
     this.componentListener = componentListener;
     prepareChildSource(CHILD_SOURCE_MEDIA_PERIOD_ID, contentMediaSource);
     mainHandler.post(
-        () -> {
-          if (adTagDataSpec != null) {
-            adsLoader.setAdTagDataSpec(adTagDataSpec);
-          }
-          adsLoader.start(componentListener, adViewProvider);
-        });
+        () ->
+            adsLoader.start(
+                /* adsMediaSource= */ this,
+                adTagDataSpec,
+                adsId,
+                adViewProvider,
+                componentListener));
   }
 
   @Override
@@ -305,12 +252,13 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
   @Override
   protected void releaseSourceInternal() {
     super.releaseSourceInternal();
-    checkNotNull(componentListener).release();
-    componentListener = null;
+    ComponentListener componentListener = checkNotNull(this.componentListener);
+    this.componentListener = null;
+    componentListener.stop();
     contentTimeline = null;
     adPlaybackState = null;
     adMediaSourceHolders = new AdMediaSourceHolder[0][];
-    mainHandler.post(adsLoader::stop);
+    mainHandler.post(() -> adsLoader.stop(/* adsMediaSource= */ this, componentListener));
   }
 
   @Override
@@ -370,8 +318,28 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
             && adIndexInAdGroup < adPlaybackState.adGroups[adGroupIndex].uris.length) {
           @Nullable Uri adUri = adPlaybackState.adGroups[adGroupIndex].uris[adIndexInAdGroup];
           if (adUri != null) {
-            MediaSource adMediaSource =
-                adMediaSourceFactory.createMediaSource(MediaItem.fromUri(adUri));
+            MediaItem.Builder adMediaItem = new MediaItem.Builder().setUri(adUri);
+            // Propagate the content's DRM config into the ad media source.
+            @Nullable
+            MediaItem.PlaybackProperties contentPlaybackProperties =
+                contentMediaSource.getMediaItem().playbackProperties;
+            if (contentPlaybackProperties != null
+                && contentPlaybackProperties.drmConfiguration != null) {
+              MediaItem.DrmConfiguration drmConfiguration =
+                  contentPlaybackProperties.drmConfiguration;
+              // TODO(internal b/179984779): Use MediaItem.Builder#setDrmConfiguration() when it's
+              // available.
+              adMediaItem.setDrmUuid(drmConfiguration.uuid);
+              adMediaItem.setDrmKeySetId(drmConfiguration.getKeySetId());
+              adMediaItem.setDrmLicenseUri(drmConfiguration.licenseUri);
+              adMediaItem.setDrmForceDefaultLicenseUri(drmConfiguration.forceDefaultLicenseUri);
+              adMediaItem.setDrmLicenseRequestHeaders(drmConfiguration.requestHeaders);
+              adMediaItem.setDrmMultiSession(drmConfiguration.multiSession);
+              adMediaItem.setDrmPlayClearContentWithoutKey(
+                  drmConfiguration.playClearContentWithoutKey);
+              adMediaItem.setDrmSessionForClearTypes(drmConfiguration.sessionForClearTypes);
+            }
+            MediaSource adMediaSource = adMediaSourceFactory.createMediaSource(adMediaItem.build());
             adMediaSourceHolder.initializeWithMediaSource(adMediaSource, adUri);
           }
         }
@@ -408,7 +376,7 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
 
     private final Handler playerHandler;
 
-    private volatile boolean released;
+    private volatile boolean stopped;
 
     /**
      * Creates new listener which forwards ad playback states on the creating thread and all other
@@ -418,20 +386,20 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
       playerHandler = Util.createHandlerForCurrentLooper();
     }
 
-    /** Releases the component listener. */
-    public void release() {
-      released = true;
+    /** Stops event delivery from this instance. */
+    public void stop() {
+      stopped = true;
       playerHandler.removeCallbacksAndMessages(null);
     }
 
     @Override
     public void onAdPlaybackState(final AdPlaybackState adPlaybackState) {
-      if (released) {
+      if (stopped) {
         return;
       }
       playerHandler.post(
           () -> {
-            if (released) {
+            if (stopped) {
               return;
             }
             AdsMediaSource.this.onAdPlaybackState(adPlaybackState);
@@ -440,7 +408,7 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
 
     @Override
     public void onAdLoadError(final AdLoadException error, DataSpec dataSpec) {
-      if (released) {
+      if (stopped) {
         return;
       }
       createEventDispatcher(/* mediaPeriodId= */ null)
@@ -468,7 +436,9 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
       mainHandler.post(
           () ->
               adsLoader.handlePrepareComplete(
-                  mediaPeriodId.adGroupIndex, mediaPeriodId.adIndexInAdGroup));
+                  /* adsMediaSource= */ AdsMediaSource.this,
+                  mediaPeriodId.adGroupIndex,
+                  mediaPeriodId.adIndexInAdGroup));
     }
 
     @Override
@@ -485,7 +455,10 @@ public final class AdsMediaSource extends CompositeMediaSource<MediaPeriodId> {
       mainHandler.post(
           () ->
               adsLoader.handlePrepareError(
-                  mediaPeriodId.adGroupIndex, mediaPeriodId.adIndexInAdGroup, exception));
+                  /* adsMediaSource= */ AdsMediaSource.this,
+                  mediaPeriodId.adGroupIndex,
+                  mediaPeriodId.adIndexInAdGroup,
+                  exception));
     }
   }
 
