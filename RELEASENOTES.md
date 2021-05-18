@@ -1,5 +1,12 @@
 # Release notes
 
+### dev-v2 (not yet released)
+
+*   Core Library:
+    *   Fix gradle config to allow specifying a relative path for
+        `exoplayerRoot` when [depending on ExoPlayer locally](README.md#locally)
+        ([#8927](https://github.com/google/ExoPlayer/issues/8927)).
+
 ### 2.12.3 (2021-01-13) ###
 
 *   Core library:

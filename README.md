@@ -117,7 +117,7 @@ Next, add the following to your project's `settings.gradle` file, replacing
 ```gradle
 gradle.ext.exoplayerRoot = 'path/to/exoplayer'
 gradle.ext.exoplayerModulePrefix = 'exoplayer-'
-apply from: new File(gradle.ext.exoplayerRoot, 'core_settings.gradle')
+apply from: file("$gradle.ext.exoplayerRoot/core_settings.gradle")
 ```
 
 You should now see the ExoPlayer modules appear as part of your project. You can
