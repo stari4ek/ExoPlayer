@@ -28,9 +28,10 @@ android {
     }
 
     buildTypes {
-        debug {
-            testCoverageEnabled = true
-        }
+        // TVirl
+        // debug {
+        //    testCoverageEnabled = true
+        // }
     }
 
     testOptions.unitTests.includeAndroidResources = true

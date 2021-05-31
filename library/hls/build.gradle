@@ -28,9 +28,10 @@ android {
     }
 
     buildTypes {
-        debug {
-            testCoverageEnabled = true
-        }
+        // TVirl
+        // debug {
+        //    testCoverageEnabled = true
+        // }
     }
 
     sourceSets.test.assets.srcDir '../../testdata/src/test/assets/'
