@@ -6,6 +6,9 @@
     *   Fix gradle config to allow specifying a relative path for
         `exoplayerRoot` when [depending on ExoPlayer locally](README.md#locally)
         ([#8927](https://github.com/google/ExoPlayer/issues/8927)).
+*   Audio:
+    *   Make `build_ffmpeg.sh` depend on LLVM's bin utils instead of GNU's
+        ([#9933](https://github.com/google/ExoPlayer/issues/9933)).
 
 ### 2.12.3 (2021-01-13) ###
 
