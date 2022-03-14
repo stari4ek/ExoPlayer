@@ -18,8 +18,6 @@ apply from: "$gradle.ext.exoplayerSettingsDir/common_library_config.gradle"
 if (project.file('src/main/jni/ffmpeg').exists()) {
     android.externalNativeBuild.cmake.path = 'src/main/jni/CMakeLists.txt'
     // Should match cmake_minimum_required.
-    // TVirl
-    // android.externalNativeBuild.cmake.version = '3.7.1+'
     android.externalNativeBuild.cmake.version = '3.21.0+'
 }
 
