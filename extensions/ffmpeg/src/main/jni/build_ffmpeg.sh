@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+set -eu
 
 FFMPEG_EXT_PATH=$1
 NDK_PATH=$2
