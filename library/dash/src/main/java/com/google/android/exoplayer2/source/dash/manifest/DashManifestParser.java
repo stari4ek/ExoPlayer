@@ -530,6 +530,11 @@ public class DashManifestParser extends DefaultHandler
                     : C.TRACK_TYPE_UNKNOWN;
   }
 
+  // TVirl
+  @Nullable
+  protected String getDefaultKidLocal() { return null; }
+  // !TVirl
+
   /**
    * Parses a ContentProtection element.
    *
@@ -552,6 +557,11 @@ public class DashManifestParser extends DefaultHandler
         case "urn:mpeg:dash:mp4protection:2011":
           schemeType = xpp.getAttributeValue(null, "value");
           String defaultKid = XmlPullParserUtil.getAttributeValueIgnorePrefix(xpp, "default_KID");
+          // TVirl
+          if (TextUtils.isEmpty(defaultKid) || "00000000-0000-0000-0000-000000000000".equals(defaultKid)) {
+            defaultKid = getDefaultKidLocal();
+          }
+          // !TVirl
           if (!TextUtils.isEmpty(defaultKid)
               && !"00000000-0000-0000-0000-000000000000".equals(defaultKid)) {
             String[] defaultKidStrings = defaultKid.split("\\s+");
