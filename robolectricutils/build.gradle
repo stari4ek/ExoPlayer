@@ -13,6 +13,10 @@
 // limitations under the License.
 apply from: "$gradle.ext.exoplayerSettingsDir/common_library_config.gradle"
 
+// TVIRL
+android.namespace 'com.google.android.exoplayer2.robolectric'
+// !TVIRL
+
 dependencies {
     compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
     compileOnly 'org.checkerframework:checker-compat-qual:' + checkerframeworkCompatVersion

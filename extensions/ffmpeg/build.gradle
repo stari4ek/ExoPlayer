@@ -20,6 +20,11 @@ if (project.file('src/main/jni/ffmpeg').exists()) {
     android.externalNativeBuild.cmake.version = '3.7.1+'
 }
 
+// TVIRL
+android {
+    namespace 'com.google.android.exoplayer2.ext.ffmpeg'
+}
+
 dependencies {
     implementation project(modulePrefix + 'library-core')
     implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion

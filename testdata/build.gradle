@@ -16,3 +16,6 @@ apply plugin: 'com.android.library'
 
 android.compileSdkVersion project.ext.compileSdkVersion
 
+// TVIRL
+android.namespace 'com.google.android.exoplayer2.testdata'
+// !TVIRL

@@ -17,6 +17,10 @@ apply plugin: 'com.android.library'
 android {
     compileSdkVersion project.ext.compileSdkVersion
 
+    // TVIRL
+    namespace 'com.google.android.exoplayer2.ext.cronet'
+    // !TVIRL
+
     defaultConfig {
         minSdkVersion project.ext.minSdkVersion
         targetSdkVersion project.ext.targetSdkVersion
