@@ -28,8 +28,12 @@ import java.util.HashMap;
 import java.util.Map;
 import okhttp3.Headers;
 import okhttp3.OkHttpClient;
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
+// TVirl
+// import okhttp3.mockwebserver.MockResponse;
+// import okhttp3.mockwebserver.MockWebServer;
+import mockwebserver3.MockResponse;
+import mockwebserver3.MockWebServer;
+// !TVirl
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -57,7 +61,10 @@ public class OkHttpDataSourceTest {
   @Test
   public void open_setsCorrectHeaders() throws Exception {
     MockWebServer mockWebServer = new MockWebServer();
-    mockWebServer.enqueue(new MockResponse());
+    // TVirl
+    // mockWebServer.enqueue(new MockResponse());
+    mockWebServer.start();
+    mockWebServer.enqueue(new MockResponse.Builder().build());
 
     String propertyFromConstructor = "fromConstructor";
     HttpDataSource.RequestProperties constructorProperties = new HttpDataSource.RequestProperties();
@@ -103,7 +110,11 @@ public class OkHttpDataSourceTest {
   @Test
   public void open_invalidResponseCode() throws Exception {
     MockWebServer mockWebServer = new MockWebServer();
-    mockWebServer.enqueue(new MockResponse().setResponseCode(404).setBody("failure msg"));
+    // TVirl
+    // mockWebServer.enqueue(new MockResponse().setResponseCode(404).setBody("failure msg"));
+    mockWebServer.start();
+    mockWebServer.enqueue(new MockResponse.Builder().code(404).body("failure msg").build());
+    // !TVirl
 
     OkHttpDataSource okHttpDataSource =
         new OkHttpDataSource(
