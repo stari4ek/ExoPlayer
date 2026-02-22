@@ -40,3 +40,8 @@ target_link_libraries(ffmpeg_jni
                       PRIVATE avcodec
                       PRIVATE avutil
                       PRIVATE ${android_log_lib})
+
+# TVirl: backported from androidx.media
+# Enable 16 KB ELF alignment.
+target_link_options(ffmpeg_jni
+                    PRIVATE "-Wl,-z,max-page-size=16384")
