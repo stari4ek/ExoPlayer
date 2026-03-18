@@ -39,7 +39,13 @@ android {
 
 dependencies {
     implementation project(modulePrefix + 'library-core')
-    implementation 'net.butterflytv.utils:rtmp-client:3.1.0'
+    // TVirl
+    // implementation 'net.butterflytv.utils:rtmp-client:3.1.0'
+    // override with 3.2.0 which has 16kb page size support
+    // https://github.com/ant-media/LibRtmp-Client-for-Android/tree/master
+    // 3.2.0 artifact is gone from jitpack.io. Use 3af6784 - which is identical
+    implementation 'com.github.ant-media:LibRtmp-Client-for-Android:3af6784'
+    // !TVirl
     implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
     compileOnly 'org.jetbrains.kotlin:kotlin-annotations-jvm:' + kotlinAnnotationsVersion
     testImplementation project(modulePrefix + 'testutils')
