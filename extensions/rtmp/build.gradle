@@ -41,10 +41,10 @@ dependencies {
     implementation project(modulePrefix + 'library-core')
     // TVirl
     // implementation 'net.butterflytv.utils:rtmp-client:3.1.0'
-    // override with 3.2.0 which has 16kb page size support
-    // https://github.com/ant-media/LibRtmp-Client-for-Android/tree/master
-    // 3.2.0 artifact is gone from jitpack.io. Use 3af6784 - which is identical
-    implementation 'com.github.ant-media:LibRtmp-Client-for-Android:3af6784'
+    // Use fork with 16kb page size support
+    // com.github.mcxinyu:LibRtmp-Client-for-Android:v3.2.0.m2 is not really 16kb compatible
+    // https://github.com/anenasa/LibRtmp-Client-for-Android
+    implementation 'com.github.anenasa:LibRtmp-Client-for-Android:16647b19d5'
     // !TVirl
     implementation 'androidx.annotation:annotation:' + androidxAnnotationVersion
     compileOnly 'org.jetbrains.kotlin:kotlin-annotations-jvm:' + kotlinAnnotationsVersion
