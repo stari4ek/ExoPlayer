@@ -14,6 +14,7 @@
 apply from: "${buildscript.sourceFile.parentFile}/constants.gradle"
 apply from: "${buildscript.sourceFile.parentFile}/javadoc_util.gradle"
 
+if (android.hasProperty('libraryVariants')) {
 android.libraryVariants.all { variant ->
     def name = variant.buildType.name
     if (name != "release") {
@@ -47,4 +48,5 @@ android.libraryVariants.all { variant ->
             project.fixJavadoc()
         }
     }
+}
 }
